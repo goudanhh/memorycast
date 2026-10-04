@@ -180,6 +180,22 @@ async function runDailyReminders() {
   }
 }
 
+await query(`
+  CREATE TABLE IF NOT EXISTS notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '未命名笔记',
+    content TEXT NOT NULL,
+    tags TEXT[] NOT NULL DEFAULT '{}'::text[],
+    manual_review_count INTEGER NOT NULL DEFAULT 0,
+    last_reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+await query(`CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id,created_at DESC)`);
+await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID REFERENCES notes(id) ON DELETE SET NULL`);
+
 app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), mode:"single-user" }));
 app.get("/auth/me", asyncRoute(async (req,res) => {
   const id = await getLocalUserId();
@@ -241,12 +257,57 @@ app.post("/push/unsubscribe", requireAuth, asyncRoute(async(req,res)=>{
   res.json({ok:true});
 }));
 
+function normalizeNoteRow(r){
+  return {
+    id:r.id,title:r.title,content:r.content,tags:r.tags||[],
+    manualReviewCount:r.manual_review_count||0,
+    lastReviewedAt:r.last_reviewed_at,
+    createdAt:r.created_at,updatedAt:r.updated_at
+  };
+}
+function noteTitle(text){
+  const first=String(text||"").split(/\r?\n/).map(x=>x.trim()).find(Boolean)||"未命名笔记";
+  return first.slice(0,80);
+}
+app.get("/notes", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`SELECT * FROM notes WHERE user_id=$1 ORDER BY created_at DESC`,[userId(req)]);
+  res.json({notes:rows.map(normalizeNoteRow)});
+}));
+app.get("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`SELECT * FROM notes WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
+  if(!rows[0]) return res.status(404).json({error:"Note not found"});
+  res.json({note:normalizeNoteRow(rows[0])});
+}));
+app.put("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const title=String(req.body?.title||"").trim();
+  const content=String(req.body?.content||"").trim();
+  if(!content) return res.status(400).json({error:"Note content is required"});
+  const {rows}=await query(`
+    UPDATE notes SET title=$3,content=$4,updated_at=NOW()
+    WHERE id=$2 AND user_id=$1 RETURNING *
+  `,[userId(req),req.params.id,title||noteTitle(content),content]);
+  if(!rows[0]) return res.status(404).json({error:"Note not found"});
+  res.json({note:normalizeNoteRow(rows[0])});
+}));
+app.delete("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const result=await query(`DELETE FROM notes WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
+  res.json({ok:result.rowCount>0});
+}));
+app.post("/notes/:id/review", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`
+    UPDATE notes SET manual_review_count=manual_review_count+1,last_reviewed_at=NOW(),updated_at=NOW()
+    WHERE id=$2 AND user_id=$1 RETURNING *
+  `,[userId(req),req.params.id]);
+  if(!rows[0]) return res.status(404).json({error:"Note not found"});
+  res.json({note:normalizeNoteRow(rows[0])});
+}));
+
 function normalizeCardRow(r){
   return {
     id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,
     tags:Array.isArray(r.tags)&&r.tags.length?r.tags:[dateTag(r.created_at),r.category].filter(Boolean),
     speakOrder:r.speak_order,fsrs:r.fsrs,due:r.due,reviewCount:r.review_count,
-    createdAt:r.created_at,updatedAt:r.updated_at,stateName:getStateName(r.fsrs)
+    createdAt:r.created_at,updatedAt:r.updated_at,sourceNoteId:r.source_note_id||null,stateName:getStateName(r.fsrs)
   };
 }
 app.get("/cards", requireAuth, asyncRoute(async(req,res)=>{
@@ -346,10 +407,19 @@ const organizeSchema={
 app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
   const text=String(req.body?.text||"").trim();
   if(!text) return res.status(400).json({error:"Text is required"});
-  const data=await generateStructured({
-    name:"study_cards",
-    schema:organizeSchema,
-    system:`Turn the user's study notes into concise spaced-repetition cards.
+
+  const noteTags=normalizeTags([]);
+  const savedNote=await query(`
+    INSERT INTO notes(user_id,title,content,tags)
+    VALUES($1,$2,$3,$4) RETURNING *
+  `,[userId(req),noteTitle(text),text,noteTags]);
+  const note=normalizeNoteRow(savedNote.rows[0]);
+
+  try{
+    const data=await generateStructured({
+      name:"study_cards",
+      schema:organizeSchema,
+      system:`Turn the user's study notes into concise spaced-repetition cards.
 Use only information supplied by the user. Do not add unsupported factual claims.
 Cards may be Chinese, English, or bilingual.
 Front should be a recall prompt or term; back should contain the essential answer.
@@ -358,22 +428,27 @@ For technical notes, prefer concept questions over trivial sentence copying.
 For each card, generate 2 to 4 concise semantic tags based on the content. Do not include dates or timestamps; the server adds the date tag automatically.
 Prefer reusable topical tags such as "英语连读", "发音", "环境工程", "CO2捕集", rather than vague tags like "学习".
 Return JSON matching the schema.`,
-    user:text
-  });
-  res.json(data);
+      user:text
+    });
+    res.json({...data,note});
+  }catch(err){
+    err.savedNote=note;
+    throw err;
+  }
 }));
 app.post("/ai/organize/save", requireAuth, asyncRoute(async(req,res)=>{
   const input=Array.isArray(req.body?.cards)?req.body.cards.slice(0,30):[];
+  const noteId=req.body?.noteId||null;
   if(!input.length) return res.status(400).json({error:"No cards"});
   const saved=[];
   for(const c of input){
     if(!String(c.front||"").trim()||!String(c.back||"").trim()) continue;
     const fsrs=newFsrsCard();
     const {rows}=await query(`
-      INSERT INTO cards(user_id,front,back,example,category,tags,speak_order,fsrs,due)
-      VALUES($1,$2,$3,$4,$5,$6,'front-back-example',$7,$8) RETURNING *
+      INSERT INTO cards(user_id,front,back,example,category,tags,speak_order,fsrs,due,source_note_id)
+      VALUES($1,$2,$3,$4,$5,$6,'front-back-example',$7,$8,$9) RETURNING *
     `,[userId(req),String(c.front).trim(),String(c.back).trim(),String(c.example||"").trim(),
-       String((c.tags||[])[0]||"Other").trim(),normalizeTags(c.tags),fsrs,fsrs.due]);
+       String((c.tags||[])[0]||"Other").trim(),normalizeTags(c.tags),fsrs,fsrs.due,noteId]);
     saved.push(normalizeCardRow(rows[0]));
   }
   res.status(201).json({cards:saved});
