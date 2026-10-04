@@ -1,6 +1,7 @@
 const $=id=>document.getElementById(id);
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
+let ttsVoices=[],voiceCursor={zh:0,en:0};
 
 async function api(path,opts={}){
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
@@ -49,7 +50,41 @@ function renderDue(){
   $("queueList").innerHTML=due.map((x,i)=>'<div class="card-item"><div><b>'+esc(x.front)+'</b><div class="muted">'+esc(x.back)+'</div></div><span class="chip">'+(i===dueIndex?"当前":esc(x.stateName))+'</span></div>').join("")||'<div class="muted">今天没有到期卡片。</div>';
 }
 function lang(t){return /[\u3400-\u9fff]/.test(t)?"zh-CN":"en-US"}
-function speakOne(text,cb){if(!text){if(cb)cb();return}const u=new SpeechSynthesisUtterance(text);u.lang=lang(text);u.rate=u.lang==="zh-CN"?Number(settings.chinese_rate||1.0):Number(settings.english_rate||$("ttsRate").value||1.0);u.onend=()=>cb&&cb();speechSynthesis.speak(u)}
+function refreshVoices(){
+  ttsVoices=speechSynthesis.getVoices()||[];
+  const zh=ttsVoices.filter(v=>/^zh(-|_)/i.test(v.lang));
+  const en=ttsVoices.filter(v=>/^en(-|_)/i.test(v.lang));
+  const fill=(id,list,saved)=>{
+    const el=$(id);if(!el)return;
+    const current=saved||el.value||"auto";
+    el.innerHTML='<option value="auto">自动轮换</option>'+list.map(v=>'<option value="'+esc(v.name)+'">'+esc(v.name)+' · '+esc(v.lang)+'</option>').join("");
+    el.value=[...el.options].some(o=>o.value===current)?current:"auto";
+  };
+  fill("chineseVoice",zh,localStorage.getItem("memorycast_zh_voice")||"auto");
+  fill("englishVoice",en,localStorage.getItem("memorycast_en_voice")||"auto");
+}
+function pickVoice(locale){
+  const isZh=locale.startsWith("zh");
+  const list=ttsVoices.filter(v=>isZh?/^zh(-|_)/i.test(v.lang):/^en(-|_)/i.test(v.lang));
+  if(!list.length)return null;
+  const selectId=isZh?"chineseVoice":"englishVoice";
+  const chosen=$(selectId)?.value||"auto";
+  if(chosen!=="auto")return list.find(v=>v.name===chosen)||list[0];
+  const key=isZh?"zh":"en";
+  const idx=voiceCursor[key]%list.length;
+  voiceCursor[key]=(voiceCursor[key]+1)%list.length;
+  return list[idx];
+}
+function speakOne(text,cb){
+  if(!text){if(cb)cb();return}
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang=lang(text);
+  u.rate=u.lang==="zh-CN"?Number(settings.chinese_rate||1.0):Number(settings.english_rate||$("ttsRate").value||1.0);
+  const voice=pickVoice(u.lang);
+  if(voice)u.voice=voice;
+  u.onend=()=>cb&&cb();
+  speechSynthesis.speak(u);
+}
 function speakCurrent(){
   const c=due[dueIndex];if(!c)return;
   autoPlay=true;
@@ -200,7 +235,7 @@ async function deleteCurrentNote(){
 
 async function organize(){
   const text=$("noteInput").value.trim();if(!text)return alert("请先粘贴笔记");const b=$("organizeBtn");b.disabled=true;b.textContent="AI 整理中…";
-  try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text})});currentGeneratedNoteId=d.note?.id||null;generated=d.cards||[];loadNotes();$("generatedCards").innerHTML='<div class="muted" style="margin-bottom:10px">✓ 原始笔记已保存到笔记库，不会因生成卡片而删除。</div>'+generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+(c.tags||[]).map(esc).join(" · ")+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
+  try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text,splitMode:$("cardSplitMode").value})});currentGeneratedNoteId=d.note?.id||null;generated=d.cards||[];loadNotes();$("generatedCards").innerHTML='<div class="muted" style="margin-bottom:10px">✓ 原始笔记已保存到笔记库，不会因生成卡片而删除。</div>'+generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+(c.tags||[]).map(esc).join(" · ")+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
   catch(e){alert(e.message)}finally{b.disabled=!aiEnabled;b.textContent="✨ AI 整理为卡片"}
 }
 async function saveGenerated(){const d=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:generated,noteId:currentGeneratedNoteId})});generated=[];currentGeneratedNoteId=null;$("generatedCards").innerHTML='<div class="muted">已保存 '+d.cards.length+' 张卡片。</div>';$("saveGeneratedBtn").classList.add("hidden");await Promise.all([loadCards(),loadDue()])}
@@ -233,6 +268,7 @@ async function loadSettings(){
   $("ttsRate").value="1";
   $("dailyGoal").value=settings.daily_goal;
   $("reminderTime").value=String(settings.reminder_time||"09:00").slice(0,5);
+  refreshVoices();
   updatePushUi();
 }
 async function saveSettings(){
@@ -329,5 +365,5 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
-init().catch(e=>{console.error(e);showLogin()});
+$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;init().catch(e=>{console.error(e);showLogin()});
