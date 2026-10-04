@@ -119,6 +119,8 @@ async function openNoteReview(id){
   $("manualNoteContent").textContent=n.content;
   $("speakNoteBtn").disabled=false;
   $("markNoteReviewedBtn").disabled=false;
+  $("editNoteBtn").disabled=false;
+  $("deleteNoteBtn").disabled=false;
 }
 function speakSelectedNote(){
   if(!currentNoteId)return;
@@ -133,6 +135,43 @@ async function markSelectedNoteReviewed(){
   const i=notes.findIndex(x=>x.id===currentNoteId);
   if(i>=0)notes[i]=d.note;
   $("manualNoteMeta").textContent='自主复习 '+(d.note.manualReviewCount||0)+' 次 · 刚刚';
+  renderNotes();
+}
+
+function openNoteEdit(){
+  if(!currentNoteId)return;
+  const n=notes.find(x=>x.id===currentNoteId);
+  if(!n)return;
+  $("noteEditTitle").value=n.title||"";
+  $("noteEditContent").value=n.content||"";
+  $("noteModal").classList.remove("hidden");
+}
+async function saveNoteEdit(){
+  if(!currentNoteId)return;
+  const title=$("noteEditTitle").value;
+  const content=$("noteEditContent").value;
+  if(!content.trim()) return alert("笔记内容不能为空");
+  const d=await api("/notes/"+currentNoteId,{method:"PUT",body:JSON.stringify({title,content})});
+  const i=notes.findIndex(x=>x.id===currentNoteId);
+  if(i>=0)notes[i]=d.note;
+  $("manualNoteTitle").textContent=d.note.title;
+  $("manualNoteContent").textContent=d.note.content;
+  $("noteModal").classList.add("hidden");
+  renderNotes();
+}
+async function deleteCurrentNote(){
+  if(!currentNoteId)return;
+  if(!confirm("删除这篇原始笔记？相关卡片不会被删除，只会解除来源关联。"))return;
+  await api("/notes/"+currentNoteId,{method:"DELETE"});
+  notes=notes.filter(x=>x.id!==currentNoteId);
+  currentNoteId=null;
+  $("manualNoteTitle").textContent="自主复习";
+  $("manualNoteMeta").textContent="选择左侧一篇笔记";
+  $("manualNoteContent").textContent="这里会显示完整原始笔记。";
+  $("speakNoteBtn").disabled=true;
+  $("markNoteReviewedBtn").disabled=true;
+  $("editNoteBtn").disabled=true;
+  $("deleteNoteBtn").disabled=true;
   renderNotes();
 }
 
@@ -267,5 +306,5 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;
+$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 init().catch(e=>{console.error(e);showLogin()});
