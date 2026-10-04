@@ -122,7 +122,7 @@ function refreshVoices(){
   const fill=(id,list,saved)=>{
     const el=$(id);if(!el)return;
     const current=saved||el.value||"auto";
-    el.innerHTML='<option value="auto">自然音色轮换（推荐）</option>'+
+    el.innerHTML='<option value="auto">自然音色轮换</option>'+
       list.map(v=>'<option value="'+esc(v.name)+'">'+esc(v.name)+' · '+esc(v.lang)+'</option>').join("");
     el.value=[...el.options].some(o=>o.value===current)?current:"auto";
   };
@@ -144,6 +144,23 @@ function pickVoice(locale){
   voiceCursor[key]=(voiceCursor[key]+1)%natural.length;
   return natural[idx];
 }
+function voiceStyleProfile(locale){
+  const isZh=locale.startsWith("zh");
+  const id=isZh?"chineseVoiceStyle":"englishVoiceStyle";
+  const style=$(id)?.value||localStorage.getItem("memorycast_"+(isZh?"zh":"en")+"_voice_style")||"natural";
+
+  if(style==="host"){
+    return isZh
+      ? {rate:0.94,pitch:0.92}
+      : {rate:0.95,pitch:0.94};
+  }
+  if(style==="lazy"){
+    return isZh
+      ? {rate:0.88,pitch:1.08}
+      : {rate:0.90,pitch:1.05};
+  }
+  return {rate:1,pitch:1};
+}
 function speakOne(text,cb){
   if(!text){if(cb)cb();return}
   const parts=splitByLanguage(text);
@@ -159,11 +176,13 @@ function speakOne(text,cb){
     const part=parts[i];
     const u=new SpeechSynthesisUtterance(part.text);
     u.lang=part.lang;
-    u.pitch=1;
+    const profile=voiceStyleProfile(part.lang);
+    u.pitch=profile.pitch;
     u.volume=1;
-    u.rate=part.lang==="zh-CN"
+    const baseRate=part.lang==="zh-CN"
       ? Number(settings.chinese_rate||1.0)
       : Number(settings.english_rate||$("ttsRate").value||1.0);
+    u.rate=Math.max(0.6,Math.min(1.6,baseRate*profile.rate));
     const voice=fixedVoices[part.lang];
     if(voice)u.voice=voice;
     u.onend=()=>run(i+1);
@@ -356,6 +375,8 @@ async function loadSettings(){
   $("dailyGoal").value=settings.daily_goal;
   $("reminderTime").value=String(settings.reminder_time||"09:00").slice(0,5);
   refreshVoices();
+  $("englishVoiceStyle").value=localStorage.getItem("memorycast_en_voice_style")||"natural";
+  $("chineseVoiceStyle").value=localStorage.getItem("memorycast_zh_voice_style")||"natural";
   updatePushUi();
 }
 async function saveSettings(){
@@ -457,5 +478,5 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;init().catch(e=>{console.error(e);showLogin()});
