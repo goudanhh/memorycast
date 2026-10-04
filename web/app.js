@@ -30,7 +30,7 @@ async function loadDue(){const d=await api("/due");due=d.cards||[];dueIndex=Math
 function renderDue(){
   const c=due[dueIndex];
   if(!c){$("cardCat").textContent="DONE";$("cardFront").textContent="今天的复习完成了 🎉";$("cardBack").textContent="可以去做 AI 测试或添加新知识。";$("cardExample").textContent="";$("cardProgress").textContent="0 / 0"}
-  else{$("cardCat").textContent=c.category+" · "+c.stateName;$("cardFront").textContent=c.front;$("cardBack").textContent=c.back;$("cardExample").textContent=c.example||"";$("cardProgress").textContent=(dueIndex+1)+" / "+due.length}
+  else{$("cardCat").textContent=(c.tags||[]).join(" · ")+" · "+c.stateName;$("cardFront").textContent=c.front;$("cardBack").textContent=c.back;$("cardExample").textContent=c.example||"";$("cardProgress").textContent=(dueIndex+1)+" / "+due.length}
   $("queueList").innerHTML=due.map((x,i)=>'<div class="card-item"><div><b>'+esc(x.front)+'</b><div class="muted">'+esc(x.back)+'</div></div><span class="chip">'+(i===dueIndex?"当前":esc(x.stateName))+'</span></div>').join("")||'<div class="muted">今天没有到期卡片。</div>';
 }
 function lang(t){return /[\u3400-\u9fff]/.test(t)?"zh-CN":"en-US"}
@@ -81,21 +81,27 @@ function nextDue(){
 }
 async function grade(rating){const c=due[dueIndex];if(!c)return;await api("/review",{method:"POST",body:JSON.stringify({id:c.id,rating})});due.splice(dueIndex,1);if(dueIndex>=due.length)dueIndex=0;renderDue();await Promise.all([loadCards(),loadStats()])}
 
-function renderCategories(){const cats=[...new Set(cards.map(c=>c.category).filter(Boolean))].sort();$("categoryFilter").innerHTML='<option value="">全部分类</option>'+cats.map(c=>"<option>"+esc(c)+"</option>").join("")}
+function renderCategories(){
+  const tags=[...new Set(cards.flatMap(c=>c.tags||[]).filter(Boolean))].sort();
+  $("categoryFilter").innerHTML='<option value="">全部标签</option>'+tags.map(t=>"<option>"+esc(t)+"</option>").join("");
+}
 function renderLibrary(){
-  const key=($("searchInput")?.value||"").toLowerCase(),cat=$("categoryFilter")?.value||"";
-  const arr=cards.filter(c=>(!key||((c.front+" "+c.back+" "+c.example).toLowerCase().includes(key)))&&(!cat||c.category===cat));
-  $("libraryList").innerHTML=arr.map(c=>'<div class="card-item"><div><b>'+esc(c.front)+'</b><div class="muted">'+esc(c.back)+'</div><div class="muted">下次：'+new Date(c.due).toLocaleString()+'</div></div><div class="card-actions"><span class="chip">'+esc(c.category)+'</span><button class="ghost" data-edit="'+c.id+'">编辑</button><button class="ghost" data-del="'+c.id+'">删除</button></div></div>').join("")||'<div class="muted">暂无内容。</div>';
+  const key=($("searchInput")?.value||"").toLowerCase(),tag=$("categoryFilter")?.value||"";
+  const arr=cards.filter(c=>{
+    const hay=(c.front+" "+c.back+" "+c.example+" "+(c.tags||[]).join(" ")).toLowerCase();
+    return (!key||hay.includes(key))&&(!tag||(c.tags||[]).includes(tag));
+  });
+  $("libraryList").innerHTML=arr.map(c=>'<div class="card-item"><div><b>'+esc(c.front)+'</b><div class="muted">'+esc(c.back)+'</div><div class="muted">下次：'+new Date(c.due).toLocaleString()+'</div></div><div class="card-actions"><div>'+(c.tags||[]).map(t=>'<span class="chip">'+esc(t)+'</span>').join(" ")+'</div><button class="ghost" data-edit="'+c.id+'">编辑</button><button class="ghost" data-del="'+c.id+'">删除</button></div></div>').join("")||'<div class="muted">暂无内容。</div>';
   document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openEdit(b.dataset.edit));document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>deleteCard(b.dataset.del));
 }
-function openNew(){editId=null;$("modalTitle").textContent="新建卡片";$("mFront").value="";$("mBack").value="";$("mExample").value="";$("mCategory").value="Other";$("modal").classList.remove("hidden")}
-function openEdit(id){const c=cards.find(x=>x.id===id);if(!c)return;editId=id;$("modalTitle").textContent="编辑卡片";$("mFront").value=c.front;$("mBack").value=c.back;$("mExample").value=c.example;$("mCategory").value=c.category;$("modal").classList.remove("hidden")}
-async function saveModal(){const body={front:$("mFront").value.trim(),back:$("mBack").value.trim(),example:$("mExample").value.trim(),category:$("mCategory").value.trim()||"Other"};if(!body.front||!body.back)return alert("请填写正面和背面");await api(editId?"/cards/"+editId:"/cards",{method:editId?"PUT":"POST",body:JSON.stringify(body)});$("modal").classList.add("hidden");await Promise.all([loadCards(),loadDue()])}
+function openNew(){editId=null;$("modalTitle").textContent="新建卡片";$("mFront").value="";$("mBack").value="";$("mExample").value="";$("mTags").value="";$("modal").classList.remove("hidden")}
+function openEdit(id){const c=cards.find(x=>x.id===id);if(!c)return;editId=id;$("modalTitle").textContent="编辑卡片";$("mFront").value=c.front;$("mBack").value=c.back;$("mExample").value=c.example;$("mTags").value=(c.tags||[]).filter(t=>!/^\d{4}-\d{2}-\d{2}$/.test(t)).join(", ");$("modal").classList.remove("hidden")}
+async function saveModal(){const tags=$("mTags").value.split(/[,，]/).map(x=>x.trim()).filter(Boolean);const body={front:$("mFront").value.trim(),back:$("mBack").value.trim(),example:$("mExample").value.trim(),tags,category:tags[0]||"Other"};if(!body.front||!body.back)return alert("请填写正面和背面");await api(editId?"/cards/"+editId:"/cards",{method:editId?"PUT":"POST",body:JSON.stringify(body)});$("modal").classList.add("hidden");await Promise.all([loadCards(),loadDue()])}
 async function deleteCard(id){if(!confirm("删除这张卡片？"))return;await api("/cards/"+id,{method:"DELETE"});await Promise.all([loadCards(),loadDue()])}
 
 async function organize(){
   const text=$("noteInput").value.trim();if(!text)return alert("请先粘贴笔记");const b=$("organizeBtn");b.disabled=true;b.textContent="AI 整理中…";
-  try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text})});generated=d.cards||[];$("generatedCards").innerHTML=generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+esc(c.category)+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
+  try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text})});generated=d.cards||[];$("generatedCards").innerHTML=generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+(c.tags||[]).map(esc).join(" · ")+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
   catch(e){alert(e.message)}finally{b.disabled=!aiEnabled;b.textContent="✨ AI 整理为卡片"}
 }
 async function saveGenerated(){const d=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:generated})});generated=[];$("generatedCards").innerHTML='<div class="muted">已保存 '+d.cards.length+' 张卡片。</div>';$("saveGeneratedBtn").classList.add("hidden");await Promise.all([loadCards(),loadDue()])}
