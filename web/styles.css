@@ -16,3 +16,25 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .note-reader,.preserve-format{white-space:pre-wrap;tab-size:4}
 .note-reader{font-family:inherit;line-height:1.75;overflow-wrap:anywhere}
 .preserve-format{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+.note-reader{
+  white-space:pre-wrap!important;
+  tab-size:4;
+  font-family:inherit;
+  line-height:1.8;
+  margin:0;
+  overflow-wrap:anywhere;
+  word-break:normal;
+  background:transparent;
+  border:0;
+  padding:0;
+}
+.note-preview{
+  white-space:pre-wrap;
+  tab-size:4;
+  font-family:inherit;
+  margin:6px 0;
+  line-height:1.55;
+  max-height:8em;
+  overflow:hidden;
+}
