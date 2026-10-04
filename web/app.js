@@ -20,10 +20,25 @@ function go(id){
 async function init(){
   const auth=await fetch("/api/auth/me").then(r=>r.json());aiEnabled=!!auth.aiEnabled;
   $("aiStatusLogin").textContent=aiEnabled?"AI 已连接":"AI 尚未配置；基础复习仍可使用";
-  if(!auth.user){showLogin();return}me=auth.user;showApp();$("username").textContent=me.login;$("avatar").src=me.avatarUrl||"";
-  $("aiDisabledImport").classList.toggle("hidden",aiEnabled);$("aiDisabledQuiz").classList.toggle("hidden",aiEnabled);
-  $("organizeBtn").disabled=!aiEnabled;$("generateQuizBtn").disabled=!aiEnabled;
-  await Promise.all([loadCards(),loadDue(),loadSettings(),loadStats(),loadNotes()]);
+  if(!auth.user){showLogin();return}
+  me=auth.user;
+  showApp();
+  $("username").textContent=me.login;
+  $("avatar").src=me.avatarUrl||"";
+  $("aiDisabledImport").classList.toggle("hidden",aiEnabled);
+  $("aiDisabledQuiz").classList.toggle("hidden",aiEnabled);
+  $("organizeBtn").disabled=!aiEnabled;
+  $("generateQuizBtn").disabled=!aiEnabled;
+
+  const tasks=[
+    ["卡片",loadCards],["今日复习",loadDue],["设置",loadSettings],["统计",loadStats],["笔记",loadNotes]
+  ];
+  const results=await Promise.allSettled(tasks.map(([,fn])=>fn()));
+  const failed=results.map((r,i)=>r.status==="rejected"?tasks[i][0]:null).filter(Boolean);
+  if(failed.length){
+    console.error("Initial modules failed:",failed,results);
+    $("syncText").textContent="部分模块加载失败："+failed.join("、");
+  }
 }
 async function loadCards(){const d=await api("/cards");cards=d.cards||[];$("homeCards").textContent=cards.length;renderLibrary();renderCategories();$("syncText").textContent=cards.length+" 个知识点已同步"}
 async function loadDue(){const d=await api("/due");due=d.cards||[];dueIndex=Math.min(dueIndex,Math.max(0,due.length-1));$("homeDue").textContent=due.length;renderDue()}
@@ -103,8 +118,6 @@ async function loadNotes(){
   const d=await api("/notes");
   notes=d.notes||[];
   renderNotes();
-  await Promise.all([loadCards(),loadDue()]);
-  if(result?.deletedCards>0) alert("笔记已删除，同时删除了 "+result.deletedCards+" 张相关卡片。");
 }
 function renderNotes(){
   if(!$("notesList"))return;
@@ -179,6 +192,8 @@ async function deleteCurrentNote(){
   $("editNoteBtn").disabled=true;
   $("deleteNoteBtn").disabled=true;
   renderNotes();
+  await Promise.all([loadCards(),loadDue()]);
+  if(result?.deletedCards>0) alert("笔记已删除，同时删除了 "+result.deletedCards+" 张相关卡片。");
 }
 
 async function organize(){
