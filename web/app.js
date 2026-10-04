@@ -89,14 +89,37 @@ function splitByLanguage(text){
   flush();
   return parts.filter(x=>x.text.trim());
 }
+function normalVoices(locale){
+  const isZh=locale.startsWith("zh");
+  const exact=isZh
+    ? ttsVoices.filter(v=>/^zh[-_]CN$/i.test(v.lang))
+    : ttsVoices.filter(v=>/^en[-_](US|GB)$/i.test(v.lang));
+
+  const fallback=isZh
+    ? ttsVoices.filter(v=>/^zh([-_]|$)/i.test(v.lang))
+    : ttsVoices.filter(v=>/^en([-_]|$)/i.test(v.lang));
+
+  const pool=exact.length?exact:fallback;
+  const bad=/\b(compact|espeak|festival|novelty|whisper|robot|trinoids|zarvox|boing|bubbles|bells|organ|bad news|good news)\b/i;
+  const clean=pool.filter(v=>!bad.test(v.name||""));
+
+  return (clean.length?clean:pool)
+    .sort((a,b)=>
+      Number(b.default)-Number(a.default) ||
+      Number(b.localService)-Number(a.localService) ||
+      String(a.name).localeCompare(String(b.name))
+    )
+    .slice(0,4);
+}
 function refreshVoices(){
   ttsVoices=speechSynthesis.getVoices()||[];
-  const zh=ttsVoices.filter(v=>/^zh(-|_)/i.test(v.lang));
-  const en=ttsVoices.filter(v=>/^en(-|_)/i.test(v.lang));
+  const zh=normalVoices("zh-CN");
+  const en=normalVoices("en-US");
   const fill=(id,list,saved)=>{
     const el=$(id);if(!el)return;
     const current=saved||el.value||"auto";
-    el.innerHTML='<option value="auto">自动轮换</option>'+list.map(v=>'<option value="'+esc(v.name)+'">'+esc(v.name)+' · '+esc(v.lang)+'</option>').join("");
+    el.innerHTML='<option value="auto">自然音色轮换（推荐）</option>'+
+      list.map(v=>'<option value="'+esc(v.name)+'">'+esc(v.name)+' · '+esc(v.lang)+'</option>').join("");
     el.value=[...el.options].some(o=>o.value===current)?current:"auto";
   };
   fill("chineseVoice",zh,localStorage.getItem("memorycast_zh_voice")||"auto");
@@ -104,15 +127,18 @@ function refreshVoices(){
 }
 function pickVoice(locale){
   const isZh=locale.startsWith("zh");
-  const list=ttsVoices.filter(v=>isZh?/^zh(-|_)/i.test(v.lang):/^en(-|_)/i.test(v.lang));
+  const list=normalVoices(locale);
   if(!list.length)return null;
   const selectId=isZh?"chineseVoice":"englishVoice";
   const chosen=$(selectId)?.value||"auto";
   if(chosen!=="auto")return list.find(v=>v.name===chosen)||list[0];
+
+  const preferred=list.filter(v=>v.default||v.localService);
+  const natural=preferred.length?preferred:list;
   const key=isZh?"zh":"en";
-  const idx=voiceCursor[key]%list.length;
-  voiceCursor[key]=(voiceCursor[key]+1)%list.length;
-  return list[idx];
+  const idx=voiceCursor[key]%natural.length;
+  voiceCursor[key]=(voiceCursor[key]+1)%natural.length;
+  return natural[idx];
 }
 function speakOne(text,cb){
   if(!text){if(cb)cb();return}
