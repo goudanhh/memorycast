@@ -87,7 +87,7 @@ Gemini 是默认 AI 提供商，可使用 Google AI Studio 创建的 API Key：
 
     AI_PROVIDER=gemini
     GEMINI_API_KEY=你的GeminiKey
-    GEMINI_MODEL=gemini-3.8-flash
+    GEMINI_MODEL=gemini-3.5-flash-lite
 
 也保留 OpenAI 兼容（可选）：
 
