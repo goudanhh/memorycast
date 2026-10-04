@@ -103,6 +103,8 @@ async function loadNotes(){
   const d=await api("/notes");
   notes=d.notes||[];
   renderNotes();
+  await Promise.all([loadCards(),loadDue()]);
+  if(result?.deletedCards>0) alert("笔记已删除，同时删除了 "+result.deletedCards+" 张相关卡片。");
 }
 function renderNotes(){
   if(!$("notesList"))return;
@@ -165,8 +167,8 @@ async function saveNoteEdit(){
 }
 async function deleteCurrentNote(){
   if(!currentNoteId)return;
-  if(!confirm("删除这篇原始笔记？相关卡片不会被删除，只会解除来源关联。"))return;
-  await api("/notes/"+currentNoteId,{method:"DELETE"});
+  if(!confirm("删除这篇原始笔记？这篇笔记生成的相关卡片也会一起删除，且无法恢复。"))return;
+  const result=await api("/notes/"+currentNoteId,{method:"DELETE"});
   notes=notes.filter(x=>x.id!==currentNoteId);
   currentNoteId=null;
   $("manualNoteTitle").textContent="自主复习";
