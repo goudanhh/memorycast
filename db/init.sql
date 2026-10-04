@@ -96,3 +96,20 @@ CREATE TABLE IF NOT EXISTS app_config (
   value JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+CREATE TABLE IF NOT EXISTS notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '未命名笔记',
+  content TEXT NOT NULL,
+  tags TEXT[] NOT NULL DEFAULT '{}'::text[],
+  manual_review_count INTEGER NOT NULL DEFAULT 0,
+  last_reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id, created_at DESC);
+
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID REFERENCES notes(id) ON DELETE SET NULL;
