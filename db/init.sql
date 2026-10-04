@@ -66,13 +66,33 @@ CREATE INDEX IF NOT EXISTS idx_quiz_user_created ON quiz_sessions(user_id, creat
 
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  english_rate REAL NOT NULL DEFAULT 1.2,
-  chinese_rate REAL NOT NULL DEFAULT 1.3,
+  english_rate REAL NOT NULL DEFAULT 1.0,
+  chinese_rate REAL NOT NULL DEFAULT 1.0,
   daily_goal INTEGER NOT NULL DEFAULT 20,
   fsrs_retention REAL NOT NULL DEFAULT 0.90,
   wrong_requeue BOOLEAN NOT NULL DEFAULT TRUE,
+  reminder_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  reminder_time TIME NOT NULL DEFAULT '09:00',
+  reminder_timezone TEXT NOT NULL DEFAULT 'UTC',
+  last_reminder_date DATE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
 ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[];
+
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT UNIQUE NOT NULL,
+  subscription JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS app_config (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
