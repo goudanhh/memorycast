@@ -194,7 +194,13 @@ await query(`
   )
 `);
 await query(`CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id,created_at DESC)`);
-await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID REFERENCES notes(id) ON DELETE SET NULL`);
+await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID`);
+await query(`ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_source_note_id_fkey`);
+await query(`
+  ALTER TABLE cards
+  ADD CONSTRAINT cards_source_note_id_fkey
+  FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE
+`);
 
 app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), mode:"single-user" }));
 app.get("/auth/me", asyncRoute(async (req,res) => {
@@ -290,8 +296,11 @@ app.put("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
   res.json({note:normalizeNoteRow(rows[0])});
 }));
 app.delete("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
-  const result=await query(`DELETE FROM notes WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
-  res.json({ok:result.rowCount>0});
+  const uid=userId(req);
+  const noteId=req.params.id;
+  const count=await query(`SELECT COUNT(*)::int AS n FROM cards WHERE user_id=$1 AND source_note_id=$2`,[uid,noteId]);
+  const result=await query(`DELETE FROM notes WHERE id=$2 AND user_id=$1`,[uid,noteId]);
+  res.json({ok:result.rowCount>0,deletedCards:result.rowCount>0?(count.rows[0]?.n||0):0});
 }));
 app.post("/notes/:id/review", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`
