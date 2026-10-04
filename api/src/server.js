@@ -4,7 +4,7 @@ import compression from "compression";
 import crypto from "node:crypto";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
-import { hasAI, openai, model } from "./ai.js";
+import { hasAI, generateStructured, aiInfo } from "./ai.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -38,12 +38,13 @@ function requireAuth(req,res,next) {
 function asyncRoute(fn) { return (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next); }
 function userId(req){ return req.localUserId; }
 
-app.get("/health", (req,res) => res.json({ ok:true, ai:hasAI(), mode:"single-user" }));
+app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), mode:"single-user" }));
 app.get("/auth/me", asyncRoute(async (req,res) => {
   const id = await getLocalUserId();
   res.json({
     user:{ id, login:"Local User", avatarUrl:null },
     aiEnabled:hasAI(),
+    ai:aiInfo(),
     authDisabled:true
   });
 }));
@@ -156,21 +157,19 @@ const organizeSchema={
 app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
   const text=String(req.body?.text||"").trim();
   if(!text) return res.status(400).json({error:"Text is required"});
-  const response=await openai().responses.create({
-    model:model(),
-    input:[
-      {role:"system",content:`Turn the user's study notes into concise spaced-repetition cards.
+  const data=await generateStructured({
+    name:"study_cards",
+    schema:organizeSchema,
+    system:`Turn the user's study notes into concise spaced-repetition cards.
 Use only information supplied by the user. Do not add unsupported factual claims.
 Cards may be Chinese, English, or bilingual.
 Front should be a recall prompt or term; back should contain the essential answer.
 For English vocabulary, include a short natural example when useful.
 For technical notes, prefer concept questions over trivial sentence copying.
-Return JSON matching the schema.`},
-      {role:"user",content:text}
-    ],
-    text:{format:{type:"json_schema",name:"study_cards",strict:true,schema:organizeSchema}}
+Return JSON matching the schema.`,
+    user:text
   });
-  res.json(JSON.parse(response.output_text));
+  res.json(data);
 }));
 app.post("/ai/organize/save", requireAuth, asyncRoute(async(req,res)=>{
   const input=Array.isArray(req.body?.cards)?req.body.cards.slice(0,30):[];
@@ -222,20 +221,17 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,
     difficulty:Number(r.fsrs?.difficulty||0),due:r.due
   }));
-  const response=await openai().responses.create({
-    model:model(),
-    input:[
-      {role:"system",content:`Generate a rigorous but fair study quiz only from the supplied cards.
+  const data=await generateStructured({
+    name:"memorycast_quiz",
+    schema:quizSchema,
+    system:`Generate a rigorous but fair study quiz only from the supplied cards.
 Mix MCQ, fill, short-answer and listening items when appropriate.
 For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
 For English, test recognition and production. For technical material, test understanding.
-Return only schema-valid JSON.`},
-      {role:"user",content:JSON.stringify({count,mode,cards:source})}
-    ],
-    text:{format:{type:"json_schema",name:"memorycast_quiz",strict:true,schema:quizSchema}}
+Return only schema-valid JSON.`,
+    user:JSON.stringify({count,mode,cards:source})
   });
-  const data=JSON.parse(response.output_text);
   const allowed=new Set(source.map(x=>x.id));
   const questions=data.questions.filter(q=>allowed.has(q.cardId)).slice(0,count).map(q=>({...q,id:crypto.randomUUID()}));
   if(!questions.length) return res.status(502).json({error:"AI 未生成有效题目。"});
@@ -259,18 +255,15 @@ async function judgeAnswer(q,userAnswer){
     properties:{verdict:{type:"string",enum:["correct","partial","wrong"]},score:{type:"number",minimum:0,maximum:1},feedback:{type:"string"}},
     required:["verdict","score","feedback"],additionalProperties:false
   };
-  const response=await openai().responses.create({
-    model:model(),
-    input:[
-      {role:"system",content:`Grade the learner's answer semantically.
+  return generateStructured({
+    name:"grade",
+    schema,
+    system:`Grade the learner's answer semantically.
 Accept equivalent wording, bilingual equivalents, and minor spelling or grammar errors.
 correct = substantively correct; partial = core idea present but important detail missing; wrong = incorrect or absent.
-Return schema-valid JSON.`},
-      {role:"user",content:JSON.stringify({type:q.type,prompt:q.prompt,expected:q.answer,acceptable:q.acceptableAnswers,userAnswer})}
-    ],
-    text:{format:{type:"json_schema",name:"grade",strict:true,schema}}
+Return schema-valid JSON.`,
+    user:JSON.stringify({type:q.type,prompt:q.prompt,expected:q.answer,acceptable:q.acceptableAnswers,userAnswer})
   });
-  return JSON.parse(response.output_text);
 }
 app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   const {sessionId,questionId,answer=""}=req.body||{};
