@@ -1,0 +1,5 @@
+.env
+certbot/
+backups/*.sql.gz
+node_modules/
+.DS_Store
