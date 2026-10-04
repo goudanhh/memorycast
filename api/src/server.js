@@ -416,6 +416,7 @@ const organizeSchema={
 app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
   const rawText=String(req.body?.text??"");
   const text=rawText.trim();
+  const splitMode=req.body?.splitMode==="single"?"single":"split";
   if(!text) return res.status(400).json({error:"Text is required"});
 
   const noteTags=normalizeTags([]);
@@ -426,6 +427,19 @@ app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
   const note=normalizeNoteRow(savedNote.rows[0]);
 
   try{
+    if(splitMode==="single"){
+      const semanticTags=await autoSemanticTags(note.title, rawText, "");
+      return res.json({
+        cards:[{
+          front:note.title,
+          back:rawText,
+          example:"",
+          tags:semanticTags
+        }],
+        note,
+        splitMode
+      });
+    }
     const data=await generateStructured({
       name:"study_cards",
       schema:organizeSchema,
@@ -440,7 +454,7 @@ Prefer reusable topical tags such as "英语连读", "发音", "环境工程", "
 Return JSON matching the schema.`,
       user:text
     });
-    res.json({...data,note});
+    res.json({...data,note,splitMode});
   }catch(err){
     err.savedNote=note;
     throw err;
@@ -504,8 +518,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
 Mix MCQ, fill, short-answer and listening items when appropriate.
 For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
-For English, test recognition and production. For technical material, test understanding.
-Return only schema-valid JSON.`,
+For English, test recognition and production. For technical material, test understanding.\nA single card may contain a whole note: in that case, generate multiple distinct questions from different facts or concepts in that card. Reusing the same cardId across multiple questions is allowed.\nReturn only schema-valid JSON.`,
     user:JSON.stringify({count,mode,cards:source})
   });
   const allowed=new Set(source.map(x=>x.id));
