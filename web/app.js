@@ -34,7 +34,7 @@ function renderDue(){
   $("queueList").innerHTML=due.map((x,i)=>'<div class="card-item"><div><b>'+esc(x.front)+'</b><div class="muted">'+esc(x.back)+'</div></div><span class="chip">'+(i===dueIndex?"当前":esc(x.stateName))+'</span></div>').join("")||'<div class="muted">今天没有到期卡片。</div>';
 }
 function lang(t){return /[\u3400-\u9fff]/.test(t)?"zh-CN":"en-US"}
-function speakOne(text,cb){if(!text){if(cb)cb();return}const u=new SpeechSynthesisUtterance(text);u.lang=lang(text);u.rate=u.lang==="zh-CN"?Number(settings.chinese_rate||1.3):Number(settings.english_rate||$("ttsRate").value||1.2);u.onend=()=>cb&&cb();speechSynthesis.speak(u)}
+function speakOne(text,cb){if(!text){if(cb)cb();return}const u=new SpeechSynthesisUtterance(text);u.lang=lang(text);u.rate=u.lang==="zh-CN"?Number(settings.chinese_rate||1.0):Number(settings.english_rate||$("ttsRate").value||1.0);u.onend=()=>cb&&cb();speechSynthesis.speak(u)}
 function speakCurrent(){
   const c=due[dueIndex];if(!c)return;
   autoPlay=true;
@@ -126,13 +126,109 @@ async function submitQuiz(){
 function finishQuiz(){$("quizArea").classList.add("hidden");$("quizResult").classList.remove("hidden");$("quizResult").innerHTML='<div class="quiz-empty"><b style="font-size:34px">'+quizStats.correct+"/"+quizQuestions.length+"</b><br>正确 "+quizStats.correct+" · 基本正确 "+quizStats.partial+" · 错误 "+quizStats.wrong+'<br><span class="muted">错误和不完整答案已经影响对应卡片的 FSRS 排期。</span></div>'}
 
 async function loadStats(){if(!me)return;const d=await api("/stats");$("homeCards").textContent=d.cards;$("homeReviews").textContent=d.reviews;$("homeAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";$("statCards").textContent=d.cards;$("statReviews").textContent=d.reviews;$("statAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";$("statLast7").textContent=d.last7;$("categoryStats").innerHTML=(d.categories||[]).map(x=>'<div class="card-item"><div><b>'+esc(x.category)+'</b><div class="muted">平均 FSRS difficulty '+Number(x.avg_difficulty||0).toFixed(2)+'</div></div><span class="chip">'+x.count+" 张</span></div>").join("")||'<div class="muted">暂无统计。</div>'}
-async function loadSettings(){settings=await api("/settings");$("retentionSetting").value=String(Number(settings.fsrs_retention).toFixed(2));$("englishRate").value=String(settings.english_rate);$("chineseRate").value=String(settings.chinese_rate);$("dailyGoal").value=settings.daily_goal}
-async function saveSettings(){settings=await api("/settings",{method:"PUT",body:JSON.stringify({fsrs_retention:Number($("retentionSetting").value),english_rate:Number($("englishRate").value),chinese_rate:Number($("chineseRate").value),daily_goal:Number($("dailyGoal").value),wrong_requeue:true})});alert("设置已保存")}
+async function loadSettings(){
+  settings=await api("/settings");
+  $("retentionSetting").value=String(Number(settings.fsrs_retention).toFixed(2));
+  $("englishRate").value=String(settings.english_rate||1);
+  $("chineseRate").value=String(settings.chinese_rate||1);
+  $("ttsRate").value="1";
+  $("dailyGoal").value=settings.daily_goal;
+  $("reminderTime").value=String(settings.reminder_time||"09:00").slice(0,5);
+  updatePushUi();
+}
+async function saveSettings(){
+  settings=await api("/settings",{method:"PUT",body:JSON.stringify({
+    fsrs_retention:Number($("retentionSetting").value),
+    english_rate:Number($("englishRate").value),
+    chinese_rate:Number($("chineseRate").value),
+    daily_goal:Number($("dailyGoal").value),
+    wrong_requeue:true,
+    reminder_enabled:settings.reminder_enabled===true,
+    reminder_time:$("reminderTime").value||"09:00",
+    reminder_timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"
+  })});
+  updatePushUi();
+  alert("设置已保存");
+}
+
+function b64ToUint8Array(base64){
+  const pad="=".repeat((4-base64.length%4)%4);
+  const normalized=(base64+pad).replace(/-/g,"+").replace(/_/g,"/");
+  const raw=atob(normalized);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+function updatePushUi(){
+  if(!$("pushToggleBtn"))return;
+  const secure=window.isSecureContext;
+  $("pushToggleBtn").textContent=settings.reminder_enabled?"关闭推送":"启用推送";
+  $("pushStatus").textContent=secure
+    ? (settings.reminder_enabled?"已启用；每天 "+String(settings.reminder_time||"09:00").slice(0,5)+" 检查 FSRS 到期卡片":"未启用")
+    : "当前是 HTTP；绑定域名并开启 HTTPS 后才能启用后台推送";
+  $("pushToggleBtn").disabled=!secure;
+}
+async function enablePush(){
+  if(!window.isSecureContext){
+    alert("后台推送需要 HTTPS。当前 IP 的 HTTP 页面不能注册系统推送。");
+    return;
+  }
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)){
+    alert("当前浏览器不支持 Web Push。");
+    return;
+  }
+  const reg=await navigator.serviceWorker.register("/service-worker.js");
+  const permission=await Notification.requestPermission();
+  if(permission!=="granted"){alert("需要允许通知权限才能每日推送。");return}
+  const key=await api("/push/public-key");
+  let sub=await reg.pushManager.getSubscription();
+  if(!sub){
+    sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToUint8Array(key.publicKey)});
+  }
+  await api("/push/subscribe",{method:"POST",body:JSON.stringify({subscription:sub.toJSON()})});
+  settings=await api("/settings",{method:"PUT",body:JSON.stringify({
+    fsrs_retention:Number($("retentionSetting").value),
+    english_rate:Number($("englishRate").value),
+    chinese_rate:Number($("chineseRate").value),
+    daily_goal:Number($("dailyGoal").value),
+    wrong_requeue:true,
+    reminder_enabled:true,
+    reminder_time:$("reminderTime").value||"09:00",
+    reminder_timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"
+  })});
+  updatePushUi();
+  alert("每日 FSRS 推送已启用。");
+}
+async function disablePush(){
+  if("serviceWorker" in navigator){
+    const reg=await navigator.serviceWorker.getRegistration();
+    const sub=reg?await reg.pushManager.getSubscription():null;
+    if(sub){
+      await api("/push/unsubscribe",{method:"POST",body:JSON.stringify({endpoint:sub.endpoint})});
+      await sub.unsubscribe();
+    }
+  }
+  settings=await api("/settings",{method:"PUT",body:JSON.stringify({
+    fsrs_retention:Number($("retentionSetting").value),
+    english_rate:Number($("englishRate").value),
+    chinese_rate:Number($("chineseRate").value),
+    daily_goal:Number($("dailyGoal").value),
+    wrong_requeue:true,
+    reminder_enabled:false,
+    reminder_time:$("reminderTime").value||"09:00",
+    reminder_timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"
+  })});
+  updatePushUi();
+}
+async function togglePush(){
+  try{
+    if(settings.reminder_enabled) await disablePush();
+    else await enablePush();
+  }catch(e){alert(e.message)}
+}
 
 document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>go(b.dataset.page));document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;
+$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;
 init().catch(e=>{console.error(e);showLogin()});
