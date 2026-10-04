@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=note-format-2">
+<link rel="stylesheet" href="/styles.css?v=mobile-nav-1">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -41,10 +41,14 @@
     <button id="logoutBtn" class="ghost wide hidden">退出登录</button>
   </div>
 </aside>
+<div id="sidebarBackdrop" class="sidebar-backdrop"></div>
 
 <div class="content">
 <header class="topbar">
-  <div><b id="pageTitle">首页</b><div class="muted" id="syncText">正在同步…</div></div>
+  <div class="topbar-left">
+    <button id="mobileMenuBtn" class="ghost mobile-menu-btn" aria-label="打开菜单">☰ 菜单</button>
+    <div><b id="pageTitle">首页</b><div class="muted" id="syncText">正在同步…</div></div>
+  </div>
   <div class="row">
     <button id="watchBtn" class="ghost">⌚ 手表模式</button>
     <span class="cloud">☁ 已同步</span>
@@ -242,6 +246,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=strict-natural-en-2"></script>
+<script type="module" src="/app.js?v=mobile-nav-1"></script>
 </body>
 </html>
