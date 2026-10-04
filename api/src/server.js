@@ -309,7 +309,7 @@ Return only schema-valid JSON.`,
   const {rows:created}=await query(`
     INSERT INTO quiz_sessions(user_id,title,questions)
     VALUES($1,$2,$3) RETURNING id
-  `,[userId(req),data.title||"今日测试",questions]);
+  `,[userId(req),data.title||"今日测试",JSON.stringify(questions)]);
   res.json({
     sessionId:created[0].id,title:data.title||"今日测试",
     questions:questions.map(({answer,acceptableAnswers,explanation,...safe})=>safe)
@@ -353,7 +353,7 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
     questionId:q.id,cardId:q.cardId,userAnswer:String(answer),
     verdict:grade.verdict,score:grade.score,rating,answeredAt:new Date().toISOString()
   }];
-  await query(`UPDATE quiz_sessions SET answers=$3 WHERE id=$2 AND user_id=$1`,[userId(req),sessionId,answers]);
+  await query(`UPDATE quiz_sessions SET answers=$3::jsonb WHERE id=$2 AND user_id=$1`,[userId(req),sessionId,JSON.stringify(answers)]);
   res.json({verdict:grade.verdict,score:grade.score,feedback:grade.feedback,correctAnswer:q.answer,explanation:q.explanation,fsrsRating:rating,updatedCard});
 }));
 
