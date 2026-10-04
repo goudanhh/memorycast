@@ -112,4 +112,10 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id, created_at DESC);
 
-ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID REFERENCES notes(id) ON DELETE SET NULL;
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID REFERENCES notes(id) ON DELETE CASCADE;
+
+
+ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_source_note_id_fkey;
+ALTER TABLE cards
+  ADD CONSTRAINT cards_source_note_id_fkey
+  FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE;
