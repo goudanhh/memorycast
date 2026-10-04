@@ -206,7 +206,7 @@ app.put("/settings", requireAuth, asyncRoute(async(req,res)=>{
   const goal=Math.min(500,Math.max(1,Number(b.daily_goal ?? 20)));
   const wrong=b.wrong_requeue !== false;
   const reminderEnabled=b.reminder_enabled === true;
-  const reminderTime=/^([01]\\d|2[0-3]):[0-5]\\d$/.test(String(b.reminder_time||"")) ? String(b.reminder_time) : "09:00";
+  const reminderTime=/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(String(b.reminder_time||"")) ? String(b.reminder_time) : "09:00";
   const reminderTimezone=String(b.reminder_timezone||"UTC").slice(0,80);
   const {rows}=await query(`
     UPDATE user_settings SET
