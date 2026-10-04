@@ -447,7 +447,12 @@ async function togglePush(){
   }catch(e){alert(e.message)}
 }
 
-document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>go(b.dataset.page));document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
+function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
+function toggleMobileNav(){document.body.classList.toggle("mobile-nav-open")}
+document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{go(b.dataset.page);closeMobileNav()});
+document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
+$("mobileMenuBtn").onclick=toggleMobileNav;
+$("sidebarBackdrop").onclick=closeMobileNav;
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
