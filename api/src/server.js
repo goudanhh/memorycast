@@ -280,8 +280,8 @@ app.get("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
 }));
 app.put("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
   const title=String(req.body?.title||"").trim();
-  const content=String(req.body?.content||"").trim();
-  if(!content) return res.status(400).json({error:"Note content is required"});
+  const content=String(req.body?.content??"");
+  if(!content.trim()) return res.status(400).json({error:"Note content is required"});
   const {rows}=await query(`
     UPDATE notes SET title=$3,content=$4,updated_at=NOW()
     WHERE id=$2 AND user_id=$1 RETURNING *
@@ -405,14 +405,15 @@ const organizeSchema={
   required:["cards"],additionalProperties:false
 };
 app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
-  const text=String(req.body?.text||"").trim();
+  const rawText=String(req.body?.text??"");
+  const text=rawText.trim();
   if(!text) return res.status(400).json({error:"Text is required"});
 
   const noteTags=normalizeTags([]);
   const savedNote=await query(`
     INSERT INTO notes(user_id,title,content,tags)
     VALUES($1,$2,$3,$4) RETURNING *
-  `,[userId(req),noteTitle(text),text,noteTags]);
+  `,[userId(req),noteTitle(rawText),rawText,noteTags]);
   const note=normalizeNoteRow(savedNote.rows[0]);
 
   try{
