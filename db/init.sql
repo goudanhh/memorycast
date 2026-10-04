@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS cards (
   back TEXT NOT NULL,
   example TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL DEFAULT 'Other',
+  tags TEXT[] NOT NULL DEFAULT '{}'::text[],
   speak_order TEXT NOT NULL DEFAULT 'front-back-example',
   fsrs JSONB NOT NULL,
   due TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -72,3 +73,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
   wrong_requeue BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[];
