@@ -43,10 +43,36 @@ function dateTag(value = new Date()) {
 }
 function normalizeTags(input, createdAt = new Date()) {
   const raw = Array.isArray(input) ? input : String(input || "").split(/[,，]/);
-  const semantic = raw.map(x=>String(x).trim()).filter(Boolean).filter(x=>!/^(\d{4}-\d{2}-\d{2})$/.test(x));
+  const semantic = raw.map(x=>String(x).trim()).filter(Boolean).filter(x=>!(/^(\d{4}-\d{2}-\d{2})$/.test(x)));
   return [...new Set([dateTag(createdAt), ...semantic])].slice(0,8);
 }
 
+const tagSchema = {
+  type:"object",
+  properties:{ tags:{type:"array",minItems:2,maxItems:4,items:{type:"string"}} },
+  required:["tags"],
+  additionalProperties:false
+};
+
+async function autoSemanticTags(front, back, example="") {
+  if (!hasAI()) return ["Other"];
+  try {
+    const data = await generateStructured({
+      name:"card_tags",
+      schema:tagSchema,
+      system:`Generate 2 to 4 concise semantic tags for a spaced-repetition card.
+Tags must be based only on the supplied card content.
+Prefer reusable topical tags such as "英语连读", "发音", "环境工程", "CO2捕集", "FSRS", "词汇".
+Do not generate dates, timestamps, "学习", "笔记", "知识点", or similarly vague labels.
+Return only schema-valid JSON.`,
+      user:JSON.stringify({front,back,example})
+    });
+    return (data.tags||[]).map(x=>String(x).trim()).filter(Boolean).slice(0,4);
+  } catch (err) {
+    console.warn("Auto-tagging failed, using fallback tag:", err.message);
+    return ["Other"];
+  }
+}
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
 await query(`
   UPDATE cards
@@ -108,29 +134,51 @@ app.get("/cards", requireAuth, asyncRoute(async(req,res)=>{
   res.json({cards:rows.map(normalizeCardRow)});
 }));
 app.post("/cards", requireAuth, asyncRoute(async(req,res)=>{
-  const {front,back,example="",category="Other",tags=[],speakOrder="front-back-example"}=req.body||{};
-  if(!String(front||"").trim() || !String(back||"").trim())
+  const {front,back,example="",speakOrder="front-back-example"}=req.body||{};
+  const cleanFront=String(front||"").trim();
+  const cleanBack=String(back||"").trim();
+  const cleanExample=String(example||"").trim();
+  if(!cleanFront || !cleanBack)
     return res.status(400).json({error:"front and back are required"});
+
+  const semanticTags=await autoSemanticTags(cleanFront,cleanBack,cleanExample);
+  const tags=normalizeTags(semanticTags);
+  const category=semanticTags[0]||"Other";
   const fsrs=newFsrsCard();
+
   const {rows}=await query(`
     INSERT INTO cards(user_id,front,back,example,category,tags,speak_order,fsrs,due)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
-  `,[userId(req),String(front).trim(),String(back).trim(),String(example).trim(),
-     String(category).trim(),normalizeTags(tags),String(speakOrder),fsrs,fsrs.due]);
+  `,[userId(req),cleanFront,cleanBack,cleanExample,category,tags,String(speakOrder),fsrs,fsrs.due]);
+
   res.status(201).json({card:normalizeCardRow(rows[0])});
 }));
+
 app.put("/cards/:id", requireAuth, asyncRoute(async(req,res)=>{
-  const {front,back,example,category,tags,speakOrder}=req.body||{};
+  const current=await query(`SELECT * FROM cards WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
+  const row=current.rows[0];
+  if(!row) return res.status(404).json({error:"Card not found"});
+
+  const cleanFront=String(req.body?.front ?? row.front).trim();
+  const cleanBack=String(req.body?.back ?? row.back).trim();
+  const cleanExample=String(req.body?.example ?? row.example ?? "").trim();
+  const speakOrder=req.body?.speakOrder ?? row.speak_order;
+  if(!cleanFront || !cleanBack)
+    return res.status(400).json({error:"front and back are required"});
+
+  const semanticTags=await autoSemanticTags(cleanFront,cleanBack,cleanExample);
+  const tags=normalizeTags(semanticTags,row.created_at);
+  const category=semanticTags[0]||"Other";
+
   const {rows}=await query(`
-    UPDATE cards SET front=COALESCE($3,front),back=COALESCE($4,back),
-      example=COALESCE($5,example),category=COALESCE($6,category),
-      tags=COALESCE($7,tags),speak_order=COALESCE($8,speak_order),updated_at=NOW()
+    UPDATE cards SET front=$3,back=$4,example=$5,category=$6,tags=$7,
+      speak_order=$8,updated_at=NOW()
     WHERE id=$2 AND user_id=$1 RETURNING *
-  `,[userId(req),req.params.id,front,back,example,category,
-     tags===undefined?null:normalizeTags(tags),speakOrder]);
-  if(!rows[0]) return res.status(404).json({error:"Card not found"});
+  `,[userId(req),req.params.id,cleanFront,cleanBack,cleanExample,category,tags,speakOrder]);
+
   res.json({card:normalizeCardRow(rows[0])});
 }));
+
 app.delete("/cards/:id", requireAuth, asyncRoute(async(req,res)=>{
   const result=await query(`DELETE FROM cards WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
   res.json({ok:result.rowCount>0});
