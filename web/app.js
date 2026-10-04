@@ -133,6 +133,7 @@ function renderNotes(){
 async function openNoteReview(id){
   const d=await api("/notes/"+id);
   const n=d.note;currentNoteId=n.id;
+  $("manualReviewPanel").classList.remove("hidden");
   $("manualNoteTitle").textContent=n.title;
   $("manualNoteMeta").textContent='自主复习 '+(n.manualReviewCount||0)+' 次'+(n.lastReviewedAt?' · 上次 '+new Date(n.lastReviewedAt).toLocaleString():'');
   $("manualNoteContent").textContent=n.content;
@@ -191,6 +192,7 @@ async function deleteCurrentNote(){
   $("markNoteReviewedBtn").disabled=true;
   $("editNoteBtn").disabled=true;
   $("deleteNoteBtn").disabled=true;
+  $("manualReviewPanel").classList.add("hidden");
   renderNotes();
   await Promise.all([loadCards(),loadDue()]);
   if(result?.deletedCards>0) alert("笔记已删除，同时删除了 "+result.deletedCards+" 张相关卡片。");
