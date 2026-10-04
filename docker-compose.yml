@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-memorycast}
+      POSTGRES_USER: ${POSTGRES_USER:-memorycast}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memorycast} -d ${POSTGRES_DB:-memorycast}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [memorycast]
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-memorycast}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-memorycast}
+      SESSION_SECRET: ${SESSION_SECRET}
+      PUBLIC_URL: ${PUBLIC_URL}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
+      FSRS_RETENTION: ${FSRS_RETENTION:-0.90}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [memorycast]
+
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+    networks: [memorycast]
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on: [api, web]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./gateway/conf.d:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    networks: [memorycast]
+
+volumes:
+  postgres_data:
+
+networks:
+  memorycast:
+    driver: bridge
