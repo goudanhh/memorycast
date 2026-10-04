@@ -91,19 +91,23 @@ function splitByLanguage(text){
 }
 function normalVoices(locale){
   const isZh=locale.startsWith("zh");
-  const exact=isZh
-    ? ttsVoices.filter(v=>/^zh[-_]CN$/i.test(v.lang))
-    : ttsVoices.filter(v=>/^en[-_](US|GB)$/i.test(v.lang));
 
-  const fallback=isZh
-    ? ttsVoices.filter(v=>/^zh([-_]|$)/i.test(v.lang))
-    : ttsVoices.filter(v=>/^en([-_]|$)/i.test(v.lang));
+  if(isZh){
+    const exact=ttsVoices.filter(v=>/^zh[-_]CN$/i.test(v.lang));
+    const fallback=ttsVoices.filter(v=>/^zh([-_]|$)/i.test(v.lang));
+    const pool=exact.length?exact:fallback;
+    const bad=/\b(compact|espeak|festival|novelty|whisper|robot|trinoids|zarvox|boing|bubbles|bells|organ|bad news|good news)\b/i;
+    const clean=pool.filter(v=>!bad.test(v.name||""));
+    return (clean.length?clean:pool)
+      .sort((a,b)=>Number(b.default)-Number(a.default)||Number(b.localService)-Number(a.localService)||String(a.name).localeCompare(String(b.name)))
+      .slice(0,4);
+  }
 
-  const pool=exact.length?exact:fallback;
+  const english=ttsVoices.filter(v=>/^en[-_](US|GB)$/i.test(v.lang));
+  const preferred=/\b(Samantha|Ava|Allison|Alex|Daniel|Serena|Karen|Moira|Tessa|Sonia|Ryan|Aria|Jenny|Guy|Zira|David|Google US English|Google UK English)\b/i;
   const bad=/\b(compact|espeak|festival|novelty|whisper|robot|trinoids|zarvox|boing|bubbles|bells|organ|bad news|good news)\b/i;
-  const clean=pool.filter(v=>!bad.test(v.name||""));
-
-  return (clean.length?clean:pool)
+  return english
+    .filter(v=>preferred.test(v.name||"")&&!bad.test(v.name||""))
     .sort((a,b)=>
       Number(b.default)-Number(a.default) ||
       Number(b.localService)-Number(a.localService) ||
@@ -155,6 +159,8 @@ function speakOne(text,cb){
     const part=parts[i];
     const u=new SpeechSynthesisUtterance(part.text);
     u.lang=part.lang;
+    u.pitch=1;
+    u.volume=1;
     u.rate=part.lang==="zh-CN"
       ? Number(settings.chinese_rate||1.0)
       : Number(settings.english_rate||$("ttsRate").value||1.0);
