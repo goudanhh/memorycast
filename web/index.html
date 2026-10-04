@@ -27,6 +27,7 @@
     <button data-page="homePage" class="active">🏠 首页</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
+    <button data-page="notesPage">🗒️ 笔记库</button>
     <button data-page="quizPage">📝 AI 测试</button>
     <button data-page="libraryPage">📚 知识库</button>
     <button data-page="statsPage">📊 学习统计</button>
@@ -122,6 +123,30 @@
   </div>
 </section>
 
+<section id="notesPage" class="page">
+  <div class="grid2">
+    <article class="panel">
+      <div class="panel-head">
+        <div><div class="eyebrow">NOTES</div><h2>原始笔记库</h2></div>
+        <span class="muted">不受 FSRS 限制</span>
+      </div>
+      <input id="noteSearch" placeholder="搜索笔记内容或标题…">
+      <div id="notesList" class="card-list" style="margin-top:12px"></div>
+    </article>
+    <article class="panel">
+      <div class="panel-head">
+        <div><div class="eyebrow">MANUAL REVIEW</div><h2 id="manualNoteTitle">自主复习</h2></div>
+        <span id="manualNoteMeta" class="muted">选择左侧一篇笔记</span>
+      </div>
+      <div id="manualNoteContent" class="note-reader muted">这里会显示完整原始笔记。</div>
+      <div class="row" style="margin-top:12px">
+        <button id="speakNoteBtn" class="btn dark" disabled>🔊 朗读笔记</button>
+        <button id="markNoteReviewedBtn" class="ghost" disabled>✓ 标记本次已复习</button>
+      </div>
+    </article>
+  </div>
+</section>
+
 <section id="quizPage" class="page">
   <article class="panel">
     <div class="panel-head">
@@ -202,6 +227,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=fsrs-push-1"></script>
+<script type="module" src="/app.js?v=notes-library-1"></script>
 </body>
 </html>
