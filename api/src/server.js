@@ -38,6 +38,25 @@ function requireAuth(req,res,next) {
 function asyncRoute(fn) { return (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next); }
 function userId(req){ return req.localUserId; }
 
+function dateTag(value = new Date()) {
+  return new Date(value).toISOString().slice(0,10);
+}
+function normalizeTags(input, createdAt = new Date()) {
+  const raw = Array.isArray(input) ? input : String(input || "").split(/[,，]/);
+  const semantic = raw.map(x=>String(x).trim()).filter(Boolean).filter(x=>!/^(\d{4}-\d{2}-\d{2})$/.test(x));
+  return [...new Set([dateTag(createdAt), ...semantic])].slice(0,8);
+}
+
+await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
+await query(`
+  UPDATE cards
+  SET tags = ARRAY[
+    TO_CHAR(created_at AT TIME ZONE 'UTC','YYYY-MM-DD'),
+    COALESCE(NULLIF(category,''),'Other')
+  ]
+  WHERE COALESCE(array_length(tags,1),0)=0
+`);
+
 app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), mode:"single-user" }));
 app.get("/auth/me", asyncRoute(async (req,res) => {
   const id = await getLocalUserId();
@@ -79,6 +98,7 @@ async function getRetention(uid){
 function normalizeCardRow(r){
   return {
     id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,
+    tags:Array.isArray(r.tags)&&r.tags.length?r.tags:[dateTag(r.created_at),r.category].filter(Boolean),
     speakOrder:r.speak_order,fsrs:r.fsrs,due:r.due,reviewCount:r.review_count,
     createdAt:r.created_at,updatedAt:r.updated_at,stateName:getStateName(r.fsrs)
   };
@@ -88,25 +108,26 @@ app.get("/cards", requireAuth, asyncRoute(async(req,res)=>{
   res.json({cards:rows.map(normalizeCardRow)});
 }));
 app.post("/cards", requireAuth, asyncRoute(async(req,res)=>{
-  const {front,back,example="",category="Other",speakOrder="front-back-example"}=req.body||{};
+  const {front,back,example="",category="Other",tags=[],speakOrder="front-back-example"}=req.body||{};
   if(!String(front||"").trim() || !String(back||"").trim())
     return res.status(400).json({error:"front and back are required"});
   const fsrs=newFsrsCard();
   const {rows}=await query(`
-    INSERT INTO cards(user_id,front,back,example,category,speak_order,fsrs,due)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    INSERT INTO cards(user_id,front,back,example,category,tags,speak_order,fsrs,due)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
   `,[userId(req),String(front).trim(),String(back).trim(),String(example).trim(),
-     String(category).trim(),String(speakOrder),fsrs,fsrs.due]);
+     String(category).trim(),normalizeTags(tags),String(speakOrder),fsrs,fsrs.due]);
   res.status(201).json({card:normalizeCardRow(rows[0])});
 }));
 app.put("/cards/:id", requireAuth, asyncRoute(async(req,res)=>{
-  const {front,back,example,category,speakOrder}=req.body||{};
+  const {front,back,example,category,tags,speakOrder}=req.body||{};
   const {rows}=await query(`
     UPDATE cards SET front=COALESCE($3,front),back=COALESCE($4,back),
       example=COALESCE($5,example),category=COALESCE($6,category),
-      speak_order=COALESCE($7,speak_order),updated_at=NOW()
+      tags=COALESCE($7,tags),speak_order=COALESCE($8,speak_order),updated_at=NOW()
     WHERE id=$2 AND user_id=$1 RETURNING *
-  `,[userId(req),req.params.id,front,back,example,category,speakOrder]);
+  `,[userId(req),req.params.id,front,back,example,category,
+     tags===undefined?null:normalizeTags(tags),speakOrder]);
   if(!rows[0]) return res.status(404).json({error:"Card not found"});
   res.json({card:normalizeCardRow(rows[0])});
 }));
@@ -149,8 +170,8 @@ const organizeSchema={
   type:"object",
   properties:{cards:{type:"array",minItems:1,maxItems:30,items:{
     type:"object",
-    properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},category:{type:"string"}},
-    required:["front","back","example","category"],additionalProperties:false
+    properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},tags:{type:"array",minItems:2,maxItems:4,items:{type:"string"}}},
+    required:["front","back","example","tags"],additionalProperties:false
   }}},
   required:["cards"],additionalProperties:false
 };
@@ -166,6 +187,8 @@ Cards may be Chinese, English, or bilingual.
 Front should be a recall prompt or term; back should contain the essential answer.
 For English vocabulary, include a short natural example when useful.
 For technical notes, prefer concept questions over trivial sentence copying.
+For each card, generate 2 to 4 concise semantic tags based on the content. Do not include dates or timestamps; the server adds the date tag automatically.
+Prefer reusable topical tags such as "英语连读", "发音", "环境工程", "CO2捕集", rather than vague tags like "学习".
 Return JSON matching the schema.`,
     user:text
   });
@@ -179,10 +202,10 @@ app.post("/ai/organize/save", requireAuth, asyncRoute(async(req,res)=>{
     if(!String(c.front||"").trim()||!String(c.back||"").trim()) continue;
     const fsrs=newFsrsCard();
     const {rows}=await query(`
-      INSERT INTO cards(user_id,front,back,example,category,speak_order,fsrs,due)
-      VALUES($1,$2,$3,$4,$5,'front-back-example',$6,$7) RETURNING *
+      INSERT INTO cards(user_id,front,back,example,category,tags,speak_order,fsrs,due)
+      VALUES($1,$2,$3,$4,$5,$6,'front-back-example',$7,$8) RETURNING *
     `,[userId(req),String(c.front).trim(),String(c.back).trim(),String(c.example||"").trim(),
-       String(c.category||"Other").trim(),fsrs,fsrs.due]);
+       String((c.tags||[])[0]||"Other").trim(),normalizeTags(c.tags),fsrs,fsrs.due]);
     saved.push(normalizeCardRow(rows[0]));
   }
   res.status(201).json({cards:saved});
@@ -218,7 +241,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
   if(!rows.length) return res.status(400).json({error:"没有可用于出题的知识卡片。"});
 
   const source=rows.map(r=>({
-    id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,
+    id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,tags:r.tags||[],
     difficulty:Number(r.fsrs?.difficulty||0),due:r.due
   }));
   const data=await generateStructured({
@@ -299,9 +322,27 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
       FROM reviews WHERE user_id=$1
     `,[uid]),
     query(`
-      SELECT category,COUNT(*)::int AS count,
+      SELECT tag AS category,COUNT(*)::int AS count,
         AVG(COALESCE((fsrs->>'difficulty')::float,0)) AS avg_difficulty
-      FROM cards WHERE user_id=$1 GROUP BY category ORDER BY count DESC
+      FROM cards, LATERAL unnest(tags) AS tag
+      WHERE user_id=$1 AND tag !~ '^\\d{4}-\\d{2}-\\d{2}
+    `,[uid])
+  ]);
+  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
+  res.json({
+    cards:cards.rows[0].n,reviews:reviews.rows[0].n,last7:recent.rows[0].last7||0,
+    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,categories:categories.rows
+  });
+}));
+
+app.use((err,req,res,next)=>{
+  console.error(err);
+  const status=err.statusCode||500;
+  res.status(status).json({error: status===500 ? "Server error" : err.message});
+});
+app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+
+      GROUP BY tag ORDER BY count DESC
     `,[uid])
   ]);
   const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
