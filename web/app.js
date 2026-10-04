@@ -49,7 +49,46 @@ function renderDue(){
   else{$("cardCat").textContent=(c.tags||[]).join(" · ")+" · "+c.stateName;$("cardFront").textContent=c.front;$("cardBack").textContent=c.back;$("cardExample").textContent=c.example||"";$("cardProgress").textContent=(dueIndex+1)+" / "+due.length}
   $("queueList").innerHTML=due.map((x,i)=>'<div class="card-item"><div><b>'+esc(x.front)+'</b><div class="muted">'+esc(x.back)+'</div></div><span class="chip">'+(i===dueIndex?"当前":esc(x.stateName))+'</span></div>').join("")||'<div class="muted">今天没有到期卡片。</div>';
 }
-function lang(t){return /[\u3400-\u9fff]/.test(t)?"zh-CN":"en-US"}
+function charLang(ch){
+  if(/[\u3400-\u9fff]/.test(ch))return "zh-CN";
+  if(/[A-Za-z]/.test(ch))return "en-US";
+  return null;
+}
+function splitByLanguage(text){
+  const input=String(text||"");
+  const parts=[];
+  let buf="",current=null,pending="";
+  const flush=()=>{
+    if(!buf)return;
+    parts.push({text:buf,lang:current||"zh-CN"});
+    buf="";
+  };
+  for(const ch of input){
+    const detected=charLang(ch);
+    if(!detected){
+      if(buf)buf+=ch;
+      else pending+=ch;
+      continue;
+    }
+    if(!current){
+      current=detected;
+      buf=pending+ch;
+      pending="";
+      continue;
+    }
+    if(detected===current){
+      buf+=ch;
+    }else{
+      flush();
+      current=detected;
+      buf=pending+ch;
+      pending="";
+    }
+  }
+  if(pending)buf+=pending;
+  flush();
+  return parts.filter(x=>x.text.trim());
+}
 function refreshVoices(){
   ttsVoices=speechSynthesis.getVoices()||[];
   const zh=ttsVoices.filter(v=>/^zh(-|_)/i.test(v.lang));
@@ -77,13 +116,29 @@ function pickVoice(locale){
 }
 function speakOne(text,cb){
   if(!text){if(cb)cb();return}
-  const u=new SpeechSynthesisUtterance(text);
-  u.lang=lang(text);
-  u.rate=u.lang==="zh-CN"?Number(settings.chinese_rate||1.0):Number(settings.english_rate||$("ttsRate").value||1.0);
-  const voice=pickVoice(u.lang);
-  if(voice)u.voice=voice;
-  u.onend=()=>cb&&cb();
-  speechSynthesis.speak(u);
+  const parts=splitByLanguage(text);
+  if(!parts.length){if(cb)cb();return}
+
+  const fixedVoices={
+    "zh-CN":pickVoice("zh-CN"),
+    "en-US":pickVoice("en-US")
+  };
+
+  const run=i=>{
+    if(i>=parts.length){if(cb)cb();return}
+    const part=parts[i];
+    const u=new SpeechSynthesisUtterance(part.text);
+    u.lang=part.lang;
+    u.rate=part.lang==="zh-CN"
+      ? Number(settings.chinese_rate||1.0)
+      : Number(settings.english_rate||$("ttsRate").value||1.0);
+    const voice=fixedVoices[part.lang];
+    if(voice)u.voice=voice;
+    u.onend=()=>run(i+1);
+    u.onerror=()=>run(i+1);
+    speechSynthesis.speak(u);
+  };
+  run(0);
 }
 function speakCurrent(){
   const c=due[dueIndex];if(!c)return;
