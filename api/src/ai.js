@@ -21,31 +21,6 @@ function openaiModel() {
   return process.env.OPENAI_MODEL || "gpt-5.4-mini";
 }
 
-function toGeminiSchema(value) {
-  if (Array.isArray(value)) return value.map(toGeminiSchema);
-  if (!value || typeof value !== "object") return value;
-
-  const allowed = new Set([
-    "type","format","description","nullable","enum",
-    "properties","required","items",
-    "minItems","maxItems","minimum","maximum",
-    "minLength","maxLength"
-  ]);
-
-  const out = {};
-  for (const [key, val] of Object.entries(value)) {
-    if (!allowed.has(key)) continue;
-    if (key === "properties" && val && typeof val === "object" && !Array.isArray(val)) {
-      out.properties = Object.fromEntries(
-        Object.entries(val).map(([k, v]) => [k, toGeminiSchema(v)])
-      );
-    } else {
-      out[key] = toGeminiSchema(val);
-    }
-  }
-  return out;
-}
-
 async function generateGeminiJson({ system, user, schema }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -72,7 +47,7 @@ async function generateGeminiJson({ system, user, schema }) {
       }],
       generationConfig: {
         responseMimeType: "application/json",
-        responseSchema: toGeminiSchema(schema)
+        responseJsonSchema: schema
       }
     })
   });
