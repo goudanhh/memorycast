@@ -1,105 +1,55 @@
 import express from "express";
-import session from "express-session";
-import pgSessionFactory from "connect-pg-simple";
 import helmet from "helmet";
 import compression from "compression";
 import crypto from "node:crypto";
-import { query, pool } from "./db.js";
+import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
 import { hasAI, openai, model } from "./ai.js";
 
 const app = express();
-const PgSession = pgSessionFactory(session);
 const PORT = Number(process.env.PORT || 3000);
-const PUBLIC_URL = (process.env.PUBLIC_URL || "http://localhost").replace(/\/+$/,"");
-const secureCookie = PUBLIC_URL.startsWith("https://");
-
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
 app.use(express.json({ limit: "2mb" }));
-app.use(session({
-  store: new PgSession({ pool, tableName: "session" }),
-  name: "memorycast.sid",
-  secret: process.env.SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax", secure: secureCookie, maxAge: 30 * 24 * 60 * 60 * 1000 }
-}));
+let localUserIdCache = null;
 
-function requireAuth(req,res,next) {
-  if (!req.session.user?.id) return res.status(401).json({ error:"Not authenticated" });
-  next();
-}
-function asyncRoute(fn) { return (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next); }
-function userId(req){ return req.session.user.id; }
-
-app.get("/health", (req,res) => res.json({ ok:true, ai:hasAI() }));
-
-app.get("/auth/github", (req,res) => {
-  if (!process.env.GITHUB_CLIENT_ID) return res.status(503).send("GitHub OAuth is not configured.");
-  const state = crypto.randomBytes(24).toString("hex");
-  req.session.oauthState = state;
-  const callback = `${PUBLIC_URL}/api/auth/github/callback`;
-  const url = new URL("https://github.com/login/oauth/authorize");
-  url.searchParams.set("client_id", process.env.GITHUB_CLIENT_ID);
-  url.searchParams.set("redirect_uri", callback);
-  url.searchParams.set("scope", "read:user");
-  url.searchParams.set("state", state);
-  res.redirect(url.toString());
-});
-
-app.get("/auth/github/callback", asyncRoute(async (req,res) => {
-  if (!req.query.code || !req.query.state || req.query.state !== req.session.oauthState) {
-    return res.status(400).send("Invalid OAuth state.");
-  }
-  delete req.session.oauthState;
-
-  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-    method:"POST",
-    headers:{ "Accept":"application/json", "Content-Type":"application/json" },
-    body:JSON.stringify({
-      client_id:process.env.GITHUB_CLIENT_ID,
-      client_secret:process.env.GITHUB_CLIENT_SECRET,
-      code:req.query.code,
-      redirect_uri:`${PUBLIC_URL}/api/auth/github/callback`
-    })
-  });
-  const tokenData = await tokenRes.json();
-  if (!tokenData.access_token) return res.status(401).send("GitHub token exchange failed.");
-
-  const ghRes = await fetch("https://api.github.com/user", {
-    headers:{
-      "Authorization":`Bearer ${tokenData.access_token}`,
-      "Accept":"application/vnd.github+json",
-      "User-Agent":"MemoryCast"
-    }
-  });
-  const gh = await ghRes.json();
-  if (!gh.id) return res.status(401).send("Could not read GitHub user.");
-
+async function getLocalUserId() {
+  if (localUserIdCache) return localUserIdCache;
   const { rows } = await query(`
-    INSERT INTO users(github_id,github_login,avatar_url,last_login_at)
-    VALUES($1,$2,$3,NOW())
-    ON CONFLICT(github_id) DO UPDATE SET
-      github_login=EXCLUDED.github_login,
-      avatar_url=EXCLUDED.avatar_url,
-      last_login_at=NOW()
-    RETURNING id, github_id, github_login, avatar_url
-  `,[gh.id,gh.login,gh.avatar_url]);
-
-  const u = rows[0];
+    INSERT INTO users(github_id, github_login, avatar_url, last_login_at)
+    VALUES(0, 'local-user', NULL, NOW())
+    ON CONFLICT(github_id) DO UPDATE SET last_login_at=NOW()
+    RETURNING id
+  `);
+  localUserIdCache = rows[0].id;
   await query(`
     INSERT INTO user_settings(user_id) VALUES($1)
     ON CONFLICT(user_id) DO NOTHING
-  `,[u.id]);
+  `, [localUserIdCache]);
+  return localUserIdCache;
+}
 
-  req.session.user = { id:u.id, githubId:u.github_id, login:u.github_login, avatarUrl:u.avatar_url };
-  res.redirect("/");
+function requireAuth(req,res,next) {
+  getLocalUserId()
+    .then(id => { req.localUserId = id; next(); })
+    .catch(next);
+}
+function asyncRoute(fn) { return (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next); }
+function userId(req){ return req.localUserId; }
+
+app.get("/health", (req,res) => res.json({ ok:true, ai:hasAI(), mode:"single-user" }));
+app.get("/auth/me", asyncRoute(async (req,res) => {
+  const id = await getLocalUserId();
+  res.json({
+    user:{ id, login:"Local User", avatarUrl:null },
+    aiEnabled:hasAI(),
+    authDisabled:true
+  });
 }));
-
-app.get("/auth/me", (req,res) => res.json({ user:req.session.user || null, aiEnabled:hasAI() }));
-app.post("/auth/logout", (req,res) => req.session.destroy(() => res.json({ ok:true })));
+app.get("/auth/github", (req,res) => res.redirect("/"));
+app.get("/auth/github/callback", (req,res) => res.redirect("/"));
+app.post("/auth/logout", (req,res) => res.json({ ok:true }));
 
 app.get("/settings", requireAuth, asyncRoute(async(req,res)=>{
   const {rows} = await query(`SELECT * FROM user_settings WHERE user_id=$1`,[userId(req)]);
