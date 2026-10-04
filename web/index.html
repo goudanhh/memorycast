@@ -213,8 +213,22 @@
     <div class="setting"><div><b>FSRS 目标保持率</b><div class="muted">越高，复习越频繁。</div></div><select id="retentionSetting"><option value=".85">85%</option><option value=".90">90%</option><option value=".92">92%</option><option value=".95">95%</option></select></div>
     <div class="setting"><div><b>英文语速</b></div><select id="englishRate"><option value="1">1.0×</option><option value="1.2">1.2×</option><option value="1.5">1.5×</option></select></div>
     <div class="setting"><div><b>中文语速</b></div><select id="chineseRate"><option value="1">1.0×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option></select></div>
-    <div class="setting"><div><b>英文音色</b><div class="muted">只显示设备上的英文语音；“自动轮换”会在可用音色间切换。</div></div><select id="englishVoice"><option value="auto">自动轮换</option></select></div>
-    <div class="setting"><div><b>中文音色</b><div class="muted">只显示设备上的中文语音；“自动轮换”会在可用音色间切换。</div></div><select id="chineseVoice"><option value="auto">自动轮换</option></select></div>
+    <div class="setting"><div><b>英文音色</b><div class="muted">只使用设备上的英文语音。</div></div><select id="englishVoice"><option value="auto">自然音色轮换</option></select></div>
+    <div class="setting"><div><b>英文朗读风格</b><div class="muted">只改变节奏和音高，不模仿具体人物。</div></div>
+      <select id="englishVoiceStyle">
+        <option value="natural">标准自然音色</option>
+        <option value="host">主持 / 播客风格</option>
+        <option value="lazy">慵懒动画风格</option>
+      </select>
+    </div>
+    <div class="setting"><div><b>中文音色</b><div class="muted">只使用设备上的中文语音。</div></div><select id="chineseVoice"><option value="auto">自然音色轮换</option></select></div>
+    <div class="setting"><div><b>中文朗读风格</b><div class="muted">中文和英文分别控制，互不混用。</div></div>
+      <select id="chineseVoiceStyle">
+        <option value="natural">标准自然音色</option>
+        <option value="host">主持 / 播客风格</option>
+        <option value="lazy">慵懒动画风格</option>
+      </select>
+    </div>
     <div class="setting"><div><b>每日目标</b></div><input id="dailyGoal" type="number" min="1" max="500"></div>
     <div class="setting"><div><b>每日 FSRS 推送</b><div class="muted">到点后只在有到期卡片时提醒。需要 HTTPS。</div></div><button id="pushToggleBtn" class="ghost">启用推送</button></div>
     <div class="setting"><div><b>推送时间</b><div class="muted" id="pushStatus">默认 09:00</div></div><input id="reminderTime" type="time" value="09:00"></div>
@@ -246,6 +260,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=mobile-nav-1"></script>
+<script type="module" src="/app.js?v=voice-styles-1"></script>
 </body>
 </html>
