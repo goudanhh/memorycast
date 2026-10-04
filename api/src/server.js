@@ -1,6 +1,7 @@
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
+import webpush from "web-push";
 import crypto from "node:crypto";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
@@ -83,6 +84,102 @@ await query(`
   WHERE COALESCE(array_length(tags,1),0)=0
 `);
 
+await query(`ALTER TABLE user_settings ALTER COLUMN english_rate SET DEFAULT 1.0`);
+await query(`ALTER TABLE user_settings ALTER COLUMN chinese_rate SET DEFAULT 1.0`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS reminder_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS reminder_time TIME NOT NULL DEFAULT '09:00'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS reminder_timezone TEXT NOT NULL DEFAULT 'UTC'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_reminder_date DATE`);
+await query(`UPDATE user_settings SET english_rate=1.0 WHERE english_rate=1.2`);
+await query(`UPDATE user_settings SET chinese_rate=1.0 WHERE chinese_rate=1.3`);
+await query(`
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint TEXT UNIQUE NOT NULL,
+    subscription JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+await query(`
+  CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+
+async function getVapidKeys() {
+  const existing = await query(`SELECT value FROM app_config WHERE key='vapid_keys'`);
+  if (existing.rows[0]?.value?.publicKey && existing.rows[0]?.value?.privateKey) {
+    return existing.rows[0].value;
+  }
+  const keys = webpush.generateVAPIDKeys();
+  await query(
+    `INSERT INTO app_config(key,value) VALUES('vapid_keys',$1::jsonb)
+     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,
+    [JSON.stringify(keys)]
+  );
+  return keys;
+}
+
+const vapidKeys = await getVapidKeys();
+webpush.setVapidDetails("mailto:memorycast@example.com", vapidKeys.publicKey, vapidKeys.privateKey);
+
+function localDateTime(timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year:"numeric",month:"2-digit",day:"2-digit",
+      hour:"2-digit",minute:"2-digit",hourCycle:"h23"
+    }).formatToParts(new Date());
+    const get = type => parts.find(p=>p.type===type)?.value || "";
+    return { date:`${get("year")}-${get("month")}-${get("day")}`, time:`${get("hour")}:${get("minute")}` };
+  } catch {
+    const now = new Date();
+    return { date:now.toISOString().slice(0,10), time:now.toISOString().slice(11,16) };
+  }
+}
+
+async function runDailyReminders() {
+  const {rows} = await query(`
+    SELECT user_id, reminder_time::text, reminder_timezone, last_reminder_date
+    FROM user_settings
+    WHERE reminder_enabled=TRUE
+  `);
+  for (const s of rows) {
+    const now = localDateTime(s.reminder_timezone || "UTC");
+    const target = String(s.reminder_time || "09:00").slice(0,5);
+    const last = s.last_reminder_date ? new Date(s.last_reminder_date).toISOString().slice(0,10) : null;
+    if (now.time < target || last === now.date) continue;
+
+    const dueResult = await query(`SELECT COUNT(*)::int AS n FROM cards WHERE user_id=$1 AND due<=NOW()`, [s.user_id]);
+    const dueCount = dueResult.rows[0]?.n || 0;
+
+    if (dueCount > 0) {
+      const subs = await query(`SELECT id,subscription FROM push_subscriptions WHERE user_id=$1`, [s.user_id]);
+      const payload = JSON.stringify({
+        title:"MemoryCast 今日复习",
+        body:`今天有 ${dueCount} 张卡片按 FSRS 记忆曲线到期。`,
+        url:"/"
+      });
+      for (const sub of subs.rows) {
+        try {
+          await webpush.sendNotification(sub.subscription, payload);
+        } catch (err) {
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            await query(`DELETE FROM push_subscriptions WHERE id=$1`, [sub.id]);
+          } else {
+            console.warn("Push failed:", err.message);
+          }
+        }
+      }
+    }
+    await query(`UPDATE user_settings SET last_reminder_date=$2 WHERE user_id=$1`, [s.user_id, now.date]);
+  }
+}
+
 app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), mode:"single-user" }));
 app.get("/auth/me", asyncRoute(async (req,res) => {
   const id = await getLocalUserId();
@@ -104,22 +201,45 @@ app.get("/settings", requireAuth, asyncRoute(async(req,res)=>{
 app.put("/settings", requireAuth, asyncRoute(async(req,res)=>{
   const b=req.body||{};
   const retention=Math.min(.99,Math.max(.70,Number(b.fsrs_retention ?? .90)));
-  const en=Math.min(2,Math.max(.5,Number(b.english_rate ?? 1.2)));
-  const zh=Math.min(2,Math.max(.5,Number(b.chinese_rate ?? 1.3)));
+  const en=Math.min(2,Math.max(.5,Number(b.english_rate ?? 1.0)));
+  const zh=Math.min(2,Math.max(.5,Number(b.chinese_rate ?? 1.0)));
   const goal=Math.min(500,Math.max(1,Number(b.daily_goal ?? 20)));
   const wrong=b.wrong_requeue !== false;
+  const reminderEnabled=b.reminder_enabled === true;
+  const reminderTime=/^([01]\\d|2[0-3]):[0-5]\\d$/.test(String(b.reminder_time||"")) ? String(b.reminder_time) : "09:00";
+  const reminderTimezone=String(b.reminder_timezone||"UTC").slice(0,80);
   const {rows}=await query(`
     UPDATE user_settings SET
       english_rate=$2,chinese_rate=$3,daily_goal=$4,
-      fsrs_retention=$5,wrong_requeue=$6,updated_at=NOW()
+      fsrs_retention=$5,wrong_requeue=$6,
+      reminder_enabled=$7,reminder_time=$8,reminder_timezone=$9,updated_at=NOW()
     WHERE user_id=$1 RETURNING *
-  `,[userId(req),en,zh,goal,retention,wrong]);
+  `,[userId(req),en,zh,goal,retention,wrong,reminderEnabled,reminderTime,reminderTimezone]);
   res.json(rows[0]);
 }));
 async function getRetention(uid){
   const {rows}=await query(`SELECT fsrs_retention FROM user_settings WHERE user_id=$1`,[uid]);
   return rows[0]?.fsrs_retention || Number(process.env.FSRS_RETENTION||.90);
 }
+
+app.get("/push/public-key", requireAuth, asyncRoute(async(req,res)=>{
+  res.json({publicKey:vapidKeys.publicKey});
+}));
+app.post("/push/subscribe", requireAuth, asyncRoute(async(req,res)=>{
+  const sub=req.body?.subscription;
+  if(!sub?.endpoint) return res.status(400).json({error:"Invalid push subscription"});
+  await query(`
+    INSERT INTO push_subscriptions(user_id,endpoint,subscription,updated_at)
+    VALUES($1,$2,$3::jsonb,NOW())
+    ON CONFLICT(endpoint) DO UPDATE SET user_id=EXCLUDED.user_id,subscription=EXCLUDED.subscription,updated_at=NOW()
+  `,[userId(req),sub.endpoint,JSON.stringify(sub)]);
+  res.json({ok:true});
+}));
+app.post("/push/unsubscribe", requireAuth, asyncRoute(async(req,res)=>{
+  const endpoint=String(req.body?.endpoint||"");
+  if(endpoint) await query(`DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2`,[userId(req),endpoint]);
+  res.json({ok:true});
+}));
 
 function normalizeCardRow(r){
   return {
@@ -395,3 +515,5 @@ app.use((err,req,res,next)=>{
   res.status(status).json({error: status===500 ? "Server error" : err.message});
 });
 app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+setTimeout(()=>runDailyReminders().catch(console.error),5000);
+setInterval(()=>runDailyReminders().catch(console.error),60*1000);
