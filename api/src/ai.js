@@ -42,19 +42,20 @@ async function generateGeminiJson({ system, user, schema }) {
       contents: [{
         role: "user",
         parts: [{
-          text: `${system}\n\nUSER INPUT:\n${user}`
+          text: `${system}\n\nReturn JSON only. Follow this JSON Schema as closely as possible:\n${JSON.stringify(schema)}\n\nUSER INPUT:\n${user}`
         }]
       }],
       generationConfig: {
-        responseMimeType: "application/json",
-        responseJsonSchema: schema
+        responseMimeType: "application/json"
       }
     })
   });
 
   const data = await response.json();
   if (!response.ok) {
+    const detail = data?.error ? JSON.stringify(data.error) : JSON.stringify(data);
     const msg = data?.error?.message || `Gemini API error (${response.status})`;
+    console.error("Gemini API failure:", response.status, detail);
     const e = new Error(msg);
     e.statusCode = response.status === 429 ? 429 : 502;
     throw e;
