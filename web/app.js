@@ -108,7 +108,11 @@ function renderNotes(){
   if(!$("notesList"))return;
   const key=($("noteSearch")?.value||"").toLowerCase();
   const arr=notes.filter(n=>!key||((n.title+" "+n.content).toLowerCase().includes(key)));
-  $("notesList").innerHTML=arr.map(n=>'<div class="card-item"><div><b>'+esc(n.title)+'</b><div class="muted">'+esc(n.content.slice(0,110))+(n.content.length>110?"…":"")+'</div><div class="muted">'+new Date(n.createdAt).toLocaleString()+' · 自主复习 '+(n.manualReviewCount||0)+' 次</div></div><div class="card-actions"><button class="ghost" data-note-review="'+n.id+'">复习</button></div></div>').join("")||'<div class="muted">还没有保存的原始笔记。</div>';
+  $("notesList").innerHTML=arr.map(n=>{
+    const lines=String(n.content||"").split(/\r?\n/);
+    const preview=lines.slice(0,5).join("\n")+(lines.length>5?"\n…":"");
+    return '<div class="card-item"><div><b>'+esc(n.title)+'</b><pre class="note-preview muted">'+esc(preview)+'</pre><div class="muted">'+new Date(n.createdAt).toLocaleString()+' · 自主复习 '+(n.manualReviewCount||0)+' 次</div></div><div class="card-actions"><button class="ghost" data-note-review="'+n.id+'">复习</button></div></div>';
+  }).join("")||'<div class="muted">还没有保存的原始笔记。</div>';
   document.querySelectorAll("[data-note-review]").forEach(b=>b.onclick=()=>openNoteReview(b.dataset.noteReview));
 }
 async function openNoteReview(id){
