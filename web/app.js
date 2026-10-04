@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,settings={},generated=[],editId=null;
+let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
 
 async function api(path,opts={}){
@@ -35,8 +35,50 @@ function renderDue(){
 }
 function lang(t){return /[\u3400-\u9fff]/.test(t)?"zh-CN":"en-US"}
 function speakOne(text,cb){if(!text){if(cb)cb();return}const u=new SpeechSynthesisUtterance(text);u.lang=lang(text);u.rate=u.lang==="zh-CN"?Number(settings.chinese_rate||1.3):Number(settings.english_rate||$("ttsRate").value||1.2);u.onend=()=>cb&&cb();speechSynthesis.speak(u)}
-function speakCurrent(){const c=due[dueIndex];if(!c)return;speechSynthesis.cancel();const arr=[c.front,c.back,c.example].filter(Boolean);const run=i=>{if(i>=arr.length){if(loop)setTimeout(()=>{nextDue();speakCurrent()},650);return}speakOne(arr[i],()=>setTimeout(()=>run(i+1),350))};run(0)}
-function nextDue(){if(!due.length)return;dueIndex=(dueIndex+1)%due.length;renderDue()}
+function speakCurrent(){
+  const c=due[dueIndex];if(!c)return;
+  autoPlay=true;
+  isSpeaking=true;
+  speechSynthesis.cancel();
+  $("speakBtn").textContent="⏸ 停止";
+  const arr=[c.front,c.back,c.example].filter(Boolean);
+  const run=i=>{
+    if(!autoPlay){isSpeaking=false;$("speakBtn").textContent="🔊 朗读";return}
+    if(i>=arr.length){
+      const moved=nextDue();
+      if(moved){
+        setTimeout(()=>speakCurrent(),700);
+      }else{
+        autoPlay=false;isSpeaking=false;$("speakBtn").textContent="🔊 朗读";
+      }
+      return;
+    }
+    speakOne(arr[i],()=>setTimeout(()=>run(i+1),350));
+  };
+  run(0);
+}
+function toggleSpeak(){
+  if(isSpeaking||autoPlay){
+    autoPlay=false;isSpeaking=false;speechSynthesis.cancel();
+    $("speakBtn").textContent="🔊 朗读";
+  }else{
+    speakCurrent();
+  }
+}
+function nextDue(){
+  if(!due.length)return false;
+  if(dueIndex < due.length-1){
+    dueIndex++;
+    renderDue();
+    return true;
+  }
+  if(loop){
+    dueIndex=0;
+    renderDue();
+    return true;
+  }
+  return false;
+}
 async function grade(rating){const c=due[dueIndex];if(!c)return;await api("/review",{method:"POST",body:JSON.stringify({id:c.id,rating})});due.splice(dueIndex,1);if(dueIndex>=due.length)dueIndex=0;renderDue();await Promise.all([loadCards(),loadStats()])}
 
 function renderCategories(){const cats=[...new Set(cards.map(c=>c.category).filter(Boolean))].sort();$("categoryFilter").innerHTML='<option value="">全部分类</option>'+cats.map(c=>"<option>"+esc(c)+"</option>").join("")}
@@ -83,7 +125,7 @@ async function saveSettings(){settings=await api("/settings",{method:"PUT",body:
 
 document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>go(b.dataset.page));document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
-$("speakBtn").onclick=speakCurrent;$("nextCardBtn").onclick=nextDue;$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
+$("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;
