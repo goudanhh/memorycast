@@ -14,7 +14,7 @@ export function hasAI() {
 }
 
 function geminiModel() {
-  return process.env.GEMINI_MODEL || "gemini-3.8-flash";
+  return process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 }
 
 function openaiModel() {
