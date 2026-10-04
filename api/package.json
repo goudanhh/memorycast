@@ -1,0 +1,22 @@
+{
+  "name": "memorycast-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "connect-pg-simple": "^10.0.0",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "helmet": "^8.0.0",
+    "openai": "^6.0.0",
+    "pg": "^8.13.1",
+    "ts-fsrs": "5.4.2"
+  }
+}
