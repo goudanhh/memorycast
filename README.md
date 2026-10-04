@@ -83,7 +83,13 @@
     POSTGRES_USER=memorycast
     POSTGRES_PASSWORD=你的随机强密码
 
-OpenAI 是可选的：
+Gemini 是默认 AI 提供商，可使用 Google AI Studio 创建的 API Key：
+
+    AI_PROVIDER=gemini
+    GEMINI_API_KEY=你的GeminiKey
+    GEMINI_MODEL=gemini-3.8-flash
+
+也保留 OpenAI 兼容（可选）：
 
     OPENAI_API_KEY=
     OPENAI_MODEL=gpt-5.4-mini
@@ -96,7 +102,7 @@ FSRS：
 
     openssl rand -hex 24
 
-如果暂时不填写 OPENAI_API_KEY：
+如果暂时不填写 GEMINI_API_KEY（并且也不填写 OPENAI_API_KEY）：
 
 - 卡片
 - PostgreSQL
