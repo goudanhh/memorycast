@@ -370,33 +370,22 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
       FROM reviews WHERE user_id=$1
     `,[uid]),
     query(`
-      SELECT tag AS category,COUNT(*)::int AS count,
+      SELECT tag AS category, COUNT(*)::int AS count,
         AVG(COALESCE((fsrs->>'difficulty')::float,0)) AS avg_difficulty
       FROM cards, LATERAL unnest(tags) AS tag
-      WHERE user_id=$1 AND tag !~ '^\\d{4}-\\d{2}-\\d{2}
+      WHERE user_id=$1
+        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      GROUP BY tag
+      ORDER BY count DESC
     `,[uid])
   ]);
   const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
   res.json({
-    cards:cards.rows[0].n,reviews:reviews.rows[0].n,last7:recent.rows[0].last7||0,
-    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,categories:categories.rows
-  });
-}));
-
-app.use((err,req,res,next)=>{
-  console.error(err);
-  const status=err.statusCode||500;
-  res.status(status).json({error: status===500 ? "Server error" : err.message});
-});
-app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
-
-      GROUP BY tag ORDER BY count DESC
-    `,[uid])
-  ]);
-  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
-  res.json({
-    cards:cards.rows[0].n,reviews:reviews.rows[0].n,last7:recent.rows[0].last7||0,
-    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,categories:categories.rows
+    cards:cards.rows[0].n,
+    reviews:reviews.rows[0].n,
+    last7:recent.rows[0].last7||0,
+    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
+    categories:categories.rows
   });
 }));
 
