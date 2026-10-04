@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>MemoryCast</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="logo big">MemoryCast</div>
+    <h1>把学习内容变成会自动回来的声音和测试。</h1>
+    <p>FSRS 记忆曲线 · 中英 TTS · AI 整理笔记 · AI 测试 · 多设备同步</p>
+    <a class="btn dark wide" href="/api/auth/github">使用 GitHub 登录</a>
+    <div class="muted" id="aiStatusLogin"></div>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+<aside class="sidebar">
+  <div class="logo">MemoryCast</div>
+  <div class="logo-sub">AI Spaced Repetition</div>
+  <nav class="nav">
+    <button data-page="homePage" class="active">🏠 首页</button>
+    <button data-page="todayPage">🎧 今日复习</button>
+    <button data-page="importPage">✨ AI 整理笔记</button>
+    <button data-page="quizPage">📝 AI 测试</button>
+    <button data-page="libraryPage">📚 知识库</button>
+    <button data-page="statsPage">📊 学习统计</button>
+    <button data-page="settingsPage">⚙️ 设置</button>
+  </nav>
+  <div class="side-bottom">
+    <div class="userbox">
+      <img id="avatar" class="avatar" alt="">
+      <div><b id="username"></b><br><small>Oracle 云同步</small></div>
+    </div>
+    <button id="logoutBtn" class="ghost wide">退出登录</button>
+  </div>
+</aside>
+
+<div class="content">
+<header class="topbar">
+  <div><b id="pageTitle">首页</b><div class="muted" id="syncText">正在同步…</div></div>
+  <div class="row">
+    <button id="watchBtn" class="ghost">⌚ 手表模式</button>
+    <span class="cloud">☁ 已同步</span>
+  </div>
+</header>
+
+<main>
+<section id="homePage" class="page active">
+  <section class="hero">
+    <div class="eyebrow">FSRS · AI QUIZ · TTS · POSTGRESQL</div>
+    <h1>把今天学到的内容，变成会自动回来的声音和测试。</h1>
+    <p>你的笔记、记忆状态、测试成绩和复习时间都保存在自己的 Oracle 服务器。</p>
+    <button class="cta" data-go="todayPage">▶ 开始今日复习</button>
+  </section>
+  <section class="stats">
+    <article class="stat"><b id="homeDue">0</b><span>今日待复习</span></article>
+    <article class="stat"><b id="homeCards">0</b><span>知识点</span></article>
+    <article class="stat"><b id="homeAccuracy">—</b><span>测试正确率</span></article>
+    <article class="stat"><b id="homeReviews">0</b><span>累计复习</span></article>
+  </section>
+  <div class="grid3">
+    <article class="panel"><div class="eyebrow">TODAY</div><h2>🎧 今日复习</h2><p class="muted">按 FSRS 到期时间自动排序。</p><button class="btn dark" data-go="todayPage">开始复习</button></article>
+    <article class="panel"><div class="eyebrow">AI</div><h2>✨ 整理笔记</h2><p class="muted">粘贴长笔记，自动拆成知识卡。</p><button class="btn dark" data-go="importPage">整理笔记</button></article>
+    <article class="panel"><div class="eyebrow">QUIZ</div><h2>📝 AI 测试</h2><p class="muted">选择、填空、简答、听力。</p><button class="btn dark" data-go="quizPage">开始测试</button></article>
+  </div>
+</section>
+
+<section id="todayPage" class="page">
+  <div class="grid2">
+    <article class="panel">
+      <div class="panel-head">
+        <h2>今日复习</h2>
+        <div class="row">
+          <select id="ttsRate"><option value=".9">0.9×</option><option value="1">1.0×</option><option value="1.2" selected>1.2×</option><option value="1.5">1.5×</option></select>
+          <button id="loopBtn" class="ghost">↻ 循环：关</button>
+        </div>
+      </div>
+      <div class="review-card">
+        <div id="cardCat" class="eyebrow">TODAY</div>
+        <div id="cardFront" class="front">加载中…</div>
+        <div id="cardBack" class="back"></div>
+        <div id="cardExample" class="example"></div>
+        <div id="cardProgress" class="muted"></div>
+      </div>
+      <div class="row">
+        <button id="speakBtn" class="btn dark">🔊 朗读</button>
+        <button id="nextCardBtn" class="ghost">下一条 →</button>
+      </div>
+      <div class="ratings">
+        <button data-rating="Again">忘了</button>
+        <button data-rating="Hard">模糊</button>
+        <button data-rating="Good">记住</button>
+        <button data-rating="Easy">很熟</button>
+      </div>
+    </article>
+    <article class="panel watch-hide">
+      <h2>本轮队列</h2>
+      <div id="queueList" class="card-list"></div>
+    </article>
+  </div>
+</section>
+
+<section id="importPage" class="page">
+  <div class="grid2">
+    <article class="panel">
+      <div class="eyebrow">AI IMPORT</div><h2>粘贴学习笔记</h2>
+      <textarea id="noteInput" class="large-input" placeholder="粘贴今天学到的中文、英文或专业笔记…"></textarea>
+      <button id="organizeBtn" class="btn dark wide">✨ AI 整理为卡片</button>
+      <p id="aiDisabledImport" class="muted hidden">服务器未配置 OpenAI API Key，AI 功能暂不可用。</p>
+    </article>
+    <article class="panel">
+      <div class="panel-head"><h2>生成预览</h2><span class="muted">保存前可修改</span></div>
+      <div id="generatedCards" class="preview-cards"><div class="muted">等待 AI 生成。</div></div>
+      <button id="saveGeneratedBtn" class="btn dark wide hidden">保存全部并加入 FSRS</button>
+    </article>
+  </div>
+</section>
+
+<section id="quizPage" class="page">
+  <article class="panel">
+    <div class="panel-head">
+      <div><div class="eyebrow">AI QUIZ</div><h2>自动测试</h2></div>
+      <div class="row">
+        <select id="quizMode"><option value="mixed">综合测试</option><option value="weak">薄弱点优先</option><option value="due">仅到期卡片</option></select>
+        <select id="quizCount"><option value="5">5 题</option><option value="10" selected>10 题</option><option value="15">15 题</option></select>
+        <button id="generateQuizBtn" class="btn dark">✨ AI 出题</button>
+      </div>
+    </div>
+    <p id="aiDisabledQuiz" class="muted hidden">服务器未配置 OpenAI API Key，AI 测试暂不可用。</p>
+    <div id="quizEmpty" class="quiz-empty">点击“AI 出题”开始。</div>
+    <div id="quizArea" class="hidden">
+      <div class="panel-head"><b id="quizTitle"></b><span id="quizProgress" class="muted"></span></div>
+      <div class="quiz-card">
+        <div id="quizType" class="eyebrow"></div>
+        <h3 id="quizPrompt"></h3>
+        <button id="listenQuizBtn" class="ghost hidden">🔊 播放听力</button>
+        <div id="quizChoices" class="quiz-choices"></div>
+        <textarea id="quizAnswer" placeholder="输入答案…"></textarea>
+        <button id="submitQuizBtn" class="btn dark">提交答案</button>
+        <div id="quizFeedback" class="feedback hidden"></div>
+        <button id="nextQuizBtn" class="ghost hidden">下一题 →</button>
+      </div>
+    </div>
+    <div id="quizResult" class="hidden"></div>
+  </article>
+</section>
+
+<section id="libraryPage" class="page">
+  <article class="panel">
+    <div class="panel-head">
+      <div><div class="eyebrow">LIBRARY</div><h2>知识库</h2></div>
+      <button id="newCardBtn" class="btn dark">＋ 新建卡片</button>
+    </div>
+    <div class="row library-tools">
+      <input id="searchInput" placeholder="搜索知识点…">
+      <select id="categoryFilter"><option value="">全部分类</option></select>
+    </div>
+    <div id="libraryList" class="card-list"></div>
+  </article>
+</section>
+
+<section id="statsPage" class="page">
+  <section class="stats">
+    <article class="stat"><b id="statCards">0</b><span>累计知识点</span></article>
+    <article class="stat"><b id="statReviews">0</b><span>累计复习</span></article>
+    <article class="stat"><b id="statAccuracy">—</b><span>测试正确率</span></article>
+    <article class="stat"><b id="statLast7">0</b><span>近 7 日复习</span></article>
+  </section>
+  <article class="panel"><h2>分类</h2><div id="categoryStats"></div></article>
+</section>
+
+<section id="settingsPage" class="page">
+  <article class="panel">
+    <div class="eyebrow">SETTINGS</div><h2>设置</h2>
+    <div class="setting"><div><b>FSRS 目标保持率</b><div class="muted">越高，复习越频繁。</div></div><select id="retentionSetting"><option value=".85">85%</option><option value=".90">90%</option><option value=".92">92%</option><option value=".95">95%</option></select></div>
+    <div class="setting"><div><b>英文语速</b></div><select id="englishRate"><option value="1">1.0×</option><option value="1.2">1.2×</option><option value="1.5">1.5×</option></select></div>
+    <div class="setting"><div><b>中文语速</b></div><select id="chineseRate"><option value="1">1.0×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option></select></div>
+    <div class="setting"><div><b>每日目标</b></div><input id="dailyGoal" type="number" min="1" max="500"></div>
+    <button id="saveSettingsBtn" class="btn dark">保存设置</button>
+  </article>
+</section>
+</main>
+</div>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="panel-head"><h2 id="modalTitle">新建卡片</h2><button id="modalClose" class="ghost">✕</button></div>
+    <label>正面</label><input id="mFront">
+    <label>背面</label><textarea id="mBack"></textarea>
+    <label>例句 / 补充</label><textarea id="mExample"></textarea>
+    <label>分类</label><input id="mCategory" value="Other">
+    <button id="modalSave" class="btn dark wide">保存</button>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
