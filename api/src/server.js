@@ -770,6 +770,103 @@ Return schema-valid JSON only.`,
 }));
 
 
+
+const feynmanRealtimeSchema={
+  type:"object",
+  properties:{
+    action:{type:"string",enum:["listen","intervene"]},
+    question:{type:"string"},
+    clarityScore:{type:"integer",minimum:0,maximum:100}
+  },
+  required:["action","question","clarityScore"],
+  additionalProperties:false
+};
+
+app.post("/feynman/realtime", requireAuth, asyncRoute(async(req,res)=>{
+  if(!hasAI()) return res.status(503).json({error:"AI 未配置，暂时无法使用费曼模式。"});
+  const uid=userId(req);
+  const topic=String(req.body?.topic||"").trim().slice(0,300);
+  const explanation=String(req.body?.explanation||"").trim().slice(0,5000);
+  let sessionId=String(req.body?.sessionId||"").trim();
+
+  if(!topic) return res.status(400).json({error:"请先填写要讲解的主题。"});
+  if(!explanation) return res.status(400).json({error:"没有检测到有效讲解内容。"});
+
+  let session;
+  if(sessionId){
+    const existing=await query(`
+      SELECT * FROM feynman_sessions WHERE id=$2 AND user_id=$1
+    `,[uid,sessionId]);
+    session=existing.rows[0];
+    if(!session) return res.status(404).json({error:"费曼会话不存在。"});
+  }else{
+    const created=await query(`
+      INSERT INTO feynman_sessions(user_id,topic)
+      VALUES($1,$2) RETURNING *
+    `,[uid,topic]);
+    session=created.rows[0];
+    sessionId=session.id;
+  }
+
+  const prior=await query(`
+    SELECT role,content
+    FROM feynman_turns
+    WHERE session_id=$1
+    ORDER BY created_at DESC,id DESC
+    LIMIT 8
+  `,[sessionId]);
+  const history=prior.rows.reverse().map(x=>({role:x.role,text:x.content}));
+
+  const data=await generateStructured({
+    name:"feynman_realtime",
+    schema:feynmanRealtimeSchema,
+    system:`You are a wise, concise conversation partner in a live Feynman learning session.
+The user is explaining a topic aloud. Optimize for a natural spoken conversation with minimal interruption.
+
+Decide only this:
+1. Stay silent and keep listening, or
+2. Interrupt with exactly one high-value question.
+
+Use action="listen" if the thought is still developing coherently. Prefer silence.
+Use action="intervene" only for a real logical break: contradiction, undefined key term, circular reasoning, unsupported causal leap, hidden assumption, or a clearly completed thought that needs one decisive question.
+When listening, question must be "".
+When intervening, question must be short, conversational, and easy to say aloud. Usually one sentence, preferably under 28 Chinese characters or 18 English words.
+Never lecture. Never summarize the whole explanation. Never add preambles such as "I understand" or "Let me ask".
+Reply mainly in the user's language.
+Return schema-valid JSON only.`,
+    user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
+  });
+
+  const question=data.action==="intervene"?String(data.question||"").trim():"";
+  const aiContent=question || "（继续倾听）";
+
+  await query(`
+    INSERT INTO feynman_turns(session_id,role,content,metadata)
+    VALUES
+      ($1,'user',$2,$3::jsonb),
+      ($1,'ai',$4,$5::jsonb)
+  `,[
+    sessionId,
+    explanation,
+    JSON.stringify({topic:session.topic,realtime:true}),
+    aiContent,
+    JSON.stringify({
+      action:data.action,
+      followUpQuestion:question,
+      clarityScore:data.clarityScore,
+      realtime:true
+    })
+  ]);
+
+  await query(`
+    UPDATE feynman_sessions
+    SET topic=$3,status='active',clarity_score=$4,updated_at=NOW(),last_turn_at=NOW()
+    WHERE id=$2 AND user_id=$1
+  `,[uid,sessionId,topic,data.clarityScore]);
+
+  res.json({action:data.action,question,clarityScore:data.clarityScore,sessionId,topic});
+}));
+
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const [cards, reviews, recent, categories]=await Promise.all([
