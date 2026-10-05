@@ -1756,6 +1756,24 @@ function showWalkmanSubtitle(text){
   renderWalkmanLyrics([String(text||"")],0);
 }
 
+function walkmanAudioKey(card){
+  return [
+    card?.id||"",
+    walkmanRate,
+    Number(settings.english_rate||1),
+    Number(settings.chinese_rate||1),
+    localStorage.getItem("memorycast_en_voice_style")||"smart",
+    localStorage.getItem("memorycast_zh_voice_style")||"smart"
+  ].join("|");
+}
+
+function trimWalkmanAudioCache(){
+  while(walkmanAudioCache.size>6){
+    const first=walkmanAudioCache.keys().next().value;
+    walkmanAudioCache.delete(first);
+  }
+}
+
 function decodeBase64UrlText(value=""){
   if(!value)return "";
   const normalized=String(value).replace(/-/g,"+").replace(/_/g,"/");
