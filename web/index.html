@@ -29,6 +29,7 @@
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="notesPage">🗒️ 笔记库</button>
     <button data-page="quizPage">📝 AI 测试</button>
+    <button data-page="feynmanPage">🧠 费曼模式</button>
     <button data-page="libraryPage">📚 知识库</button>
     <button data-page="statsPage">📊 学习统计</button>
     <button data-page="settingsPage">⚙️ 设置</button>
@@ -183,6 +184,76 @@
   </article>
 </section>
 
+<section id="feynmanPage" class="page">
+  <div class="feynman-layout">
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">FEYNMAN MODE</div>
+          <h2>把它讲给 AI 学生听</h2>
+        </div>
+        <button id="resetFeynmanBtn" class="ghost">重新开始</button>
+      </div>
+      <p class="muted">目标不是背答案，而是把一个概念讲到“初学者也能跟上”。AI 每轮只追问一个最关键的逻辑缺口。</p>
+
+      <label>你要讲什么？</label>
+      <input id="feynmanTopic" list="feynmanTopicList" placeholder="例如：为什么动词过去式 -ed 有三种发音？">
+      <datalist id="feynmanTopicList"></datalist>
+
+      <div class="feynman-mic-box">
+        <button id="feynmanMicBtn" class="feynman-mic" type="button">🎙️</button>
+        <div>
+          <b id="feynmanMicTitle">点击开始讲</b>
+          <div id="feynmanMicStatus" class="muted">支持 Edge / Chrome 语音转文字；也可以直接打字。</div>
+        </div>
+      </div>
+
+      <label>你的讲解</label>
+      <textarea id="feynmanInput" class="feynman-input" placeholder="像给一个完全不懂的人解释一样讲出来……"></textarea>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap">
+        <button id="submitFeynmanBtn" class="btn dark">让 AI 学生听一听</button>
+        <button id="clearFeynmanInputBtn" class="ghost">清空本轮</button>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">AI STUDENT</div>
+          <h2>学生反馈</h2>
+        </div>
+        <span id="feynmanScore" class="chip">等待讲解</span>
+      </div>
+      <div id="feynmanEmpty" class="quiz-empty">你讲完一轮后，AI 会先复述它听懂了什么，再指出逻辑缺口，并只追问一个问题。</div>
+      <div id="feynmanResult" class="hidden">
+        <div class="feynman-student-bubble">
+          <div class="eyebrow">我听懂的是</div>
+          <div id="feynmanUnderstood"></div>
+        </div>
+        <div class="feynman-columns">
+          <div>
+            <b>讲清楚的地方</b>
+            <div id="feynmanStrengths" class="feynman-list"></div>
+          </div>
+          <div>
+            <b>还没讲通的地方</b>
+            <div id="feynmanGaps" class="feynman-list"></div>
+          </div>
+        </div>
+        <div class="feynman-question">
+          <div class="eyebrow">学生追问</div>
+          <h3 id="feynmanQuestion"></h3>
+          <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
+            <button id="speakFeynmanQuestionBtn" class="ghost">🔊 朗读追问</button>
+            <span id="feynmanStatus" class="muted"></span>
+          </div>
+        </div>
+      </div>
+      <div id="feynmanHistory" class="feynman-history"></div>
+    </article>
+  </div>
+</section>
+
 <section id="libraryPage" class="page">
   <article class="panel">
     <div class="panel-head">
@@ -263,6 +334,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=seamless-mixed-tts-1"></script>
+<script type="module" src="/app.js?v=feynman-mode-1"></script>
 </body>
 </html>
