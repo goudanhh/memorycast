@@ -729,18 +729,34 @@ async function processFeynmanRealtimeTurn(){
 
     $("feynmanEmpty").classList.add("hidden");
     $("feynmanResult").classList.remove("hidden");
-    $("feynmanUnderstood").textContent=d.action==="intervene"
-      ?"这里有一个值得停下来想清楚的点。"
-      :"这段逻辑可以继续展开。";
-    $("feynmanStrengths").innerHTML='<div class="muted">实时模式优先速度，不生成逐项点评。</div>';
+    const thoughtLabel=d.thoughtState==="developing"
+      ?"你这个思路还在展开，我先不打断。"
+      : d.action==="intervene"
+        ?"这个观点已经讲完整，但这里有一个关键逻辑点。"
+        :"这个观点已经成形，目前没有值得打断的漏洞。";
+    $("feynmanUnderstood").textContent=thoughtLabel;
+    $("feynmanStrengths").innerHTML='<div class="muted">实时模式优先理解你的思路，不做逐项打分。</div>';
+
+    const gapLabels={
+      none:"暂无关键逻辑缺口",
+      definition:"关键概念还没定义清楚",
+      causal_jump:"因果之间跳了一步",
+      hidden_assumption:"这里依赖一个隐藏前提",
+      contradiction:"和前文存在冲突",
+      circular_reasoning:"解释有循环论证倾向",
+      unsupported_claim:"重要结论还缺少理由",
+      boundary_case:"这个说法可能存在边界条件"
+    };
     $("feynmanGaps").innerHTML=d.action==="intervene"
-      ? '<div>→ '+esc(d.question||"")+'</div>'
-      : '<div class="muted">暂时没有值得打断的关键漏洞。</div>';
+      ? '<div>→ '+esc(gapLabels[d.gapType]||"发现关键逻辑点")+'</div>'
+      : '<div class="muted">'+esc(gapLabels[d.gapType]||"暂无关键逻辑缺口")+'</div>';
     $("feynmanQuestion").textContent=d.question||"继续讲，我在听。";
     $("feynmanScore").textContent="清晰度 "+Number(d.clarityScore||0)+"%";
     $("feynmanStatus").textContent=d.action==="intervene"
-      ?"我只问这一处。"
-      :"我先不打断。";
+      ?"判断置信度 "+Math.round(Number(d.confidence||0)*100)+"%"
+      : d.thoughtState==="developing"
+        ?"还在听你把这一层讲完。"
+        :"这个节点先不插话。";
     renderFeynmanHistory();
 
     feynmanProcessing=false;
