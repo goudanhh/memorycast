@@ -120,3 +120,46 @@ export function aiInfo() {
     model: p === "gemini" ? geminiModel() : p === "openai" ? openaiModel() : null
   };
 }
+
+
+export async function extractTextFromImage({base64,mimeType="image/jpeg"}) {
+  const key=process.env.GEMINI_API_KEY;
+  if(!key){
+    const e=new Error("GEMINI_API_KEY is not configured for OCR.");
+    e.statusCode=503;
+    throw e;
+  }
+  const model=process.env.OCR_MODEL || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const response=await fetch(url,{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "x-goog-api-key":key
+    },
+    body:JSON.stringify({
+      contents:[{
+        role:"user",
+        parts:[
+          {text:"Extract all readable study-note text from this image faithfully. Preserve useful line breaks, headings, formulas, English words, punctuation, and list structure. Do not summarize, explain, correct, or add content. Return only the extracted text."},
+          {inlineData:{mimeType,data:base64}}
+        ]
+      }],
+      generationConfig:{temperature:0}
+    })
+  });
+  const data=await response.json();
+  if(!response.ok){
+    const e=new Error(data?.error?.message||`Gemini OCR error (${response.status})`);
+    e.statusCode=response.status===429?429:502;
+    throw e;
+  }
+  const text=(data?.candidates?.[0]?.content?.parts||[])
+    .map(p=>p?.text||"").join("").trim();
+  if(!text){
+    const e=new Error("没有从图片中识别到文字。");
+    e.statusCode=422;
+    throw e;
+  }
+  return {text,model};
+}
