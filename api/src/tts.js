@@ -492,6 +492,94 @@ async function requestAzureTimed(ssml){
     );
   });
 }
+function pcmWavBuffer(pcm,{sampleRate=24000,channels=1,bitsPerSample=16}={}){
+  const data=Buffer.isBuffer(pcm)?pcm:Buffer.from(pcm||[]);
+  const header=Buffer.alloc(44);
+  const byteRate=sampleRate*channels*bitsPerSample/8;
+  const blockAlign=channels*bitsPerSample/8;
+
+  header.write("RIFF",0);
+  header.writeUInt32LE(36+data.length,4);
+  header.write("WAVE",8);
+  header.write("fmt ",12);
+  header.writeUInt32LE(16,16);
+  header.writeUInt16LE(1,20);
+  header.writeUInt16LE(channels,22);
+  header.writeUInt32LE(sampleRate,24);
+  header.writeUInt32LE(byteRate,28);
+  header.writeUInt16LE(blockAlign,32);
+  header.writeUInt16LE(bitsPerSample,34);
+  header.write("data",36);
+  header.writeUInt32LE(data.length,40);
+
+  return Buffer.concat([header,data]);
+}
+
+function silencePcm(ms,sampleRate=24000){
+  const samples=Math.max(0,Math.round(sampleRate*ms/1000));
+  return Buffer.alloc(samples*2);
+}
+
+async function synthesizeNativePcmPart(part){
+  const language=part.language==="zh-CN"?"zh-CN":"en-US";
+  const voice=language==="zh-CN"
+    ? (process.env.AZURE_ZH_NATIVE_VOICE||process.env.AZURE_ZH_VOICE||"zh-CN-XiaoxiaoNeural")
+    : (process.env.AZURE_EN_NATIVE_VOICE||process.env.AZURE_EN_VOICE||"en-US-AvaNeural");
+
+  const speechConfig=speechsdk.SpeechConfig.fromSubscription(KEY,REGION);
+  speechConfig.speechSynthesisOutputFormat=speechsdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm;
+
+  const body=clearIsolatedFragment(part.text,language);
+  const ssml=`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${language}"><voice name="${voice}"><prosody rate="${ratePercent(part.rate,1)}">${body}</prosody></voice></speak>`;
+
+  return await new Promise((resolve,reject)=>{
+    const synthesizer=new speechsdk.SpeechSynthesizer(speechConfig,null);
+    const words=[];
+
+    synthesizer.wordBoundary=(sender,e)=>{
+      words.push({
+        offsetMs:Number(e.audioOffset||0)/10000,
+        text:String(e.text||"")
+      });
+    };
+
+    synthesizer.speakSsmlAsync(
+      ssml,
+      result=>{
+        try{
+          if(result.reason!==speechsdk.ResultReason.SynthesizingAudioCompleted){
+            const err=new Error(result.errorDetails||"Azure native segment synthesis failed");
+            err.statusCode=502;
+            reject(err);
+            return;
+          }
+
+          const pcm=Buffer.from(result.audioData);
+          words.sort((a,b)=>a.offsetMs-b.offsetMs);
+          resolve({
+            pcm,
+            firstWordOffsetMs:words[0]?.offsetMs||0,
+            firstWord:words[0]?.text||"",
+            durationMs:pcm.length/(24000*2)*1000,
+            voice
+          });
+        }finally{
+          synthesizer.close();
+        }
+      },
+      err=>{
+        try{
+          const e=new Error(String(err||"Azure native segment synthesis failed"));
+          e.statusCode=502;
+          reject(e);
+        }finally{
+          synthesizer.close();
+        }
+      }
+    );
+  });
+}
+
 export async function synthesizeTimedTts(lines){
   if(!hasAzureTts()){
     const err=new Error("Azure TTS is not configured");
@@ -499,8 +587,22 @@ export async function synthesizeTimedTts(lines){
     throw err;
   }
 
-  const total=(Array.isArray(lines)?lines:[]).reduce((sum,line)=>
-    sum+(Array.isArray(line?.parts)?line.parts:[]).reduce((n,p)=>n+String(p?.text||"").length,0),0
+  const cleanLines=(Array.isArray(lines)?lines:[])
+    .map((line,lineIndex)=>({
+      lineIndex,
+      parts:(Array.isArray(line?.parts)?line.parts:[])
+        .map(p=>({
+          text:String(p?.text||"").trim(),
+          language:p?.language==="zh-CN"?"zh-CN":"en-US",
+          style:["smart","natural","host","lazy","conversation"].includes(p?.style)?p.style:"smart",
+          rate:Math.min(2,Math.max(.5,Number(p?.rate||1)))
+        }))
+        .filter(p=>p.text)
+    }))
+    .filter(line=>line.parts.length);
+
+  const total=cleanLines.reduce((sum,line)=>
+    sum+line.parts.reduce((n,p)=>n+p.text.length,0),0
   );
   if(!total){
     const err=new Error("Timed TTS lines are required");
@@ -513,25 +615,18 @@ export async function synthesizeTimedTts(lines){
     throw err;
   }
 
-  const {ssml,lineCount,voice}=buildTimedSsml(lines);
-  if(!ssml){
-    const err=new Error("Timed TTS lines are empty");
-    err.statusCode=400;
-    throw err;
-  }
-
-  const keyPayload=lines.map(line=>({
-    parts:(line.parts||[]).map(p=>({
-      text:String(p?.text||""),
-      language:p?.language==="zh-CN"?"zh-CN":"en-US",
-      style:p?.style||"smart",
-      rate:Number(p?.rate||1)
+  const keyPayload=cleanLines.map(line=>({
+    parts:line.parts.map(p=>({
+      text:p.text,
+      language:p.language,
+      style:p.style,
+      rate:p.rate
     }))
   }));
   const cacheKey=crypto.createHash("sha256")
-    .update("timed-native-dual-voice-v4|"+JSON.stringify(keyPayload))
+    .update("timed-separated-native-v5|"+JSON.stringify(keyPayload))
     .digest("hex");
-  const audioFile=path.join(CACHE_DIR,`${cacheKey}.mp3`);
+  const audioFile=path.join(CACHE_DIR,`${cacheKey}.wav`);
   const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
 
   await fs.mkdir(CACHE_DIR,{recursive:true});
@@ -541,35 +636,70 @@ export async function synthesizeTimedTts(lines){
       fs.readFile(timingFile,"utf8")
     ]);
     const timings=JSON.parse(timingRaw);
-    return {audio,timings,cacheHit:true,voice,lineCount};
+    return {audio,timings,cacheHit:true,voice:"separate-native",lineCount:cleanLines.length,mimeType:"audio/wav"};
   }catch{}
 
-  const result=await requestAzureTimed(ssml);
-  const timings=Array.from({length:lineCount},(_,i)=>{
-    const found=result.firstWords.find(x=>x.index===i);
-    return {
-      index:i,
-      offsetMs:found?found.firstWordOffsetMs:null,
-      bookmarkOffsetMs:found?found.bookmarkOffsetMs:null,
-      firstWord:found?found.firstWord:""
-    };
+  const flat=[];
+  cleanLines.forEach(line=>{
+    line.parts.forEach((part,partIndex)=>{
+      flat.push({...part,lineIndex:line.lineIndex,partIndex});
+    });
   });
 
-  // Fill any missing marker conservatively from neighboring known markers.
-  let last=0;
-  for(const item of timings){
-    if(Number.isFinite(item.offsetMs))last=item.offsetMs;
-    else item.offsetMs=last;
+  // Each language fragment is a completely independent Azure synthesis job.
+  // Run them concurrently so native-language isolation does not multiply latency.
+  const synthesized=await Promise.all(flat.map(synthesizeNativePcmPart));
+
+  const pcmParts=[];
+  const timings=[];
+  let cursorMs=0;
+  let lastLine=-1;
+
+  for(let i=0;i<flat.length;i++){
+    const meta=flat[i];
+    const seg=synthesized[i];
+
+    if(meta.lineIndex!==lastLine){
+      if(lastLine>=0){
+        const pause=silencePcm(20);
+        pcmParts.push(pause);
+        cursorMs+=20;
+      }
+
+      timings.push({
+        index:meta.lineIndex,
+        offsetMs:cursorMs+seg.firstWordOffsetMs,
+        bookmarkOffsetMs:cursorMs,
+        firstWord:seg.firstWord||meta.text.slice(0,16)
+      });
+      lastLine=meta.lineIndex;
+    }else{
+      // Tiny guard only at a language switch inside the same subtitle line.
+      const pause=silencePcm(30);
+      pcmParts.push(pause);
+      cursorMs+=30;
+    }
+
+    pcmParts.push(seg.pcm);
+    cursorMs+=seg.durationMs;
   }
 
+  const audio=pcmWavBuffer(Buffer.concat(pcmParts));
+
   await Promise.all([
-    fs.writeFile(audioFile,result.audio),
+    fs.writeFile(audioFile,audio),
     fs.writeFile(timingFile,JSON.stringify(timings),"utf8")
   ]);
 
-  return {audio:result.audio,timings,cacheHit:false,voice,lineCount};
+  return {
+    audio,
+    timings,
+    cacheHit:false,
+    voice:"separate-native",
+    lineCount:cleanLines.length,
+    mimeType:"audio/wav"
+  };
 }
-
 async function requestAzure(ssml){
   const response=await fetch(`https://${REGION}.tts.speech.microsoft.com/cognitiveservices/v1`,{
     method:"POST",
