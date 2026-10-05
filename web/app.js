@@ -806,6 +806,12 @@ async function loadSettings(){
   $("ttsRate").value="1";
   $("dailyGoal").value=settings.daily_goal;
   $("reminderTime").value=String(settings.reminder_time||"09:00").slice(0,5);
+  $("aiOrganizeProvider").value=settings.ai_organize_provider||"gemini";
+  $("aiQuizProvider").value=settings.ai_quiz_provider||"gemini";
+  $("aiGradeProvider").value=settings.ai_grade_provider||"gemini";
+  $("aiFeynmanProvider").value=settings.ai_feynman_provider||"gemini";
+  $("sttProvider").value=settings.stt_provider||"cloudflare";
+  $("ocrProvider").value=settings.ocr_provider||"gemini";
   refreshVoices();
   $("englishVoiceStyle").value=localStorage.getItem("memorycast_en_voice_style")||"smart";
   $("chineseVoiceStyle").value=localStorage.getItem("memorycast_zh_voice_style")||"smart";
@@ -820,7 +826,13 @@ async function saveSettings(){
     wrong_requeue:true,
     reminder_enabled:settings.reminder_enabled===true,
     reminder_time:$("reminderTime").value||"09:00",
-    reminder_timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"
+    reminder_timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC",
+    ai_organize_provider:$("aiOrganizeProvider").value,
+    ai_quiz_provider:$("aiQuizProvider").value,
+    ai_grade_provider:$("aiGradeProvider").value,
+    ai_feynman_provider:$("aiFeynmanProvider").value,
+    stt_provider:$("sttProvider").value,
+    ocr_provider:$("ocrProvider").value
   })});
   updatePushUi();
   alert("设置已保存");
