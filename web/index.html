@@ -313,10 +313,12 @@
       <option value="cloudflare">Cloudflare</option>
       <option value="openrouter">OpenRouter</option>
       <option value="auto">自动切换</option></select></div>
-      <div class="setting"><div><b>语音转文字</b></div><select id="sttProvider">      <option value="gemini">Gemini</option>
+      <div class="setting"><div><b>语音转文字</b><div class="muted">OpenRouter 的专用 Whisper 转写可能产生费用；严格零付费时选 Gemini 或 Cloudflare。</div></div><select id="sttProvider">
+      <option value="gemini">Gemini</option>
       <option value="cloudflare">Cloudflare</option>
-      <option value="openrouter">OpenRouter</option>
-      <option value="auto">自动切换</option></select></div>
+      <option value="openrouter">OpenRouter（可能计费）</option>
+      <option value="auto">自动切换</option>
+    </select></div>
       <div class="setting"><div><b>拍照 OCR</b></div><select id="ocrProvider">      <option value="gemini">Gemini</option>
       <option value="cloudflare">Cloudflare</option>
       <option value="openrouter">OpenRouter</option>
@@ -375,6 +377,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=per-feature-ai-router-1"></script>
+<script type="module" src="/app.js?v=per-feature-ai-router-2"></script>
 </body>
 </html>
