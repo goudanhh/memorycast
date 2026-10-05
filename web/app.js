@@ -727,7 +727,7 @@ async function submitFeynman(){
 
   try{
     const d=await api("/feynman/respond",{method:"POST",body:JSON.stringify({
-      topic,explanation,sessionId:feynmanSessionId
+      topic,explanation,sessionId:feynmanSessionId,cardId:currentFeynmanCardId
     })});
 
     feynmanSessionId=d.sessionId||feynmanSessionId;
@@ -744,11 +744,14 @@ async function submitFeynman(){
     $("feynmanGaps").innerHTML=(d.gaps||[]).map(x=>'<div>→ '+esc(x)+'</div>').join("")||'<div class="muted">核心逻辑暂时没有明显缺口。</div>';
     $("feynmanQuestion").textContent=d.followUpQuestion||"";
     $("feynmanScore").textContent="清晰度 "+Number(d.clarityScore||0)+"%";
-    $("feynmanStatus").textContent=d.studentReply||(
+    const fsrsLabel=d.feynmanFsrsRating
+      ? (" · FSRS "+({Again:"重学",Hard:"困难",Good:"掌握",Easy:"简单"}[d.feynmanFsrsRating]||d.feynmanFsrsRating))
+      : "";
+    $("feynmanStatus").textContent=(d.studentReply||(
       d.status==="mastered"
         ?"这部分已经基本讲通。"
         :"继续回答上面的追问。"
-    );
+    ))+fsrsLabel;
 
     renderFeynmanHistory();
 
