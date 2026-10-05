@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=multimodal-notes-16">
+<link rel="stylesheet" href="/styles.css?v=visual-quiz-17">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -184,6 +184,7 @@
           <span id="quizDifficulty" class="chip"></span>
         </div>
         <h3 id="quizPrompt"></h3>
+        <div id="quizVisual" class="quiz-visual hidden"></div>
         <button id="listenQuizBtn" class="ghost hidden">🔊 播放听力</button>
         <div id="quizChoices" class="quiz-choices"></div>
         <textarea id="quizAnswer" placeholder="输入答案…"></textarea>
@@ -388,7 +389,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=multimodal-notes-16"></script>
+<script type="module" src="/app.js?v=visual-quiz-17"></script>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
 </html>
