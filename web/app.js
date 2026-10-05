@@ -1609,6 +1609,8 @@ async function loadWalkmanQueue(){
 function splitWalkmanSubtitle(text=""){
   const clean=String(text||"")
     .replace(/\r/g,"")
+    .replace(/\n{2,}/g,"\n\n")
+    .replace(/(?<!\n)\n(?!\n)/g," ")
     .replace(/[ \t]+/g," ")
     .trim();
   if(!clean)return [];
@@ -1682,19 +1684,25 @@ function splitWalkmanSubtitle(text=""){
   };
 
   let sentences=[];
-  try{
-    if(typeof Intl!=="undefined" && Intl.Segmenter){
-      const seg=new Intl.Segmenter("zh-CN",{granularity:"sentence"});
-      sentences=[...seg.segment(clean)]
-        .map(x=>String(x.segment||"").trim())
-        .filter(Boolean);
-    }
-  }catch{}
+  const hasRealBoundary=/[。！？!?]|\n\n/.test(clean);
+
+  if(hasRealBoundary){
+    try{
+      if(typeof Intl!=="undefined" && Intl.Segmenter){
+        const seg=new Intl.Segmenter("zh-CN",{granularity:"sentence"});
+        sentences=[...seg.segment(clean)]
+          .map(x=>String(x.segment||"").trim())
+          .filter(Boolean);
+      }
+    }catch{}
+  }
 
   if(!sentences.length){
-    sentences=(clean.match(/[^。！？!?\n]+[。！？!?]?/g)||[clean])
-      .map(x=>x.trim())
-      .filter(Boolean);
+    sentences=hasRealBoundary
+      ? (clean.match(/[^。！？!?\n]+[。！？!?]?/g)||[clean])
+          .map(x=>x.trim())
+          .filter(Boolean)
+      : [clean];
   }
 
   return sentences.flatMap(splitSentenceFurther).filter(Boolean);
