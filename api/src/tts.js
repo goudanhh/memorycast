@@ -32,6 +32,29 @@ function smartStyle(text,language){
   return "natural";
 }
 
+function ssmlEscapeWithNumbers(value=""){
+  const text=String(value||"");
+  const tokenRe=/(\b\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\b|\b\d+\.\d+\b|\b\d+\b)/g;
+  let out="";
+  let last=0;
+
+  for(const match of text.matchAll(tokenRe)){
+    const idx=match.index??0;
+    out+=escapeXml(text.slice(last,idx));
+    const token=match[0];
+
+    if(/^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/.test(token)){
+      out+=`<say-as interpret-as="date" format="ymd">${escapeXml(token)}</say-as>`;
+    }else{
+      out+=`<say-as interpret-as="cardinal">${escapeXml(token)}</say-as>`;
+    }
+    last=idx+token.length;
+  }
+
+  out+=escapeXml(text.slice(last));
+  return out;
+}
+
 function ssmlTextWithPauses(value=""){
   const text=String(value);
   const pauseMap={
@@ -48,7 +71,7 @@ function ssmlTextWithPauses(value=""){
   let buf="";
   const flush=()=>{
     if(!buf)return;
-    out+=escapeXml(buf);
+    out+=ssmlEscapeWithNumbers(buf);
     buf="";
   };
 
@@ -66,6 +89,13 @@ function ssmlTextWithPauses(value=""){
       continue;
     }
     if(pauseMap[ch]){
+      // A period immediately after a digit is often a numbered-list marker (1. 2. 3.),
+      // not a sentence-ending full stop.
+      if(ch==="." && /\d/.test(text[i-1]||"") && /\s/.test(text[i+1]||"")){
+        flush();
+        out+='<break time="140ms"/>';
+        continue;
+      }
       flush();
       out+=escapeXml(ch)+`<break time="${pauseMap[ch]}"/>`;
       continue;
@@ -242,7 +272,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update("mixed-single-multilingual-v3|"+JSON.stringify(normalized.map(p=>({
+    .update("mixed-numbers-v4|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
