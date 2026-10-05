@@ -208,7 +208,7 @@ app.get("/tts/info", requireAuth, (req,res) => res.json(ttsInfo()));
 app.post("/tts", requireAuth, asyncRoute(async(req,res)=>{
   const text=String(req.body?.text||"");
   const language=req.body?.language==="zh-CN"?"zh-CN":"en-US";
-  const style=["natural","host","lazy"].includes(req.body?.style)?req.body.style:"natural";
+  const style=["smart","natural","host","lazy"].includes(req.body?.style)?req.body.style:"smart";
   const rate=Math.min(2,Math.max(.5,Number(req.body?.rate||1)));
   const result=await synthesizeTts({text,language,style,rate});
   res.setHeader("Content-Type","audio/mpeg");
