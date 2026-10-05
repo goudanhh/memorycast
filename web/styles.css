@@ -95,3 +95,9 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 
 .ai-provider-settings{margin:8px 0 22px;padding:16px;border:1px solid var(--line,#ddd);border-radius:14px}
 .ai-provider-settings h3{margin:3px 0 6px}
+
+.feynman-topic-picker{display:flex;gap:10px;align-items:flex-start;margin-bottom:14px}
+.feynman-topic-main{flex:1;min-width:0}
+.feynman-topic-main input{width:100%;font-weight:700}
+#feynmanTopicMeta{margin-top:6px;line-height:1.45}
+@media(max-width:680px){.feynman-topic-picker{flex-direction:column}.feynman-topic-picker .ghost{width:100%}}
