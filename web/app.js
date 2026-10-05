@@ -1972,7 +1972,7 @@ async function requestWalkmanChunk(card,chunkIndex,lines){
     body:JSON.stringify({
       lines:payloadLines,
       format:walkmanAudioFormat(),
-      delivery:watch?"url":"binary"
+      delivery:watch?"video":"binary"
     })
   });
   if(!res.ok)throw new Error("Timed Walkman TTS HTTP "+res.status);
