@@ -101,3 +101,12 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .feynman-topic-main input{width:100%;font-weight:700}
 #feynmanTopicMeta{margin-top:6px;line-height:1.45}
 @media(max-width:680px){.feynman-topic-picker{flex-direction:column}.feynman-topic-picker .ghost{width:100%}}
+
+.quiz-confidence{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.quiz-confidence .selected{outline:2px solid currentColor;font-weight:700}
+.quiz-diagnosis{margin-top:14px}
+.quiz-diagnosis-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+.quiz-diagnosis-group{border:1px solid var(--line,#ddd);border-radius:12px;padding:12px}
+.quiz-diagnosis-row{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line,#eee)}
+.quiz-diagnosis-row:last-child{border-bottom:0}
+@media(max-width:760px){.quiz-diagnosis-grid{grid-template-columns:1fr}}
