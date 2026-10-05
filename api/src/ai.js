@@ -370,3 +370,130 @@ export async function extractTextFromImage({base64,mimeType="image/jpeg",provide
   const e=new Error(failures.length?"所有 OCR API 都暂时不可用，请稍后重试。":"尚未配置可用的 OCR 服务。");
   e.statusCode=failures.length?502:503;throw e;
 }
+
+
+async function visualJsonWithGemini({base64,mimeType,system,user,schema}){
+  const key=String(process.env.GEMINI_API_KEY||"").trim();
+  if(!key) throw Object.assign(new Error("Gemini Vision 未配置"),{skipProvider:true});
+  const model=process.env.OCR_MODEL||geminiModel();
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const response=await fetch(url,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-goog-api-key":key},
+    body:JSON.stringify({
+      contents:[{
+        role:"user",
+        parts:[
+          {text:`${system}\n\nReturn JSON only. Follow this schema exactly: ${JSON.stringify(schema)}\n\nCONTEXT:\n${user}`},
+          {inlineData:{mimeType,data:base64}}
+        ]
+      }],
+      generationConfig:{temperature:0,responseMimeType:"application/json"}
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const e=new Error(data?.error?.message||`Gemini Vision error (${response.status})`);
+    e.statusCode=response.status;throw e;
+  }
+  const text=(data?.candidates?.[0]?.content?.parts||[]).map(p=>p?.text||"").join("").trim();
+  if(!text)throw Object.assign(new Error("Gemini Vision returned empty response."),{statusCode:502});
+  try{return JSON.parse(stripJsonFence(text));}
+  catch{
+    const m=stripJsonFence(text).match(/\{[\s\S]*\}/);
+    if(m)return JSON.parse(m[0]);
+    throw Object.assign(new Error("Gemini Vision returned invalid JSON."),{statusCode:502});
+  }
+}
+
+async function visualJsonWithOpenRouter({base64,mimeType,system,user,schema}){
+  const key=String(process.env.OPENROUTER_API_KEY||"").trim();
+  if(!key) throw Object.assign(new Error("OpenRouter Vision 未配置"),{skipProvider:true});
+  const model=process.env.OPENROUTER_VISION_MODEL||"openrouter/free";
+  const response=await fetch("https://openrouter.ai/api/v1/chat/completions",{
+    method:"POST",
+    headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json","X-Title":"MemoryCast"},
+    body:JSON.stringify({
+      model,
+      messages:[{
+        role:"user",
+        content:[
+          {type:"text",text:`${system}\n\nReturn JSON only. Follow this schema exactly: ${JSON.stringify(schema)}\n\nCONTEXT:\n${user}`},
+          {type:"image_url",image_url:{url:`data:${mimeType};base64,${base64}`}}
+        ]
+      }],
+      temperature:0
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const e=new Error(data?.error?.message||`OpenRouter Vision error (${response.status})`);
+    e.statusCode=response.status;throw e;
+  }
+  const text=String(data?.choices?.[0]?.message?.content||"").trim();
+  if(!text)throw Object.assign(new Error("OpenRouter Vision returned empty response."),{statusCode:502});
+  try{return JSON.parse(stripJsonFence(text));}
+  catch{
+    const m=stripJsonFence(text).match(/\{[\s\S]*\}/);
+    if(m)return JSON.parse(m[0]);
+    throw Object.assign(new Error("OpenRouter Vision returned invalid JSON."),{statusCode:502});
+  }
+}
+
+async function visualJsonWithCloudflare({base64,mimeType,system,user,schema}){
+  const key=String(process.env.CLOUDFLARE_API_KEY||"").trim();
+  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||"").trim();
+  if(!key||!accountId) throw Object.assign(new Error("Cloudflare Vision 未配置"),{skipProvider:true});
+  const model=process.env.CLOUDFLARE_OCR_MODEL||"@cf/moondream/moondream3.1-9B-A2B";
+  const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`;
+  const response=await fetch(url,{
+    method:"POST",
+    headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json"},
+    body:JSON.stringify({
+      task:"query",
+      image:`data:${mimeType};base64,${base64}`,
+      question:`${system}\nReturn JSON only. Schema: ${JSON.stringify(schema)}\nContext: ${user}`,
+      reasoning:false,temperature:0,max_tokens:4096
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||data?.success===false){
+    const e=new Error(data?.errors?.[0]?.message||data?.error?.message||`Cloudflare Vision error (${response.status})`);
+    e.statusCode=response.status;throw e;
+  }
+  const result=data?.result??data;
+  const text=String(result?.answer||result?.response||result?.text||"").trim();
+  if(!text)throw Object.assign(new Error("Cloudflare Vision returned empty response."),{statusCode:502});
+  try{return JSON.parse(stripJsonFence(text));}
+  catch{
+    const m=stripJsonFence(text).match(/\{[\s\S]*\}/);
+    if(m)return JSON.parse(m[0]);
+    throw Object.assign(new Error("Cloudflare Vision returned invalid JSON."),{statusCode:502});
+  }
+}
+
+export async function generateVisualStructured({base64,mimeType="image/jpeg",system,user,schema,provider:providerChoice="auto"}){
+  const map={
+    gemini:visualJsonWithGemini,
+    openrouter:visualJsonWithOpenRouter,
+    cloudflare:visualJsonWithCloudflare
+  };
+  const selected=String(providerChoice||"auto").toLowerCase();
+  const order=selected==="auto"
+    ? ["gemini","openrouter","cloudflare"]
+    : [selected,...["gemini","openrouter","cloudflare"].filter(x=>x!==selected)];
+  const failures=[];
+  for(const name of order){
+    const fn=map[name];
+    if(!fn)continue;
+    try{return await fn({base64,mimeType,system,user,schema});}
+    catch(err){
+      if(err?.skipProvider)continue;
+      failures.push(name+": "+(err?.message||String(err)));
+      console.warn("Vision provider failed:",name,err?.message||err);
+    }
+  }
+  const e=new Error(failures.length?"所有视觉 AI 当前都不可用，请稍后重试。":"尚未配置可用的视觉 AI。");
+  e.statusCode=failures.length?502:503;
+  throw e;
+}
