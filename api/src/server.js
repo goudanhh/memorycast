@@ -1303,6 +1303,16 @@ const adaptiveQuestionSchema={
   additionalProperties:false
 };
 
+const watchQuizSchema=JSON.parse(JSON.stringify(quizSchema));
+watchQuizSchema.properties.questions.items.properties.type.enum=["mcq"];
+watchQuizSchema.properties.questions.items.properties.choices.minItems=4;
+watchQuizSchema.properties.questions.items.properties.choices.maxItems=4;
+
+const watchAdaptiveQuestionSchema=JSON.parse(JSON.stringify(adaptiveQuestionSchema));
+watchAdaptiveQuestionSchema.properties.type.enum=["mcq"];
+watchAdaptiveQuestionSchema.properties.choices.minItems=4;
+watchAdaptiveQuestionSchema.properties.choices.maxItems=4;
+
 const visualQuizQuestionSchema={
   type:"object",
   properties:{
@@ -1319,6 +1329,7 @@ const visualQuizQuestionSchema={
 };
 app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
+  const watchMode=req.body?.watchMode===true;
   const count=Math.min(20,Math.max(3,Number(req.body?.count||10)));
   const mode=["mixed","weak","due"].includes(req.body?.mode)?req.body.mode:"mixed";
   const requestedIds=Array.isArray(req.body?.cardIds)
@@ -1454,8 +1465,9 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
         provider:quizProvider,
         base64:item.attachment.data.toString("base64"),
         mimeType:item.attachment.mime_type,
-        schema:visualQuizQuestionSchema,
+        schema:watchMode?watchAdaptiveQuestionSchema:visualQuizQuestionSchema,
         system:`Create ONE study question that genuinely requires looking at the supplied image.
+${watchMode?"Apple Watch mode: the question MUST be MCQ with exactly 4 choices. Do not generate fill-in or short-answer questions.":""}
 Use only facts visible in the image and the supplied card context. Do not invent labels, arrows, values, colors, anatomy, relationships, or other visual details.
 The visible prompt must be Simplified Chinese by default, while English target terms can stay in English.
 Good visual questions may ask about a labeled structure, arrow, sequence, table cell, chart trend, diagram relation, or visible annotation.
@@ -1497,9 +1509,11 @@ Return schema-valid JSON only.`,
     const data=await generateStructured({
       provider:quizProvider,
       name:"memorycast_quiz",
-      schema:quizSchema,
+      schema:watchMode?watchQuizSchema:quizSchema,
       system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
-Mix MCQ, fill, short-answer and listening items when appropriate.
+${watchMode
+  ?"Apple Watch mode: generate ONLY MCQ questions. Every question must have exactly 4 plausible choices. Do not generate fill, short-answer, or listening questions."
+  :"Mix MCQ, fill, short-answer and listening items when appropriate."}
 For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
 Always set visualAttachmentId to an empty string for these normal text/listening questions.
@@ -1571,7 +1585,7 @@ Return schema-valid JSON.`,
     user:JSON.stringify({type:q.type,prompt:q.prompt,expected:q.answer,acceptable:q.acceptableAnswers,userAnswer})
   });
 }
-async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence}){
+async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence,mcqOnly=false}){
   const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const strongCorrect=verdict==="correct" && confidence==="sure";
   const target=strongCorrect?"challenge":(verdict==="wrong"?"foundation":"standard");
@@ -1579,8 +1593,9 @@ async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence}){
   const data=await generateStructured({
     provider:quizProvider,
     name:"adaptive_quiz_question",
-    schema:adaptiveQuestionSchema,
+    schema:mcqOnly?watchAdaptiveQuestionSchema:adaptiveQuestionSchema,
     system:`Generate exactly ONE adaptive follow-up quiz question from the supplied card.
+${mcqOnly?"Apple Watch mode: this follow-up MUST be MCQ with exactly 4 plausible choices. Do not generate fill, short-answer, or listening questions.":""}
 It must test the SAME underlying concept as the previous question but in a DIFFERENT form or wording.
 Do not reveal or paraphrase the previous answer in the prompt.
 Target difficulty is ${target}.
@@ -1607,6 +1622,7 @@ Return schema-valid JSON only.`,
 
 app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   const {sessionId,questionId,answer=""}=req.body||{};
+  const watchMode=req.body?.watchMode===true;
   const confidence=["sure","unsure","guess"].includes(req.body?.confidence)
     ? req.body.confidence
     : "unsure";
@@ -1662,7 +1678,7 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
       const card=cardResult.rows[0];
       if(card){
         adaptiveQuestion=await makeAdaptiveQuizQuestion({
-          uid,card,q,verdict:grade.verdict,confidence
+          uid,card,q,verdict:grade.verdict,confidence,mcqOnly:watchMode
         });
         const allQuestions=[...(sessionRow.questions||[]),adaptiveQuestion];
         await query(`
