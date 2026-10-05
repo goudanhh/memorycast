@@ -153,54 +153,32 @@ function buildMixedSsml(parts){
     rate:Math.min(2,Math.max(.5,Number(p.rate||1)))
   })).filter(p=>p.text.trim());
 
-  const normalized=[];
-  for(let i=0;i<source.length;i++){
-    const p=source[i];
-    if(p.language==="en-US" && isShortInlineEnglish(p.text)){
-      const prev=normalized[normalized.length-1];
-      const next=source[i+1];
-      const hostLang=prev?.language==="zh-CN" || next?.language==="zh-CN" ? "zh-CN" : "en-US";
-      if(hostLang==="zh-CN"){
-        const cfg=configFor("zh-CN",prev?.style||next?.style||"smart",p.text);
-        const prosody=`<prosody rate="${ratePercent(prev?.rate||next?.rate||1,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${inlineEnglishXml(p.text)}</prosody>`;
-        normalized.push({
-          text:p.text,
-          language:"zh-CN",
-          sourceLanguage:"en-US",
-          inline:true,
-          style:prev?.style||next?.style||"smart",
-          rate:prev?.rate||next?.rate||1,
-          cfg,
-          xml:`<voice name="${cfg.voice}">${prosody}</voice>`
-        });
-        continue;
-      }
-    }
-
-    const cfg=configFor(p.language,p.style,p.text);
-    const prosody=`<prosody rate="${ratePercent(p.rate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${ssmlTextWithPauses(p.text)}</prosody>`;
-    const body=cfg.express
-      ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
-      : prosody;
-    normalized.push({...p,inline:false,cfg,xml:`<voice name="${cfg.voice}">${body}</voice>`});
+  if(!source.length){
+    return {normalized:[],ssml:""};
   }
 
-  const mixedBody=normalized.map((p,i)=>{
-    const next=normalized[i+1];
-    if(!next)return p.xml;
-    const currentSource=p.sourceLanguage||p.language;
-    const nextSource=next.sourceLanguage||next.language;
-    // A short language-boundary pause keeps Chinese/English code-switching intelligible
-    // without making the whole sentence sound chopped up.
-    const boundary=currentSource!==nextSource
-      ? (p.inline || next.inline ? '<break time="35ms"/>' : '<break time="60ms"/>')
-      : '';
-    return p.xml+boundary;
+  // One multilingual English voice for the entire utterance.
+  // This avoids audible gaps caused by switching Azure voices mid-sentence.
+  const voice=process.env.AZURE_MULTILINGUAL_VOICE||"en-US-AvaMultilingualNeural";
+  const avgRate=source.reduce((sum,p)=>sum+p.rate,0)/source.length;
+  const rate=ratePercent(avgRate,1);
+
+  const body=source.map(p=>{
+    const content=ssmlTextWithPauses(p.text);
+    return `<lang xml:lang="${p.language}">${content}</lang>`;
   }).join("");
+
+  const normalized=source.map(p=>({
+    ...p,
+    sourceLanguage:p.language,
+    inline:false,
+    cfg:{voice,locale:"en-US"},
+    xml:""
+  }));
 
   return {
     normalized,
-    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">${mixedBody}</speak>`
+    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${voice}"><prosody rate="${rate}">${body}</prosody></voice></speak>`
   };
 }
 
@@ -252,7 +230,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update("mixed-pause-v3|"+JSON.stringify(normalized.map(p=>({
+    .update("mixed-multilingual-v1|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
@@ -279,7 +257,8 @@ export function ttsInfo(){
     provider:hasAzureTts()?"azure":"browser",
     region:hasAzureTts()?REGION:null,
     cache:true,
-    styles:["smart","natural","host","lazy","conversation"]
+    styles:["smart","natural","host","lazy","conversation"],
+    multilingualVoice:process.env.AZURE_MULTILINGUAL_VOICE||"en-US-AvaMultilingualNeural"
   };
 }
 
