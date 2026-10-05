@@ -254,7 +254,7 @@ app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
   const result=await synthesizeTimedTts(lines);
   const timingHeader=Buffer.from(JSON.stringify(result.timings||[]),"utf8").toString("base64url");
 
-  res.setHeader("Content-Type","audio/mpeg");
+  res.setHeader("Content-Type",result.mimeType||"audio/mpeg");
   res.setHeader("Content-Length",String(result.audio.length));
   res.setHeader("Cache-Control","private, max-age=31536000, immutable");
   res.setHeader("X-MemoryCast-Timings",timingHeader);
