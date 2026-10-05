@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=walkman-mode-29">
+<link rel="stylesheet" href="/styles.css?v=walkman-subtitle-30">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -390,10 +390,12 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=walkman-mode-29"></script>
+<script type="module" src="/app.js?v=walkman-subtitle-30"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
-  <button id="walkmanPlayBtn" class="walkman-play" type="button">▶</button>
-  <select id="walkmanRate" class="walkman-rate" aria-label="播放速率">
+  <div id="walkmanSubtitle" class="walkman-subtitle">准备播放</div>
+  <div class="walkman-controls">
+    <button id="walkmanPlayBtn" class="walkman-play" type="button">▶</button>
+    <select id="walkmanRate" class="walkman-rate" aria-label="播放速率">
     <option value=".8">0.8×</option>
     <option value=".9">0.9×</option>
     <option value="1" selected>1.0×</option>
@@ -401,7 +403,8 @@
     <option value="1.2">1.2×</option>
     <option value="1.3">1.3×</option>
     <option value="1.5">1.5×</option>
-  </select>
+    </select>
+  </div>
 </div>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
