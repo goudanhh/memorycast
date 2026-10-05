@@ -1606,16 +1606,75 @@ async function loadWalkmanQueue(){
   return walkmanQueue;
 }
 
+function splitWalkmanSubtitle(text=""){
+  const clean=String(text||"")
+    .replace(/\r/g,"")
+    .replace(/[ \t]+/g," ")
+    .trim();
+  if(!clean)return [];
+
+  const natural=(clean.match(/[^。！？!?；;，,\n]+[。！？!?；;，,]?/g)||[clean])
+    .map(x=>x.trim())
+    .filter(Boolean);
+
+  const out=[];
+  for(const unit of natural){
+    const zh=(unit.match(/[\u3400-\u9fff]/g)||[]).length;
+    const en=(unit.match(/[A-Za-z]/g)||[]).length;
+    const maxChars=zh>=en?28:64;
+
+    if(unit.length<=maxChars){
+      out.push(unit);
+      continue;
+    }
+
+    if(en>zh && /\s/.test(unit)){
+      const words=unit.split(/\s+/);
+      let buf="";
+      for(const word of words){
+        const next=(buf?buf+" ":"")+word;
+        if(next.length>maxChars && buf){
+          out.push(buf);
+          buf=word;
+        }else{
+          buf=next;
+        }
+      }
+      if(buf)out.push(buf);
+      continue;
+    }
+
+    for(let i=0;i<unit.length;i+=maxChars){
+      const part=unit.slice(i,i+maxChars).trim();
+      if(part)out.push(part);
+    }
+  }
+
+  return out;
+}
+
 function walkmanSegments(card){
   if(!card)return [];
-  return [card.front,card.back,card.example].map(x=>String(x||"").trim()).filter(Boolean);
+  return [card.front,card.back,card.example]
+    .flatMap(x=>splitWalkmanSubtitle(x))
+    .filter(Boolean);
+}
+
+function showWalkmanSubtitle(text){
+  const el=$("walkmanSubtitle");
+  if(!el)return;
+  el.classList.remove("walkman-subtitle-active");
+  el.textContent=String(text||"");
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    el.classList.add("walkman-subtitle-active");
+  }));
 }
 
 function stopWalkman(){
   walkmanPlaying=false;
   stopAllTts();
   if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
-  if($("walkmanSubtitle"))$("walkmanSubtitle").textContent="已暂停";
+  showWalkmanSubtitle("已暂停");
 }
 
 function playWalkmanCurrent(){
@@ -1642,7 +1701,7 @@ function playWalkmanCurrent(){
       },350);
       return;
     }
-    if($("walkmanSubtitle"))$("walkmanSubtitle").textContent=segments[i];
+    showWalkmanSubtitle(segments[i]);
     speakOne(segments[i],()=>{
       if(!walkmanPlaying)return;
       setTimeout(()=>run(i+1),180);
@@ -1687,9 +1746,9 @@ async function enterWalkmanMode(){
   document.body.classList.add("walkman");
   $("walkmanMode").classList.remove("hidden");
   $("walkmanPlayBtn").textContent="▶";
-  $("walkmanSubtitle").textContent=walkmanQueue.length
+  showWalkmanSubtitle(walkmanQueue.length
     ? (walkmanSegments(walkmanQueue[0])[0]||"准备播放")
-    : "暂无可播放内容";
+    : "暂无可播放内容");
 
   // Browser Back exits the minimalist mode without needing another visible button.
   try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
