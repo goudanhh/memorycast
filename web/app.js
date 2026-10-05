@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
-let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
+let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
@@ -270,8 +270,8 @@ function browserSpeakPart(part,cb){
   const profile=voiceStyleProfile("en-US");
   u.pitch=profile.pitch;
   u.volume=1;
-  const baseRate=Number(settings.english_rate||1.0);
-  u.rate=Math.max(0.6,Math.min(1.6,baseRate*profile.rate));
+  const baseRate=Number(settings.english_rate||1.0)*(document.body.classList.contains("walkman")?walkmanRate:1);
+  u.rate=Math.max(0.6,Math.min(1.8,baseRate*profile.rate));
   const voice=pickVoice("en-US");
   if(voice)u.voice=voice;
   u.onend=()=>cb&&cb();
@@ -283,9 +283,9 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null,playbackGeneration=t
     text:part.text,
     language:part.lang,
     style:styleOverride||voiceStyleName(part.lang),
-    rate:part.lang==="zh-CN"
+    rate:(part.lang==="zh-CN"
       ? Number(settings.chinese_rate||1.0)
-      : Number(settings.english_rate||1.0)
+      : Number(settings.english_rate||1.0))*(document.body.classList.contains("walkman")?walkmanRate:1)
   }));
 
   const controller=new AbortController();
@@ -1599,15 +1599,112 @@ async function togglePush(){
   }catch(e){alert(e.message)}
 }
 
+async function loadWalkmanQueue(){
+  const d=await api("/walkman");
+  walkmanQueue=d.cards||[];
+  walkmanIndex=Math.min(walkmanIndex,Math.max(0,walkmanQueue.length-1));
+  return walkmanQueue;
+}
+
+function walkmanSegments(card){
+  if(!card)return [];
+  return [card.front,card.back,card.example].map(x=>String(x||"").trim()).filter(Boolean);
+}
+
+function stopWalkman(){
+  walkmanPlaying=false;
+  stopAllTts();
+  if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
+}
+
+function playWalkmanCurrent(){
+  if(!walkmanPlaying)return;
+  const card=walkmanQueue[walkmanIndex];
+  if(!card){
+    stopWalkman();
+    return;
+  }
+
+  const segments=walkmanSegments(card);
+  if(!segments.length){
+    walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
+    setTimeout(playWalkmanCurrent,100);
+    return;
+  }
+
+  const run=i=>{
+    if(!walkmanPlaying)return;
+    if(i>=segments.length){
+      walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
+      setTimeout(()=>{
+        if(walkmanPlaying)playWalkmanCurrent();
+      },350);
+      return;
+    }
+    speakOne(segments[i],()=>{
+      if(!walkmanPlaying)return;
+      setTimeout(()=>run(i+1),180);
+    });
+  };
+
+  run(0);
+}
+
+async function toggleWalkmanPlayback(){
+  if(walkmanPlaying){
+    stopWalkman();
+    return;
+  }
+
+  if(!walkmanQueue.length){
+    try{await loadWalkmanQueue()}catch(e){alert(e.message);return}
+  }
+  if(!walkmanQueue.length){
+    alert("还没有可播放的学习内容。");
+    return;
+  }
+
+  stopAllTts();
+  walkmanPlaying=true;
+  $("walkmanPlayBtn").textContent="⏹";
+  playWalkmanCurrent();
+}
+
+async function enterWalkmanMode(){
+  stopAllTts();
+  walkmanPlaying=false;
+  walkmanIndex=0;
+  walkmanRate=Number($("walkmanRate")?.value||1);
+  try{
+    await loadWalkmanQueue();
+  }catch(e){
+    alert("随身听队列加载失败："+e.message);
+    return;
+  }
+
+  document.body.classList.add("walkman");
+  $("walkmanMode").classList.remove("hidden");
+  $("walkmanPlayBtn").textContent="▶";
+
+  // Browser Back exits the minimalist mode without needing another visible button.
+  try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
+}
+
+function exitWalkmanMode(){
+  stopWalkman();
+  document.body.classList.remove("walkman");
+  $("walkmanMode").classList.add("hidden");
+}
+
 function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
 function toggleMobileNav(){document.body.classList.toggle("mobile-nav-open")}
 document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{if(b.dataset.skipNextClick)return;go(b.dataset.page);closeMobileNav()});
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
 $("mobileMenuBtn").onclick=toggleMobileNav;
 $("sidebarBackdrop").onclick=closeMobileNav;
-$("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
+$("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=enterWalkmanMode;
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
-$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{walkmanRate=Number($("walkmanRate").value||1);if(walkmanPlaying){stopAllTts();setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
