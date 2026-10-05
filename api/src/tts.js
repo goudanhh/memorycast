@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import * as speechsdk from "microsoft-cognitiveservices-speech-sdk";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -373,6 +374,164 @@ function buildMixedSsml(parts){
     normalized,
     ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${dominant}"><voice name="${voice}"><prosody rate="${ratePercent(avgRate,1)}">${body}</prosody></voice></speak>`
   };
+}
+
+function buildTimedSsml(lines){
+  const cleanLines=(Array.isArray(lines)?lines:[])
+    .map((line,i)=>({
+      index:i,
+      parts:(Array.isArray(line?.parts)?line.parts:[])
+        .map(p=>({
+          text:String(p?.text||""),
+          language:p?.language==="zh-CN"?"zh-CN":"en-US",
+          style:["smart","natural","host","lazy","conversation"].includes(p?.style)?p.style:"smart",
+          rate:Math.min(2,Math.max(.5,Number(p?.rate||1)))
+        }))
+        .filter(p=>p.text.trim())
+    }))
+    .filter(line=>line.parts.length);
+
+  const allParts=cleanLines.flatMap(line=>line.parts);
+  if(!allParts.length)return {ssml:"",lineCount:0,voice:""};
+
+  const dominant=dominantLocaleForParts(allParts);
+  const voice=dominant==="zh-CN"
+    ? (process.env.AZURE_ZH_MULTILINGUAL_VOICE||"zh-CN-YunxiaoMultilingualNeural")
+    : (process.env.AZURE_EN_MULTILINGUAL_VOICE||process.env.AZURE_MULTILINGUAL_VOICE||"en-US-AvaMultilingualNeural");
+
+  const avgRate=allParts.reduce((sum,p)=>sum+p.rate,0)/allParts.length;
+  const body=cleanLines.map((line,lineIndex)=>{
+    const xml=line.parts.map(p=>
+      `<lang xml:lang="${p.language}">${clearIsolatedFragment(p.text,p.language)}</lang>`
+    ).join("");
+    return `<bookmark mark="line-${lineIndex}"/>${xml}`;
+  }).join('<break time="80ms"/>');
+
+  return {
+    lineCount:cleanLines.length,
+    voice,
+    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${dominant}"><voice name="${voice}"><prosody rate="${ratePercent(avgRate,1)}">${body}</prosody></voice></speak>`
+  };
+}
+
+async function requestAzureTimed(ssml){
+  const speechConfig=speechsdk.SpeechConfig.fromSubscription(KEY,REGION);
+  speechConfig.speechSynthesisOutputFormat=speechsdk.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
+
+  return await new Promise((resolve,reject)=>{
+    const synthesizer=new speechsdk.SpeechSynthesizer(speechConfig,null);
+    const marks=[];
+
+    synthesizer.bookmarkReached=(sender,e)=>{
+      const match=String(e.text||"").match(/^line-(\d+)$/);
+      if(!match)return;
+      marks.push({
+        index:Number(match[1]),
+        offsetMs:Number(e.audioOffset||0)/10000
+      });
+    };
+
+    synthesizer.speakSsmlAsync(
+      ssml,
+      result=>{
+        try{
+          if(result.reason!==speechsdk.ResultReason.SynthesizingAudioCompleted){
+            const err=new Error(result.errorDetails||"Azure timed TTS synthesis failed");
+            err.statusCode=502;
+            reject(err);
+            return;
+          }
+          const audio=Buffer.from(result.audioData);
+          marks.sort((a,b)=>a.index-b.index);
+          resolve({audio,marks});
+        }finally{
+          synthesizer.close();
+        }
+      },
+      err=>{
+        try{
+          const e=new Error(String(err||"Azure timed TTS failed"));
+          e.statusCode=502;
+          reject(e);
+        }finally{
+          synthesizer.close();
+        }
+      }
+    );
+  });
+}
+
+export async function synthesizeTimedTts(lines){
+  if(!hasAzureTts()){
+    const err=new Error("Azure TTS is not configured");
+    err.statusCode=503;
+    throw err;
+  }
+
+  const total=(Array.isArray(lines)?lines:[]).reduce((sum,line)=>
+    sum+(Array.isArray(line?.parts)?line.parts:[]).reduce((n,p)=>n+String(p?.text||"").length,0),0
+  );
+  if(!total){
+    const err=new Error("Timed TTS lines are required");
+    err.statusCode=400;
+    throw err;
+  }
+  if(total>3000){
+    const err=new Error("Timed TTS text is too long");
+    err.statusCode=400;
+    throw err;
+  }
+
+  const {ssml,lineCount,voice}=buildTimedSsml(lines);
+  if(!ssml){
+    const err=new Error("Timed TTS lines are empty");
+    err.statusCode=400;
+    throw err;
+  }
+
+  const keyPayload=lines.map(line=>({
+    parts:(line.parts||[]).map(p=>({
+      text:String(p?.text||""),
+      language:p?.language==="zh-CN"?"zh-CN":"en-US",
+      style:p?.style||"smart",
+      rate:Number(p?.rate||1)
+    }))
+  }));
+  const cacheKey=crypto.createHash("sha256")
+    .update("timed-bookmarks-v1|"+JSON.stringify(keyPayload))
+    .digest("hex");
+  const audioFile=path.join(CACHE_DIR,`${cacheKey}.mp3`);
+  const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
+
+  await fs.mkdir(CACHE_DIR,{recursive:true});
+  try{
+    const [audio,timingRaw]=await Promise.all([
+      fs.readFile(audioFile),
+      fs.readFile(timingFile,"utf8")
+    ]);
+    const timings=JSON.parse(timingRaw);
+    return {audio,timings,cacheHit:true,voice,lineCount};
+  }catch{}
+
+  const result=await requestAzureTimed(ssml);
+  const timings=Array.from({length:lineCount},(_,i)=>{
+    const found=result.marks.find(x=>x.index===i);
+    return {index:i,offsetMs:found?found.offsetMs:null};
+  });
+
+  // Fill any missing marker conservatively from neighboring known markers.
+  let last=0;
+  for(const item of timings){
+    if(Number.isFinite(item.offsetMs))last=item.offsetMs;
+    else item.offsetMs=last;
+  }
+
+  await Promise.all([
+    fs.writeFile(audioFile,result.audio),
+    fs.writeFile(timingFile,JSON.stringify(timings),"utf8")
+  ]);
+
+  return {audio:result.audio,timings,cacheHit:false,voice,lineCount};
 }
 
 async function requestAzure(ssml){
