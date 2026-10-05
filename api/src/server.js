@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import pdfParse from "pdf-parse";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
-import { hasAI, generateStructured, aiInfo, extractTextFromImage } from "./ai.js";
+import { hasAI, generateStructured, generateVisualStructured, aiInfo, extractTextFromImage } from "./ai.js";
 import { synthesizeTts, synthesizeMixedTts, ttsInfo } from "./tts.js";
 
 const app = express();
@@ -1016,9 +1016,10 @@ const quizSchema={
         prompt:{type:"string"},choices:{type:"array",items:{type:"string"},maxItems:4},
         answer:{type:"string"},acceptableAnswers:{type:"array",items:{type:"string"},maxItems:8},
         explanation:{type:"string"},audioText:{type:"string"},
-        difficultyLevel:{type:"string",enum:["foundation","standard","challenge"]}
+        difficultyLevel:{type:"string",enum:["foundation","standard","challenge"]},
+        visualAttachmentId:{type:"string"}
       },
-      required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText","difficultyLevel"],
+      required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText","difficultyLevel","visualAttachmentId"],
       additionalProperties:false
     }}
   },
@@ -1036,9 +1037,25 @@ const adaptiveQuestionSchema={
     acceptableAnswers:{type:"array",items:{type:"string"},maxItems:8},
     explanation:{type:"string"},
     audioText:{type:"string"},
+    difficultyLevel:{type:"string",enum:["foundation","standard","challenge"]},
+    visualAttachmentId:{type:"string"}
+  },
+  required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText","difficultyLevel","visualAttachmentId"],
+  additionalProperties:false
+};
+
+const visualQuizQuestionSchema={
+  type:"object",
+  properties:{
+    type:{type:"string",enum:["mcq","fill","short"]},
+    prompt:{type:"string"},
+    choices:{type:"array",items:{type:"string"},maxItems:4},
+    answer:{type:"string"},
+    acceptableAnswers:{type:"array",items:{type:"string"},maxItems:8},
+    explanation:{type:"string"},
     difficultyLevel:{type:"string",enum:["foundation","standard","challenge"]}
   },
-  required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText","difficultyLevel"],
+  required:["type","prompt","choices","answer","acceptableAnswers","explanation","difficultyLevel"],
   additionalProperties:false
 };
 app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
@@ -1122,13 +1139,14 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     let attachmentContext=[];
     if(r.source_note_id){
       const ar=await query(`
-        SELECT original_name,mime_type,extracted_text
+        SELECT id,original_name,mime_type,extracted_text
         FROM note_attachments
         WHERE user_id=$1 AND note_id=$2
         ORDER BY sort_order ASC,created_at ASC
         LIMIT 12
       `,[uid,r.source_note_id]);
       attachmentContext=ar.rows.map(a=>({
+        id:a.id,
         name:a.original_name,
         mimeType:a.mime_type,
         extractedText:String(a.extracted_text||"").slice(0,5000)
@@ -1145,14 +1163,82 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
   }
 
   const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
-  const data=await generateStructured({
-    provider:quizProvider,
-    name:"memorycast_quiz",
-    schema:quizSchema,
-    system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
+
+  // Generate up to three true visual questions from original image bytes.
+  const visualQuestions=[];
+  const visualCandidates=[];
+  for(const r of selectedRows){
+    if(!r.source_note_id)continue;
+    const ar=await query(`
+      SELECT id,original_name,mime_type,data,extracted_text
+      FROM note_attachments
+      WHERE user_id=$1 AND note_id=$2
+        AND mime_type LIKE 'image/%'
+      ORDER BY sort_order ASC,created_at ASC
+      LIMIT 2
+    `,[uid,r.source_note_id]);
+    for(const a of ar.rows){
+      visualCandidates.push({card:r,attachment:a});
+      if(visualCandidates.length>=6)break;
+    }
+    if(visualCandidates.length>=6)break;
+  }
+
+  const visualTarget=Math.min(3,Math.max(0,Math.floor(count/3)),visualCandidates.length);
+  for(let i=0;i<visualTarget;i++){
+    const item=visualCandidates[i];
+    try{
+      const v=await generateVisualStructured({
+        provider:quizProvider,
+        base64:item.attachment.data.toString("base64"),
+        mimeType:item.attachment.mime_type,
+        schema:visualQuizQuestionSchema,
+        system:`Create ONE study question that genuinely requires looking at the supplied image.
+Use only facts visible in the image and the supplied card context. Do not invent labels, arrows, values, colors, anatomy, relationships, or other visual details.
+The visible prompt must be Simplified Chinese by default, while English target terms can stay in English.
+Good visual questions may ask about a labeled structure, arrow, sequence, table cell, chart trend, diagram relation, or visible annotation.
+Do NOT ask a question that could be answered from the text context alone.
+For MCQ, provide exactly 4 plausible choices. Otherwise choices=[].
+Return schema-valid JSON only.`,
+        user:JSON.stringify({
+          card:{
+            id:item.card.id,
+            front:item.card.front,
+            back:item.card.back,
+            example:item.card.example,
+            tags:item.card.tags||[]
+          },
+          attachment:{
+            name:item.attachment.original_name,
+            extractedText:String(item.attachment.extracted_text||"").slice(0,5000)
+          }
+        })
+      });
+      visualQuestions.push({
+        ...v,
+        id:crypto.randomUUID(),
+        cardId:item.card.id,
+        audioText:"",
+        visualAttachmentId:item.attachment.id,
+        adaptive:false
+      });
+    }catch(err){
+      console.warn("Visual quiz generation skipped:",err?.message||err);
+    }
+  }
+
+  const remaining=Math.max(0,count-visualQuestions.length);
+  let regularQuestions=[];
+  if(remaining>0){
+    const data=await generateStructured({
+      provider:quizProvider,
+      name:"memorycast_quiz",
+      schema:quizSchema,
+      system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
 Mix MCQ, fill, short-answer and listening items when appropriate.
 For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
+Always set visualAttachmentId to an empty string for these normal text/listening questions.
 Use Simplified Chinese for the quiz prompt and all learner-facing instructions by default.
 Keep English words, phrases, sentences, answer choices, and examples in English when they are the learning target.
 If the learner must answer in English, explicitly say "请用英文回答".
@@ -1169,25 +1255,33 @@ If a card includes attachments, their extractedText is part of the allowed sourc
 Do not invent visual facts that are not present in the extracted attachment text.
 Do not simply copy the card front as the answer cue.
 Return only schema-valid JSON.`,
-    user:JSON.stringify({count,mode,cards:source})
-  });
+      user:JSON.stringify({count:remaining,mode,cards:source})
+    });
 
-  const allowed=new Set(source.map(x=>x.id));
-  const questions=data.questions
-    .filter(q=>allowed.has(q.cardId))
-    .slice(0,count)
-    .map(q=>({...q,id:crypto.randomUUID(),adaptive:false}));
+    const allowed=new Set(source.map(x=>x.id));
+    regularQuestions=(data.questions||[])
+      .filter(q=>allowed.has(q.cardId))
+      .slice(0,remaining)
+      .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
+  }
 
+  const questions=[...visualQuestions,...regularQuestions]
+    .sort(()=>Math.random()-.5)
+    .slice(0,count);
+
+  const quizTitle=visualQuestions.length
+    ? "今日多模态测试"
+    : "今日测试";
   if(!questions.length) return res.status(502).json({error:"AI 未生成有效题目。"});
 
   const {rows:created}=await query(`
     INSERT INTO quiz_sessions(user_id,title,questions)
     VALUES($1,$2,$3) RETURNING id
-  `,[uid,data.title||"今日测试",JSON.stringify(questions)]);
+  `,[uid,quizTitle,JSON.stringify(questions)]);
 
   res.json({
     sessionId:created[0].id,
-    title:data.title||"今日测试",
+    title:quizTitle,
     questions:questions.map(({answer,acceptableAnswers,explanation,...safe})=>safe)
   });
 }));
@@ -1234,6 +1328,7 @@ If the learner must answer in English, explicitly say "请用英文回答".
 For MCQ give exactly 4 plausible choices; otherwise choices=[].
 For listening, keep the visible prompt in Chinese; audioText is what TTS reads and the prompt must not reveal it.
 Do not make the whole follow-up question English just because the source material is English.
+Always set visualAttachmentId to an empty string for adaptive follow-up questions.
 Return schema-valid JSON only.`,
     user:JSON.stringify({
       card:{id:card.id,front:card.front,back:card.back,example:card.example,tags:card.tags||[]},
