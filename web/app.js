@@ -757,9 +757,12 @@ function attachmentGalleryHtml(attachments=[]){
     const name=esc(a.name||"附件");
     const url=esc(a.url||("#"));
     if(String(a.mimeType||"").startsWith("image/")){
+      const label=a.isGenerated&&a.pageNumber
+        ? "PDF 第 "+a.pageNumber+" 页"
+        : name;
       return '<a class="attachment-thumb" href="'+url+'" target="_blank" rel="noopener">'+
-        '<img src="'+url+'" alt="'+name+'" loading="lazy">'+
-        '<span>'+name+'</span>'+
+        '<img src="'+url+'" alt="'+esc(label)+'" loading="lazy">'+
+        '<span>'+esc(label)+'</span>'+
       '</a>';
     }
     if(a.mimeType==="application/pdf"){
@@ -937,7 +940,7 @@ async function handleMediaFiles(fileList){
 
       noteId=d.note?.id||noteId;
       currentImportedNoteId=noteId;
-      totalAttachments+=(d.attachments||[]).length;
+      totalAttachments+=(d.attachments||[]).filter(a=>!a.isGenerated).length;
       if(String(d.text||"").trim())extractedPieces.push(String(d.text).trim());
     }
 
@@ -948,7 +951,7 @@ async function handleMediaFiles(fileList){
     }
 
     await loadNotes();
-    $("captureStatus").textContent="✓ 已保存 "+totalAttachments+" 个原始附件，并提取可识别文字。可直接整理成卡片。";
+    $("captureStatus").textContent="✓ 已保存 "+totalAttachments+" 个原始附件；PDF 页面已自动生成视觉题素材。可直接整理成卡片。";
   }catch(e){
     $("captureStatus").textContent="附件处理失败："+e.message;
   }finally{
