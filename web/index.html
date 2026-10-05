@@ -109,8 +109,15 @@
 <section id="importPage" class="page">
   <div class="grid2">
     <article class="panel">
-      <div class="eyebrow">AI IMPORT</div><h2>粘贴学习笔记</h2>
-      <textarea id="noteInput" class="large-input" placeholder="粘贴今天学到的中文、英文或专业笔记…"></textarea>
+      <div class="eyebrow">AI IMPORT</div><h2>输入学习笔记</h2>
+      <div class="capture-tools">
+        <button id="voiceNoteBtn" class="ghost capture-btn" type="button">🎙️ 语音记笔记</button>
+        <button id="photoOcrBtn" class="ghost capture-btn" type="button">📷 拍照 OCR</button>
+        <input id="photoOcrInput" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" class="hidden">
+      </div>
+      <div id="captureStatus" class="muted capture-status">可以粘贴文字、录音，或拍照识别讲义。</div>
+      <audio id="voiceNotePreview" class="hidden" controls></audio>
+      <textarea id="noteInput" class="large-input" placeholder="粘贴、录音或拍照导入今天学到的中文、英文或专业笔记…"></textarea>
       <div class="setting" style="margin:12px 0">
         <div><b>卡片整理方式</b><div class="muted">不影响 AI 出题；不分割时整篇笔记保存为 1 张卡片。</div></div>
         <select id="cardSplitMode">
@@ -339,6 +346,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=feynman-turn-analysis-6"></script>
+<script type="module" src="/app.js?v=voice-photo-import-1"></script>
 </body>
 </html>
