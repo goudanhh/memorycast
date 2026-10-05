@@ -4,6 +4,7 @@ let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let watchAudioPrimed=false;
+let watchDiagEl=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -1857,6 +1858,21 @@ function walkmanAudioFormat(){
   return "aac";
 }
 
+function watchDiag(message){
+  if(!isAppleWatchLike())return;
+  try{
+    if(!watchDiagEl){
+      watchDiagEl=document.createElement("div");
+      watchDiagEl.id="watchAudioDiag";
+      watchDiagEl.style.cssText="position:fixed;left:4px;right:4px;bottom:4px;z-index:99999;font:10px/1.25 monospace;background:rgba(0,0,0,.78);color:#fff;padding:5px 6px;border-radius:6px;max-height:42vh;overflow:auto;white-space:pre-wrap;";
+      document.body.appendChild(watchDiagEl);
+    }
+    const ts=new Date().toLocaleTimeString();
+    watchDiagEl.textContent=(watchDiagEl.textContent?watchDiagEl.textContent+"\n":"")+ts+" "+message;
+    watchDiagEl.scrollTop=watchDiagEl.scrollHeight;
+  }catch{}
+}
+
 function primeAppleWatchAudio(){
   if(!isAppleWatchLike())return;
   const audio=$("globalTtsAudio");
@@ -1872,11 +1888,16 @@ function primeAppleWatchAudio(){
     audio.currentTime=0;
     currentAudio=audio;
 
+    watchDiag("prime play() start");
     const p=audio.play();
     if(p&&typeof p.then==="function"){
-      p.then(()=>{watchAudioPrimed=true;})
+      p.then(()=>{
+        watchAudioPrimed=true;
+        watchDiag("prime play() resolved");
+      })
        .catch(err=>{
          watchAudioPrimed=false;
+         watchDiag("prime failed "+(err?.name||"")+" "+(err?.message||err));
          console.warn("Apple Watch audio prime failed:",err?.name||"",err?.message||err);
        });
     }else{
@@ -2001,7 +2022,9 @@ async function getWalkmanChunk(card,chunkIndex,lines){
 
 async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines){
   const generation=ttsPlaybackGeneration;
+  watchDiag("chunk request start "+chunkIndex);
   const media=await getWalkmanChunk(card,chunkIndex,lines);
+  watchDiag("chunk response "+chunkIndex+" url="+Boolean(media?.url)+" blob="+Boolean(media?.blob));
   if((!media?.blob&&!media?.url)||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
 
   const audio=$("globalTtsAudio");
@@ -2023,7 +2046,9 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   audio.loop=false;
   audio.pause();
   audio.src=url;
+  watchDiag("set src "+url);
   audio.load();
+  watchDiag("after load ready="+audio.readyState+" network="+audio.networkState);
 
   const resumeThisChunk=walkmanResumePending && chunkIndex===walkmanChunkIndex;
   const resumeAt=resumeThisChunk?Math.max(0,Number(walkmanChunkTime||0)):0;
@@ -2087,7 +2112,13 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
       walkmanChunkTime=audio.currentTime||0;
       syncLyrics();
     };
+    audio.onloadedmetadata=()=>watchDiag("loadedmetadata dur="+audio.duration);
+    audio.oncanplay=()=>watchDiag("canplay ready="+audio.readyState);
+    audio.onwaiting=()=>watchDiag("waiting ready="+audio.readyState+" network="+audio.networkState);
+    audio.onstalled=()=>watchDiag("stalled network="+audio.networkState);
+    audio.onsuspend=()=>watchDiag("suspend network="+audio.networkState);
     audio.onplaying=()=>{
+      watchDiag("playing current="+audio.currentTime);
       audioHasStarted=true;
       if(walkmanPlaying && $("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="⏸";
       if(resumeThisChunk && resumeAt>0 && Number.isFinite(audio.duration)){
@@ -2095,13 +2126,32 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
       }
       walkmanResumePending=false;
     };
-    audio.onended=resolve;
-    audio.onerror=()=>reject(new Error("随身听音频播放失败"));
+    audio.onended=()=>{
+      watchDiag("ended");
+      resolve();
+    };
+    audio.onerror=()=>{
+      const e=audio.error;
+      watchDiag("audio error code="+(e?.code||0)+" msg="+(e?.message||"")+" ready="+audio.readyState+" network="+audio.networkState);
+      reject(new Error("随身听音频播放失败"));
+    };
+    watchDiag("real play() call ready="+audio.readyState+" network="+audio.networkState);
     const p=audio.play();
-    if(p&&typeof p.catch==="function")p.catch(reject);
+    if(p&&typeof p.then==="function"){
+      p.then(()=>watchDiag("real play() resolved"))
+       .catch(err=>{
+         watchDiag("real play() rejected "+(err?.name||"")+" "+(err?.message||err));
+         reject(err);
+       });
+    }
   }).catch(err=>console.warn(err.message));
 
   audio.ontimeupdate=null;
+  audio.onloadedmetadata=null;
+  audio.oncanplay=null;
+  audio.onwaiting=null;
+  audio.onstalled=null;
+  audio.onsuspend=null;
   audio.onplaying=null;
   audio.onended=null;
   audio.onerror=null;
@@ -2344,6 +2394,7 @@ async function enterWalkmanMode(){
   // Apple Watch starts immediately after entering Walkman mode.
   // Other devices retain the existing manual play button behavior.
   if(watch && walkmanQueue.length){
+    watchDiag("autoplay walkman start");
     walkmanPlaying=true;
     walkmanPaused=false;
     playWalkmanCurrent();
