@@ -443,34 +443,88 @@ async function openNoteReview(id){
   $("editNoteBtn").disabled=false;
   $("deleteNoteBtn").disabled=false;
 }
-function chunkNoteForTts(text,maxChars=220){
-  const clean=String(text||"").replace(/\r/g,"").trim();
+function dominantTextLanguage(text=""){
+  const s=String(text||"");
+  const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
+  const en=(s.match(/[A-Za-z]/g)||[]).length;
+  return zh>=2 && zh*1.35>=en ? "zh-CN" : "en-US";
+}
+
+function splitLongTtsBlock(text,maxChars=190){
+  const clean=String(text||"").trim();
   if(!clean)return [];
+  if(clean.length<=maxChars)return [clean];
 
   const units=clean.split(/(?<=[。！？!?；;\n])/).map(x=>x.trim()).filter(Boolean);
   const chunks=[];
   let buf="";
 
-  const pushBuf=()=>{
-    if(buf.trim())chunks.push(buf.trim());
-    buf="";
-  };
-
   for(const unit of units){
     if(unit.length>maxChars){
-      pushBuf();
+      if(buf.trim()){chunks.push(buf.trim());buf="";}
       for(let i=0;i<unit.length;i+=maxChars){
-        chunks.push(unit.slice(i,i+maxChars).trim());
+        const part=unit.slice(i,i+maxChars).trim();
+        if(part)chunks.push(part);
       }
       continue;
     }
-    if((buf+" "+unit).trim().length>maxChars)pushBuf();
-    buf=(buf?buf+" ":"")+unit;
+    if((buf+"\n"+unit).trim().length>maxChars){
+      if(buf.trim())chunks.push(buf.trim());
+      buf=unit;
+    }else{
+      buf=buf?buf+"\n"+unit:unit;
+    }
   }
-  pushBuf();
+
+  if(buf.trim())chunks.push(buf.trim());
   return chunks;
 }
 
+function chunkNoteForTts(text,maxChars=190){
+  const clean=String(text||"").replace(/\r/g,"").trim();
+  if(!clean)return [];
+
+  // Preserve natural paragraphs/lines first. Never merge an English-primary
+  // block with a Chinese-primary block, otherwise one multilingual voice would
+  // have to carry both and the secondary language can sound accented.
+  const blocks=clean.split(/\n{2,}/).map(x=>x.trim()).filter(Boolean);
+  const chunks=[];
+  let buf="";
+  let bufLang="";
+
+  const pushBuf=()=>{
+    if(buf.trim())chunks.push(buf.trim());
+    buf="";
+    bufLang="";
+  };
+
+  for(const block of blocks){
+    const pieces=splitLongTtsBlock(block,maxChars);
+    for(const piece of pieces){
+      const lang=dominantTextLanguage(piece);
+
+      if(!buf){
+        buf=piece;
+        bufLang=lang;
+        continue;
+      }
+
+      const sameLanguage=lang===bufLang;
+      const fits=(buf+"\n\n"+piece).length<=maxChars;
+
+      if(sameLanguage&&fits){
+        buf+="\n\n"+piece;
+      }else{
+        pushBuf();
+        buf=piece;
+        bufLang=lang;
+      }
+    }
+  }
+
+  pushBuf();
+  return chunks;
+}
 async function fetchNoteTtsChunk(text,generation){
   const parts=splitByLanguage(text).map(part=>({
     text:part.text,
