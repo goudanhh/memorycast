@@ -48,6 +48,7 @@ async function init(){
   if(!auth.user){showLogin();return}
   me=auth.user;
   showApp();
+  go("notesPage");
   $("username").textContent=me.login;
   $("avatar").src=me.avatarUrl||"";
   $("aiDisabledImport").classList.toggle("hidden",aiEnabled);
@@ -1479,29 +1480,6 @@ async function loadSettings(){
   $("sttProvider").value=settings.stt_provider||"cloudflare";
   $("ocrProvider").value=settings.ocr_provider||"gemini";
 
-  const serverOrder=Array.isArray(settings.nav_order)?settings.nav_order:[];
-  let localOrder=[];
-  try{localOrder=JSON.parse(localStorage.getItem(NAV_ORDER_KEY)||"[]")}catch{}
-
-  if(serverOrder.length){
-    const serverIsDefault=JSON.stringify(serverOrder)===JSON.stringify(DEFAULT_NAV_ORDER);
-    const localIsCustom=Array.isArray(localOrder)&&localOrder.length&&JSON.stringify(localOrder)!==JSON.stringify(DEFAULT_NAV_ORDER);
-
-    if(serverIsDefault&&localIsCustom){
-      applyNavOrder(localOrder);
-      try{
-        const migrated=await api("/settings/nav-order",{
-          method:"PUT",
-          body:JSON.stringify({nav_order:localOrder})
-        });
-        if(Array.isArray(migrated.nav_order))applyNavOrder(migrated.nav_order);
-      }catch{}
-    }else{
-      applyNavOrder(serverOrder);
-      try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(serverOrder))}catch{}
-    }
-  }
-
   refreshVoices();
   $("englishVoiceStyle").value=localStorage.getItem("memorycast_en_voice_style")||"smart";
   $("chineseVoiceStyle").value=localStorage.getItem("memorycast_zh_voice_style")||"smart";
@@ -1602,171 +1580,15 @@ async function togglePush(){
   }catch(e){alert(e.message)}
 }
 
-const DEFAULT_NAV_ORDER=[
-  "homePage","todayPage","importPage","notesPage","quizPage",
-  "feynmanPage","libraryPage","statsPage","settingsPage"
-];
-const NAV_ORDER_KEY="memorycast_nav_order_v1";
-
-function currentNavOrder(){
-  return [...document.querySelectorAll(".nav [data-page]")].map(x=>x.dataset.page);
-}
-
-let navSaveTimer=null;
-function saveNavOrder(){
-  const order=currentNavOrder();
-  try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(order))}catch{}
-
-  clearTimeout(navSaveTimer);
-  navSaveTimer=setTimeout(async()=>{
-    try{
-      const d=await api("/settings/nav-order",{
-        method:"PUT",
-        body:JSON.stringify({nav_order:order})
-      });
-      if(Array.isArray(d.nav_order)){
-        applyNavOrder(d.nav_order);
-        try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(d.nav_order))}catch{}
-      }
-    }catch(err){
-      console.warn("菜单顺序服务端同步失败，已保留本地缓存：",err?.message||err);
-    }
-  },250);
-}
-
-function applyNavOrder(order){
-  const nav=document.querySelector(".nav");
-  if(!nav)return;
-  const map=new Map([...nav.querySelectorAll("[data-page]")].map(el=>[el.dataset.page,el]));
-  const clean=[...(Array.isArray(order)?order:[]),...DEFAULT_NAV_ORDER]
-    .filter((id,i,arr)=>map.has(id)&&arr.indexOf(id)===i);
-  clean.forEach(id=>nav.appendChild(map.get(id)));
-}
-
-function loadNavOrder(){
-  try{
-    const raw=localStorage.getItem(NAV_ORDER_KEY);
-    if(raw)applyNavOrder(JSON.parse(raw));
-  }catch{}
-}
-
-function resetNavOrder(){
-  applyNavOrder(DEFAULT_NAV_ORDER);
-  saveNavOrder();
-}
-
-function setupCustomNavOrder(){
-  const nav=document.querySelector(".nav");
-  if(!nav)return;
-
-  loadNavOrder();
-
-  let dragged=null;
-  let startY=0;
-  let moved=false;
-
-  const placeDraggedByY=clientY=>{
-    if(!dragged)return;
-    const siblings=[...nav.querySelectorAll("[data-page]")].filter(x=>x!==dragged);
-    let inserted=false;
-
-    for(const target of siblings){
-      const rect=target.getBoundingClientRect();
-      if(clientY < rect.top + rect.height/2){
-        nav.insertBefore(dragged,target);
-        inserted=true;
-        break;
-      }
-    }
-
-    if(!inserted)nav.appendChild(dragged);
-  };
-
-  // Desktop Edge/Chrome: listen on the whole nav container instead of relying
-  // on individual buttons receiving dragover while the native drag preview is active.
-  nav.addEventListener("dragover",e=>{
-    if(!dragged)return;
-    e.preventDefault();
-    if(e.dataTransfer)e.dataTransfer.dropEffect="move";
-    placeDraggedByY(e.clientY);
-  });
-
-  nav.addEventListener("drop",e=>{
-    if(!dragged)return;
-    e.preventDefault();
-    placeDraggedByY(e.clientY);
-    saveNavOrder();
-  });
-
-  nav.querySelectorAll("[data-page]").forEach(btn=>{
-    btn.draggable=true;
-
-    btn.addEventListener("dragstart",e=>{
-      dragged=btn;
-      moved=true;
-      btn.classList.add("nav-dragging");
-      if(e.dataTransfer){
-        e.dataTransfer.effectAllowed="move";
-        try{
-          e.dataTransfer.setData("text/plain",btn.dataset.page||"");
-          // Use the real button as the drag image with a small offset.
-          e.dataTransfer.setDragImage(btn,24,Math.min(24,btn.offsetHeight/2));
-        }catch{}
-      }
-    });
-
-    btn.addEventListener("dragend",()=>{
-      if(dragged===btn)saveNavOrder();
-      btn.classList.remove("nav-dragging","nav-touch-ready");
-      dragged=null;
-      moved=false;
-    });
-
-    // Touch / pen path.
-    btn.addEventListener("pointerdown",e=>{
-      if(e.pointerType==="mouse")return;
-      dragged=btn;
-      startY=e.clientY;
-      moved=false;
-      btn.classList.add("nav-touch-ready");
-      try{btn.setPointerCapture(e.pointerId)}catch{}
-    });
-
-    btn.addEventListener("pointermove",e=>{
-      if(!dragged||dragged!==btn||e.pointerType==="mouse")return;
-      if(Math.abs(e.clientY-startY)<8&&!moved)return;
-      moved=true;
-      btn.classList.add("nav-dragging");
-      e.preventDefault();
-      placeDraggedByY(e.clientY);
-    });
-
-    const finishPointer=e=>{
-      if(dragged!==btn)return;
-      if(moved){
-        e.preventDefault();
-        saveNavOrder();
-        btn.dataset.skipNextClick="1";
-        setTimeout(()=>delete btn.dataset.skipNextClick,350);
-      }
-      btn.classList.remove("nav-dragging","nav-touch-ready");
-      dragged=null;
-      moved=false;
-    };
-
-    btn.addEventListener("pointerup",finishPointer);
-    btn.addEventListener("pointercancel",finishPointer);
-  });
-}
 function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
 function toggleMobileNav(){document.body.classList.toggle("mobile-nav-open")}
 document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{if(b.dataset.skipNextClick)return;go(b.dataset.page);closeMobileNav()});
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
-setupCustomNavOrder();$("mobileMenuBtn").onclick=toggleMobileNav;
+$("mobileMenuBtn").onclick=toggleMobileNav;
 $("sidebarBackdrop").onclick=closeMobileNav;
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("resetNavOrderBtn").onclick=()=>{resetNavOrder();alert("菜单顺序已恢复默认。")};$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;alert("菜单顺序已恢复默认。")};$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
