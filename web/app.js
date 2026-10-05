@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
-let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0;
+let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -188,6 +188,8 @@ async function loadTtsInfo(){
 function stopAllTts(){
   ttsPlaybackGeneration++;
   speechSynthesis.cancel();
+  noteSpeaking=false;
+  if($("speakNoteBtn"))$("speakNoteBtn").textContent="🔊 朗读笔记";
   if(currentAudio){
     currentAudio.pause();
     currentAudio.src="";
@@ -253,7 +255,7 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null,playbackGeneration=t
         const next=parts[i];
         browserSpeakPart(current,()=>{
           if(playbackGeneration!==ttsPlaybackGeneration)return;
-          const delay=next&&next.lang!==current.lang?140:45;
+          const delay=next&&next.lang!==current.lang?60:0;
           setTimeout(fallback,delay);
         });
       };
@@ -270,7 +272,7 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null,playbackGeneration=t
       const next=parts[i];
       browserSpeakPart(current,()=>{
         if(playbackGeneration!==ttsPlaybackGeneration)return;
-        const delay=next&&next.lang!==current.lang?140:45;
+        const delay=next&&next.lang!==current.lang?60:0;
         setTimeout(fallback,delay);
       });
     };
@@ -294,7 +296,7 @@ function speakOne(text,cb,styleOverride=null){
     const next=parts[i];
     browserSpeakPart(current,()=>{
       if(playbackGeneration!==ttsPlaybackGeneration)return;
-      const delay=next&&next.lang!==current.lang?140:45;
+      const delay=next&&next.lang!==current.lang?60:0;
       setTimeout(run,delay);
     });
   };
@@ -381,6 +383,7 @@ function renderNotes(){
   document.querySelectorAll("[data-note-review]").forEach(b=>b.onclick=()=>openNoteReview(b.dataset.noteReview));
 }
 async function openNoteReview(id){
+  stopAllTts();
   const d=await api("/notes/"+id);
   const n=d.note;currentNoteId=n.id;
   $("manualReviewPanel").classList.remove("hidden");
@@ -396,8 +399,21 @@ function speakSelectedNote(){
   if(!currentNoteId)return;
   const n=notes.find(x=>x.id===currentNoteId);
   if(!n)return;
-  speechSynthesis.cancel();
-  speakOne(n.content);
+
+  if(noteSpeaking){
+    stopAllTts();
+    return;
+  }
+
+  stopAllTts();
+  noteSpeaking=true;
+  $("speakNoteBtn").textContent="⏹ 停止朗读";
+  const generation=ttsPlaybackGeneration;
+  speakOne(n.content,()=>{
+    if(generation!==ttsPlaybackGeneration)return;
+    noteSpeaking=false;
+    $("speakNoteBtn").textContent="🔊 朗读笔记";
+  });
 }
 async function markSelectedNoteReviewed(){
   if(!currentNoteId)return;
