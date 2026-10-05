@@ -757,50 +757,153 @@ const quizSchema={
         cardId:{type:"string"},type:{type:"string",enum:["mcq","fill","short","listening"]},
         prompt:{type:"string"},choices:{type:"array",items:{type:"string"},maxItems:4},
         answer:{type:"string"},acceptableAnswers:{type:"array",items:{type:"string"},maxItems:8},
-        explanation:{type:"string"},audioText:{type:"string"}
+        explanation:{type:"string"},audioText:{type:"string"},
+        difficultyLevel:{type:"string",enum:["foundation","standard","challenge"]}
       },
-      required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText"],
+      required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText","difficultyLevel"],
       additionalProperties:false
     }}
   },
   required:["title","questions"],additionalProperties:false
 };
+
+const adaptiveQuestionSchema={
+  type:"object",
+  properties:{
+    cardId:{type:"string"},
+    type:{type:"string",enum:["mcq","fill","short","listening"]},
+    prompt:{type:"string"},
+    choices:{type:"array",items:{type:"string"},maxItems:4},
+    answer:{type:"string"},
+    acceptableAnswers:{type:"array",items:{type:"string"},maxItems:8},
+    explanation:{type:"string"},
+    audioText:{type:"string"},
+    difficultyLevel:{type:"string",enum:["foundation","standard","challenge"]}
+  },
+  required:["cardId","type","prompt","choices","answer","acceptableAnswers","explanation","audioText","difficultyLevel"],
+  additionalProperties:false
+};
 app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
   const count=Math.min(20,Math.max(3,Number(req.body?.count||10)));
   const mode=["mixed","weak","due"].includes(req.body?.mode)?req.body.mode:"mixed";
-  let sql=`SELECT * FROM cards WHERE user_id=$1`;
-  if(mode==="due") sql+=` AND due<=NOW()`;
-  if(mode==="weak") sql+=` ORDER BY COALESCE((fsrs->>'difficulty')::float,0) DESC, due ASC`;
-  else sql+=` ORDER BY due ASC`;
-  sql+=` LIMIT 30`;
-  const {rows}=await query(sql,[userId(req)]);
+  const requestedIds=Array.isArray(req.body?.cardIds)
+    ? req.body.cardIds.map(String).filter(Boolean).slice(0,30)
+    : [];
+
+  const {rows}=await query(`
+    WITH review_stats AS (
+      SELECT
+        card_id,
+        COUNT(*) FILTER (WHERE rating='Again' OR verdict='wrong')::int AS wrong_count,
+        COUNT(*) FILTER (WHERE rating='Hard' OR verdict='partial')::int AS hard_count,
+        (ARRAY_AGG(rating ORDER BY reviewed_at DESC))[1] AS last_rating,
+        (ARRAY_AGG(verdict ORDER BY reviewed_at DESC))[1] AS last_verdict,
+        MAX(reviewed_at) AS last_reviewed_at
+      FROM reviews
+      WHERE user_id=$1
+      GROUP BY card_id
+    )
+    SELECT
+      c.*,
+      COALESCE(rs.wrong_count,0) AS wrong_count,
+      COALESCE(rs.hard_count,0) AS hard_count,
+      rs.last_rating,
+      rs.last_verdict,
+      rs.last_reviewed_at,
+      (
+        CASE WHEN c.due<=NOW() THEN 90 ELSE 0 END
+        + CASE WHEN rs.last_rating='Again' OR rs.last_verdict='wrong' THEN 100 ELSE 0 END
+        + CASE WHEN rs.last_rating='Hard' OR rs.last_verdict='partial' THEN 55 ELSE 0 END
+        + LEAST(30,COALESCE(rs.wrong_count,0)*8)
+        + LEAST(20,COALESCE(rs.hard_count,0)*4)
+        + LEAST(40,COALESCE((c.fsrs->>'difficulty')::float,0)*4)
+        + CASE WHEN rs.last_reviewed_at IS NULL THEN 10 ELSE LEAST(25,EXTRACT(EPOCH FROM (NOW()-rs.last_reviewed_at))/86400) END
+      )::float AS weakness_score
+    FROM cards c
+    LEFT JOIN review_stats rs ON rs.card_id=c.id
+    WHERE c.user_id=$1
+      AND ($2::text[]='{}'::text[] OR c.id::text=ANY($2::text[]))
+      AND ($3<>'due' OR c.due<=NOW())
+    ORDER BY
+      CASE WHEN $3='weak' THEN (
+        CASE WHEN c.due<=NOW() THEN 90 ELSE 0 END
+        + CASE WHEN rs.last_rating='Again' OR rs.last_verdict='wrong' THEN 100 ELSE 0 END
+        + CASE WHEN rs.last_rating='Hard' OR rs.last_verdict='partial' THEN 55 ELSE 0 END
+        + LEAST(30,COALESCE(rs.wrong_count,0)*8)
+        + LEAST(20,COALESCE(rs.hard_count,0)*4)
+        + LEAST(40,COALESCE((c.fsrs->>'difficulty')::float,0)*4)
+      ) ELSE 0 END DESC,
+      CASE WHEN $3<>'weak' THEN c.due END ASC,
+      RANDOM()
+    LIMIT 30
+  `,[uid,requestedIds,mode]);
+
   if(!rows.length) return res.status(400).json({error:"没有可用于出题的知识卡片。"});
 
-  const source=rows.map(r=>({
+  // For weak mode, randomly sample from the strongest weak candidates rather
+  // than deterministically asking the exact same cards every time.
+  let selectedRows=rows;
+  if(mode==="weak" && rows.length>Math.max(count*2,10)){
+    const pool=rows.slice(0,Math.min(rows.length,Math.max(count*3,15)));
+    selectedRows=[];
+    const remaining=[...pool];
+    while(remaining.length && selectedRows.length<Math.min(30,pool.length)){
+      const total=remaining.reduce((sum,r)=>sum+Math.max(1,Number(r.weakness_score||0)+20),0);
+      let pick=Math.random()*total,idx=0;
+      for(;idx<remaining.length;idx++){
+        pick-=Math.max(1,Number(remaining[idx].weakness_score||0)+20);
+        if(pick<=0)break;
+      }
+      selectedRows.push(remaining.splice(Math.min(idx,remaining.length-1),1)[0]);
+    }
+  }
+
+  const source=selectedRows.map(r=>({
     id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,tags:r.tags||[],
-    difficulty:Number(r.fsrs?.difficulty||0),due:r.due
+    difficulty:Number(r.fsrs?.difficulty||0),due:r.due,
+    weaknessScore:Number(r.weakness_score||0),
+    lastRating:r.last_rating||null,lastVerdict:r.last_verdict||null,
+    wrongCount:Number(r.wrong_count||0),hardCount:Number(r.hard_count||0)
   }));
-  const quizProvider=await featureProvider(userId(req),"ai_quiz_provider","gemini");
+
+  const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const data=await generateStructured({
     provider:quizProvider,
     name:"memorycast_quiz",
     schema:quizSchema,
-    system:`Generate a rigorous but fair study quiz only from the supplied cards.
+    system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
 Mix MCQ, fill, short-answer and listening items when appropriate.
 For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
-For English, test recognition and production. For technical material, test understanding.\nA single card may contain a whole note: in that case, generate multiple distinct questions from different facts or concepts in that card. Reusing the same cardId across multiple questions is allowed.\nReturn only schema-valid JSON.`,
+For English, test recognition and production. For technical material, test understanding.
+Assign difficultyLevel:
+- foundation = recognition/basic recall
+- standard = normal retrieval/application
+- challenge = transfer, contrast, explanation, or production
+In weak mode, prioritize cards with high weaknessScore, recent wrong/Hard outcomes, and overdue cards.
+A single card may contain a whole note: generate distinct questions from different facts or concepts.
+Do not simply copy the card front as the answer cue.
+Return only schema-valid JSON.`,
     user:JSON.stringify({count,mode,cards:source})
   });
+
   const allowed=new Set(source.map(x=>x.id));
-  const questions=data.questions.filter(q=>allowed.has(q.cardId)).slice(0,count).map(q=>({...q,id:crypto.randomUUID()}));
+  const questions=data.questions
+    .filter(q=>allowed.has(q.cardId))
+    .slice(0,count)
+    .map(q=>({...q,id:crypto.randomUUID(),adaptive:false}));
+
   if(!questions.length) return res.status(502).json({error:"AI 未生成有效题目。"});
+
   const {rows:created}=await query(`
     INSERT INTO quiz_sessions(user_id,title,questions)
     VALUES($1,$2,$3) RETURNING id
-  `,[userId(req),data.title||"今日测试",JSON.stringify(questions)]);
+  `,[uid,data.title||"今日测试",JSON.stringify(questions)]);
+
   res.json({
-    sessionId:created[0].id,title:data.title||"今日测试",
+    sessionId:created[0].id,
+    title:data.title||"今日测试",
     questions:questions.map(({answer,acceptableAnswers,explanation,...safe})=>safe)
   });
 }));
@@ -826,26 +929,127 @@ Return schema-valid JSON.`,
     user:JSON.stringify({type:q.type,prompt:q.prompt,expected:q.answer,acceptable:q.acceptableAnswers,userAnswer})
   });
 }
+async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence}){
+  const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
+  const strongCorrect=verdict==="correct" && confidence==="sure";
+  const target=strongCorrect?"challenge":(verdict==="wrong"?"foundation":"standard");
+
+  const data=await generateStructured({
+    provider:quizProvider,
+    name:"adaptive_quiz_question",
+    schema:adaptiveQuestionSchema,
+    system:`Generate exactly ONE adaptive follow-up quiz question from the supplied card.
+It must test the SAME underlying concept as the previous question but in a DIFFERENT form or wording.
+Do not reveal or paraphrase the previous answer in the prompt.
+Target difficulty is ${target}.
+If the learner was wrong/partial, prefer a clearer foundation/standard retrieval cue, not a duplicate.
+If the learner was correct and confident, make a genuine challenge/transfer question.
+For MCQ give exactly 4 plausible choices; otherwise choices=[].
+For listening, audioText is what TTS reads and prompt must not reveal it.
+Return schema-valid JSON only.`,
+    user:JSON.stringify({
+      card:{id:card.id,front:card.front,back:card.back,example:card.example,tags:card.tags||[]},
+      previous:{type:q.type,prompt:q.prompt,verdict,confidence},
+      targetDifficulty:target
+    })
+  });
+
+  if(String(data.cardId)!==String(card.id))data.cardId=String(card.id);
+  return {...data,id:crypto.randomUUID(),adaptive:true,retestOf:q.id};
+}
+
 app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   const {sessionId,questionId,answer=""}=req.body||{};
+  const confidence=["sure","unsure","guess"].includes(req.body?.confidence)
+    ? req.body.confidence
+    : "unsure";
+
+  const uid=userId(req);
   const {rows}=await query(`
     SELECT * FROM quiz_sessions
     WHERE id=$2 AND user_id=$1 AND expires_at>NOW()
-  `,[userId(req),sessionId]);
+  `,[uid,sessionId]);
   const sessionRow=rows[0];
   if(!sessionRow) return res.status(404).json({error:"测试已过期或不存在。"});
+
   const q=sessionRow.questions.find(x=>x.id===questionId);
   if(!q) return res.status(404).json({error:"题目不存在。"});
-  const gradeProvider=await featureProvider(userId(req),"ai_grade_provider","gemini");
+
+  const gradeProvider=await featureProvider(uid,"ai_grade_provider","gemini");
   const grade=await judgeAnswer(q,String(answer),gradeProvider);
-  const rating=grade.verdict==="correct"?"Good":grade.verdict==="partial"?"Hard":"Again";
-  const updatedCard=await applyReview(userId(req),q.cardId,rating,"quiz",grade.verdict);
-  const answers=[...(sessionRow.answers||[]),{
-    questionId:q.id,cardId:q.cardId,userAnswer:String(answer),
-    verdict:grade.verdict,score:grade.score,rating,answeredAt:new Date().toISOString()
-  }];
-  await query(`UPDATE quiz_sessions SET answers=$3::jsonb WHERE id=$2 AND user_id=$1`,[userId(req),sessionId,JSON.stringify(answers)]);
-  res.json({verdict:grade.verdict,score:grade.score,feedback:grade.feedback,correctAnswer:q.answer,explanation:q.explanation,fsrsRating:rating,updatedCard});
+
+  let rating;
+  if(grade.verdict==="wrong")rating="Again";
+  else if(grade.verdict==="partial")rating="Hard";
+  else if(confidence==="sure")rating="Good";
+  else rating="Hard";
+
+  const updatedCard=await applyReview(uid,q.cardId,rating,"quiz",grade.verdict);
+  const metacognitiveTrap=grade.verdict==="wrong" && confidence==="sure";
+
+  const answerRecord={
+    questionId:q.id,
+    cardId:q.cardId,
+    userAnswer:String(answer),
+    verdict:grade.verdict,
+    score:grade.score,
+    rating,
+    confidence,
+    difficultyLevel:q.difficultyLevel||"standard",
+    adaptive:q.adaptive===true,
+    metacognitiveTrap,
+    answeredAt:new Date().toISOString()
+  };
+  const answers=[...(sessionRow.answers||[]),answerRecord];
+
+  let adaptiveQuestion=null;
+  const existingAdaptive=answers.filter(a=>a.adaptive).length;
+  const shouldAdapt=existingAdaptive<3 && (
+    grade.verdict!=="correct" ||
+    (grade.verdict==="correct" && confidence==="sure" && q.difficultyLevel!=="challenge")
+  );
+
+  if(shouldAdapt){
+    try{
+      const cardResult=await query(`SELECT * FROM cards WHERE id=$2 AND user_id=$1`,[uid,q.cardId]);
+      const card=cardResult.rows[0];
+      if(card){
+        adaptiveQuestion=await makeAdaptiveQuizQuestion({
+          uid,card,q,verdict:grade.verdict,confidence
+        });
+        const allQuestions=[...(sessionRow.questions||[]),adaptiveQuestion];
+        await query(`
+          UPDATE quiz_sessions SET answers=$3::jsonb,questions=$4::jsonb
+          WHERE id=$2 AND user_id=$1
+        `,[uid,sessionId,JSON.stringify(answers),JSON.stringify(allQuestions)]);
+      }
+    }catch(err){
+      console.warn("Adaptive quiz follow-up generation failed:",err?.message||err);
+      adaptiveQuestion=null;
+    }
+  }
+
+  if(!adaptiveQuestion){
+    await query(`
+      UPDATE quiz_sessions SET answers=$3::jsonb
+      WHERE id=$2 AND user_id=$1
+    `,[uid,sessionId,JSON.stringify(answers)]);
+  }
+
+  res.json({
+    verdict:grade.verdict,
+    score:grade.score,
+    feedback:grade.feedback,
+    correctAnswer:q.answer,
+    explanation:q.explanation,
+    fsrsRating:rating,
+    confidence,
+    metacognitiveTrap,
+    adaptiveQuestion:adaptiveQuestion
+      ? (({answer,acceptableAnswers,explanation,...safe})=>safe)(adaptiveQuestion)
+      : null,
+    updatedCard
+  });
 }));
 
 
