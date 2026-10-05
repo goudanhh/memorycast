@@ -144,7 +144,7 @@ function ratePercent(baseRate,multiplier){
 
 function buildSsml(text,language,style,baseRate){
   const cfg=configFor(language,style,text);
-  const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${ssmlTextWithPauses(text)}</prosody>`;
+  const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${clearIsolatedFragment(text,lang)}</prosody>`;
   const body=cfg.express
     ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
     : prosody;
@@ -173,6 +173,42 @@ function inlineEnglishXml(text){
     return `<say-as interpret-as="characters">${escapeXml(s)}</say-as>`;
   }
   return escapeXml(s);
+}
+
+function clearIsolatedFragment(text="",language="en-US"){
+  const raw=String(text||"");
+  const trimmed=raw.trim();
+  if(!trimmed)return ssmlTextWithPauses(raw);
+
+  if(language==="en-US"){
+    // A single letter must be spoken as its letter name, never swallowed as a
+    // tiny word fragment.
+    if(/^[A-Za-z]$/.test(trimmed)){
+      return `<break time="30ms"/><prosody rate="-8%"><say-as interpret-as="characters">${escapeXml(trimmed)}</say-as></prosody><break time="35ms"/>`;
+    }
+
+    // Common technical abbreviations are clearer when spelled out.
+    if(/^[A-Z]{2,5}$/.test(trimmed)){
+      return `<break time="25ms"/><prosody rate="-6%"><say-as interpret-as="characters">${escapeXml(trimmed)}</say-as></prosody><break time="30ms"/>`;
+    }
+
+    // One isolated English word: keep it as a word, but slow it slightly and
+    // protect both edges so consonants are not lost next to Chinese speech.
+    if(/^[A-Za-z]+(?:['’-][A-Za-z]+)?$/.test(trimmed)){
+      return `<break time="25ms"/><prosody rate="-7%">${escapeXml(trimmed)}</prosody><break time="30ms"/>`;
+    }
+
+    // Technical tokens such as CO2, NOx, PM2.5: articulate character groups.
+    if(/^(?:[A-Za-z]{1,5}\d+(?:\.\d+)?|[A-Za-z]{2,5}[A-Za-z]?\d*)$/.test(trimmed) && /\d/.test(trimmed)){
+      return `<break time="25ms"/><prosody rate="-7%"><say-as interpret-as="characters">${escapeXml(trimmed)}</say-as></prosody><break time="30ms"/>`;
+    }
+  }
+
+  if(language==="zh-CN" && /^[\u3400-\u9fff]$/.test(trimmed)){
+    return `<break time="20ms"/><prosody rate="-6%">${escapeXml(trimmed)}</prosody><break time="25ms"/>`;
+  }
+
+  return ssmlTextWithPauses(raw);
 }
 
 function dominantLocaleForParts(source){
@@ -207,7 +243,7 @@ function buildMixedSsml(parts){
 
   const avgRate=source.reduce((sum,p)=>sum+p.rate,0)/source.length;
   const body=source.map(p=>
-    `<lang xml:lang="${p.language}">${ssmlTextWithPauses(p.text)}</lang>`
+    `<lang xml:lang="${p.language}">${clearIsolatedFragment(p.text,p.language)}</lang>`
   ).join("");
 
   const normalized=source.map(p=>({
@@ -272,7 +308,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update("mixed-numbers-v4|"+JSON.stringify(normalized.map(p=>({
+    .update("mixed-clear-isolated-v5|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
@@ -326,7 +362,7 @@ export async function synthesizeTts({text,language="en-US",style="smart",rate=1}
 
   const {cfg,ssml}=buildSsml(clean,language,style,rate);
   const cacheKey=crypto.createHash("sha256")
-    .update(JSON.stringify({text:clean,language:cfg.locale,voice:cfg.voice,style,rate}))
+    .update("single-clear-isolated-v2|"+JSON.stringify({text:clean,language:cfg.locale,voice:cfg.voice,style,rate}))
     .digest("hex");
   const file=path.join(CACHE_DIR,`${cacheKey}.mp3`);
 
