@@ -5,12 +5,19 @@ let openaiClient;
 export function provider() {
   if (process.env.AI_PROVIDER) return process.env.AI_PROVIDER.toLowerCase();
   if (process.env.GEMINI_API_KEY) return "gemini";
+  if (process.env.CLOUDFLARE_API_KEY && process.env.CLOUDFLARE_ACCOUNT_ID) return "cloudflare";
+  if (process.env.OPENROUTER_API_KEY) return "openrouter";
   if (process.env.OPENAI_API_KEY) return "openai";
   return "none";
 }
 
 export function hasAI() {
-  return provider() !== "none";
+  return Boolean(
+    process.env.GEMINI_API_KEY ||
+    (process.env.CLOUDFLARE_API_KEY && process.env.CLOUDFLARE_ACCOUNT_ID) ||
+    process.env.OPENROUTER_API_KEY ||
+    process.env.OPENAI_API_KEY
+  );
 }
 
 function geminiModel() {
@@ -102,12 +109,73 @@ async function generateOpenAIJson({ system, user, schema, name, modelOverride })
   return JSON.parse(response.output_text);
 }
 
-export async function generateStructured({ system, user, schema, name, model }) {
-  const p = provider();
+function stripJsonFence(value=""){
+  const t=String(value||"").trim();
+  return t.replace(/^\`\`\`(?:json)?\s*/i,"").replace(/\s*\`\`\`$/,"").trim();
+}
+
+async function generateCompatibleJson({providerName,system,user,schema,modelOverride}){
+  let key,baseURL,model;
+  if(providerName==="openrouter"){
+    key=String(process.env.OPENROUTER_API_KEY||"").trim();
+    baseURL="https://openrouter.ai/api/v1";
+    model=modelOverride||process.env.OPENROUTER_MODEL||"openrouter/free";
+  }else if(providerName==="cloudflare"){
+    key=String(process.env.CLOUDFLARE_API_KEY||"").trim();
+    const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||"").trim();
+    if(!accountId){
+      const e=new Error("CLOUDFLARE_ACCOUNT_ID is not configured.");e.statusCode=503;throw e;
+    }
+    baseURL=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1`;
+    model=modelOverride||process.env.CLOUDFLARE_AI_MODEL||"@cf/google/gemma-4-26b-a4b-it";
+  }else{
+    const e=new Error("Unsupported compatible AI provider.");e.statusCode=400;throw e;
+  }
+  if(!key){
+    const e=new Error(`${providerName.toUpperCase()} API key is not configured.`);e.statusCode=503;throw e;
+  }
+
+  const response=await fetch(baseURL+"/chat/completions",{
+    method:"POST",
+    headers:{
+      Authorization:`Bearer ${key}`,
+      "Content-Type":"application/json",
+      ...(providerName==="openrouter"?{"X-Title":"MemoryCast"}:{})
+    },
+    body:JSON.stringify({
+      model,
+      messages:[
+        {role:"system",content:`${system}\n\nReturn JSON only. Follow this schema exactly: ${JSON.stringify(schema)}`},
+        {role:"user",content:user}
+      ],
+      temperature:0
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const msg=data?.error?.message||data?.errors?.[0]?.message||`${providerName} API error (${response.status})`;
+    const e=new Error(msg);e.statusCode=response.status;throw e;
+  }
+  const text=String(data?.choices?.[0]?.message?.content||"").trim();
+  if(!text){
+    const e=new Error(`${providerName} returned an empty response.`);e.statusCode=502;throw e;
+  }
+  try{
+    return JSON.parse(stripJsonFence(text));
+  }catch{
+    const match=stripJsonFence(text).match(/\{[\s\S]*\}/);
+    if(match) return JSON.parse(match[0]);
+    const e=new Error(`${providerName} returned invalid JSON.`);e.statusCode=502;throw e;
+  }
+}
+
+export async function generateStructured({ system, user, schema, name, model, provider:providerOverride }) {
+  const p = String(providerOverride || provider()).toLowerCase();
   if (p === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model });
+  if (p === "cloudflare" || p === "openrouter") return generateCompatibleJson({providerName:p,system,user,schema,modelOverride:model});
   if (p === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model });
 
-  const e = new Error("No AI provider is configured.");
+  const e = new Error("No supported AI provider is configured.");
   e.statusCode = 503;
   throw e;
 }
@@ -215,20 +283,59 @@ async function ocrWithCloudflare({base64,mimeType}){
   return {text,model,provider:"cloudflare"};
 }
 
-export async function extractTextFromImage({base64,mimeType="image/jpeg"}) {
+async function ocrWithOpenRouter({base64,mimeType}){
+  const key=String(process.env.OPENROUTER_API_KEY||"").trim();
+  if(!key) throw Object.assign(new Error("OpenRouter OCR 未配置"),{skipProvider:true});
+  const model=process.env.OPENROUTER_VISION_MODEL||"openrouter/free";
+  const response=await fetch("https://openrouter.ai/api/v1/chat/completions",{
+    method:"POST",
+    headers:{
+      Authorization:`Bearer ${key}`,
+      "Content-Type":"application/json",
+      "X-Title":"MemoryCast"
+    },
+    body:JSON.stringify({
+      model,
+      messages:[{
+        role:"user",
+        content:[
+          {type:"text",text:"Extract all readable text from this study-note image faithfully. Preserve headings, line breaks, formulas, English words, punctuation, and list structure. Do not summarize, correct, or add content. Return only the extracted text."},
+          {type:"image_url",image_url:{url:`data:${mimeType};base64,${base64}`}}
+        ]
+      }],
+      temperature:0
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const e=new Error(data?.error?.message||`OpenRouter OCR error (${response.status})`);
+    e.statusCode=response.status;throw e;
+  }
+  const text=String(data?.choices?.[0]?.message?.content||"").trim();
+  if(!text){
+    const e=new Error("OpenRouter 没有从图片中识别到文字。");e.statusCode=422;throw e;
+  }
+  return {text,model,provider:"openrouter"};
+}
+
+export async function extractTextFromImage({base64,mimeType="image/jpeg",provider:providerChoice="auto"}) {
+  const map={gemini:ocrWithGemini,cloudflare:ocrWithCloudflare,openrouter:ocrWithOpenRouter};
+  const selected=String(providerChoice||"auto").toLowerCase();
+  if(selected!=="auto"){
+    const fn=map[selected];
+    if(!fn){const e=new Error("不支持的 OCR API。");e.statusCode=400;throw e;}
+    return fn({base64,mimeType});
+  }
+
   const failures=[];
-  for(const fn of [ocrWithGemini,ocrWithCloudflare]){
-    try{
-      return await fn({base64,mimeType});
-    }catch(err){
+  for(const fn of [ocrWithGemini,ocrWithCloudflare,ocrWithOpenRouter]){
+    try{return await fn({base64,mimeType});}
+    catch(err){
       if(err?.skipProvider)continue;
       failures.push(err?.message||String(err));
       console.warn("OCR provider failed:",fn.name,err?.message||err);
     }
   }
-  const e=new Error(failures.length
-    ? "Gemini 和 Cloudflare OCR 都暂时不可用，请稍后重试。"
-    : "尚未配置可用的 OCR 服务。");
-  e.statusCode=failures.length?502:503;
-  throw e;
+  const e=new Error(failures.length?"所有 OCR API 都暂时不可用，请稍后重试。":"尚未配置可用的 OCR 服务。");
+  e.statusCode=failures.length?502:503;throw e;
 }
