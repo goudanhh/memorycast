@@ -92,3 +92,6 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .capture-btn{min-height:44px}
 .capture-status{margin-bottom:10px;line-height:1.5}
 #voiceNotePreview{width:100%;margin:6px 0 10px}
+
+.ai-provider-settings{margin:8px 0 22px;padding:16px;border:1px solid var(--line,#ddd);border-radius:14px}
+.ai-provider-settings h3{margin:3px 0 6px}
