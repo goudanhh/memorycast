@@ -1079,7 +1079,7 @@ Return schema-valid JSON only.`,
 
   let feynmanFsrsRating=null;
   let updatedCard=null;
-  if(sourceCardId){
+  if(sourceCardId && history.length===0){
     const score=Number(data.clarityScore||0);
     feynmanFsrsRating=data.status==="mastered" && score>=80
       ? "Good"
