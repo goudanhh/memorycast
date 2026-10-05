@@ -1247,16 +1247,17 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
   for(const r of selectedRows){
     if(!r.source_note_id)continue;
     const ar=await query(`
-      SELECT id,original_name,mime_type,data,extracted_text
+      SELECT id,original_name,mime_type,data,extracted_text,page_number,is_generated,source_attachment_id
       FROM note_attachments
       WHERE user_id=$1 AND note_id=$2
         AND mime_type LIKE 'image/%'
       ORDER BY
         CASE WHEN is_generated=TRUE AND page_number IS NOT NULL THEN 0 ELSE 1 END,
-        sort_order ASC,created_at ASC
-      LIMIT 2
+        RANDOM()
+      LIMIT 12
     `,[uid,r.source_note_id]);
     for(const a of ar.rows){
+      if(visualCandidates.some(x=>String(x.attachment.id)===String(a.id)))continue;
       visualCandidates.push({card:r,attachment:a});
       if(visualCandidates.length>=6)break;
     }
@@ -1289,6 +1290,8 @@ Return schema-valid JSON only.`,
           },
           attachment:{
             name:item.attachment.original_name,
+            pageNumber:item.attachment.page_number||null,
+            generatedFromPdf:item.attachment.is_generated===true,
             extractedText:String(item.attachment.extracted_text||"").slice(0,5000)
           }
         })
