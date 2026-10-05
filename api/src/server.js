@@ -613,7 +613,7 @@ app.post("/ai/ocr", requireAuth, asyncRoute(async(req,res)=>{
   if(image.length>2_700_000) return res.status(413).json({error:"图片太大，请压缩或重新拍摄。"});
   const result=await extractTextFromImage({base64:image.toString("base64"),mimeType});
   const note=await saveCapturedNote(userId(req),result.text,"OCR笔记");
-  res.json({text:result.text,note,model:result.model});
+  res.json({text:result.text,note,model:result.model,provider:result.provider});
 }));
 
 const organizeSchema={
