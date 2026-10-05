@@ -362,14 +362,30 @@ function speakCurrent(){
   const arr=[c.front,c.back,c.example].filter(Boolean);
   const run=i=>{
     if(!autoPlay||!isSpeaking)return;
+
     if(i>=arr.length){
+      if(loop){
+        // Continue through the queue; if this is the last (or only) card,
+        // wrap to the first one and keep listening.
+        if(due.length>1){
+          dueIndex=(dueIndex+1)%due.length;
+          renderDue();
+        }
+        setTimeout(()=>{
+          if(autoPlay&&loop)speakCurrent();
+        },500);
+        return;
+      }
+
       isSpeaking=false;
       autoPlay=false;
       $("speakBtn").textContent="▶ 连续播放";
       return;
     }
+
     speakOne(arr[i],()=>setTimeout(()=>run(i+1),220));
   };
+
   run(0);
 }
 function toggleSpeak(){
