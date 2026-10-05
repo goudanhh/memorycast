@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_feynman_provider TEXT NOT NULL DEFAULT 'gemini',
   stt_provider TEXT NOT NULL DEFAULT 'cloudflare',
   ocr_provider TEXT NOT NULL DEFAULT 'gemini',
+  nav_order TEXT[] NOT NULL DEFAULT ARRAY[
+    'homePage','todayPage','importPage','notesPage','quizPage',
+    'feynmanPage','libraryPage','statsPage','settingsPage'
+  ]::text[],
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
