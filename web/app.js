@@ -664,13 +664,33 @@ async function saveNoteEdit(){
   const title=$("noteEditTitle").value;
   const content=$("noteEditContent").value;
   if(!content.trim()) return alert("笔记内容不能为空");
-  const d=await api("/notes/"+currentNoteId,{method:"PUT",body:JSON.stringify({title,content})});
-  const i=notes.findIndex(x=>x.id===currentNoteId);
-  if(i>=0)notes[i]=d.note;
-  $("manualNoteTitle").textContent=d.note.title;
-  $("manualNoteContent").textContent=d.note.content;
-  $("noteModal").classList.add("hidden");
-  renderNotes();
+
+  const saveBtn=$("noteModalSave");
+  if(saveBtn){saveBtn.disabled=true;saveBtn.textContent="保存并同步卡片中…";}
+
+  try{
+    const d=await api("/notes/"+currentNoteId,{
+      method:"PUT",
+      body:JSON.stringify({title,content})
+    });
+
+    const i=notes.findIndex(x=>x.id===currentNoteId);
+    if(i>=0)notes[i]=d.note;
+    $("manualNoteTitle").textContent=d.note.title;
+    $("manualNoteContent").textContent=d.note.content;
+    $("noteModal").classList.add("hidden");
+    renderNotes();
+
+    await Promise.all([loadCards(),loadDue(),loadStats()]);
+
+    if(d.cardSync?.status==="synced"){
+      alert("笔记已保存。"+d.cardSync.message);
+    }else if(d.cardSync?.status==="partial"||d.cardSync?.status==="failed"){
+      alert(d.cardSync.message);
+    }
+  }finally{
+    if(saveBtn){saveBtn.disabled=false;saveBtn.textContent="保存";}
+  }
 }
 async function deleteCurrentNote(){
   if(!currentNoteId)return;
