@@ -1720,9 +1720,57 @@ function splitWalkmanSubtitle(text=""){
 
   return sentences.flatMap(splitSentenceFurther).filter(Boolean);
 }
+function shouldMergeWalkmanEnglishFragments(left="",right=""){
+  const a=String(left||"").trim();
+  const b=String(right||"").trim();
+  if(!a||!b)return false;
+
+  // Only merge short English fragments. Never merge across Chinese
+  // explanations or already-complete sentences.
+  if(/[\u3400-\u9fff]/.test(a+b))return false;
+  if(/[.!?。！？]["'”’)]*$/.test(a))return false;
+  if((a+" "+b).length>90)return false;
+
+  const aWords=a.split(/\s+/).filter(Boolean);
+  const bWords=b.split(/\s+/).filter(Boolean);
+  if(!aWords.length||!bWords.length)return false;
+
+  const tail=String(aWords[aWords.length-1]||"").toLowerCase().replace(/[^a-z']/g,"");
+  const continuationWords=new Set([
+    "a","an","the","to","of","in","on","at","for","with","from","by","and","or","but",
+    "have","has","had","am","is","are","was","were","be","been","being",
+    "do","does","did","can","could","will","would","shall","should","may","might","must",
+    "this","that","these","those","my","your","his","her","our","their","some","any"
+  ]);
+
+  // Strong signal: the left side ends in a word that normally requires
+  // continuation ("I have a" + "cold", "go with" + "friends").
+  if(continuationWords.has(tail))return true;
+
+  // Also merge very short title-like fragments when the right side begins
+  // lowercase and neither side looks like a standalone sentence.
+  if(aWords.length<=4 && bWords.length<=4 && /^[a-z]/.test(b))return true;
+
+  return false;
+}
+
 function walkmanSegments(card){
   if(!card)return [];
-  return [card.front,card.back,card.example]
+
+  const fields=[card.front,card.back,card.example]
+    .map(x=>String(x||"").replace(/\s+/g," ").trim())
+    .filter(Boolean);
+
+  const merged=[];
+  for(const field of fields){
+    if(merged.length && shouldMergeWalkmanEnglishFragments(merged[merged.length-1],field)){
+      merged[merged.length-1]=(merged[merged.length-1]+" "+field).replace(/\s+/g," ").trim();
+    }else{
+      merged.push(field);
+    }
+  }
+
+  return merged
     .flatMap(x=>splitWalkmanSubtitle(x))
     .filter(Boolean);
 }
