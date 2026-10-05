@@ -3,11 +3,18 @@ import helmet from "helmet";
 import compression from "compression";
 import webpush from "web-push";
 import crypto from "node:crypto";
+import { mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import pdfParse from "pdf-parse";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
 import { hasAI, generateStructured, generateVisualStructured, aiInfo, extractTextFromImage } from "./ai.js";
 import { synthesizeTts, synthesizeMixedTts, ttsInfo } from "./tts.js";
+
+const execFileAsync=promisify(execFile);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -217,6 +224,10 @@ await query(`
   )
 `);
 await query(`CREATE INDEX IF NOT EXISTS idx_note_attachments_note ON note_attachments(note_id,sort_order,created_at)`);
+await query(`ALTER TABLE note_attachments ADD COLUMN IF NOT EXISTS source_attachment_id UUID`);
+await query(`ALTER TABLE note_attachments ADD COLUMN IF NOT EXISTS page_number INTEGER`);
+await query(`ALTER TABLE note_attachments ADD COLUMN IF NOT EXISTS is_generated BOOLEAN NOT NULL DEFAULT FALSE`);
+
 
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID`);
 await query(`ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_source_note_id_fkey`);
@@ -352,6 +363,9 @@ function normalizeAttachmentRow(r){
     byteSize:Number(r.byte_size||0),
     extractedText:r.extracted_text||"",
     sortOrder:Number(r.sort_order||0),
+    sourceAttachmentId:r.source_attachment_id||null,
+    pageNumber:r.page_number==null?null:Number(r.page_number),
+    isGenerated:r.is_generated===true,
     url:"/api/attachments/"+r.id
   };
 }
@@ -376,7 +390,7 @@ app.get("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`SELECT * FROM notes WHERE id=$2 AND user_id=$1`,[uid,req.params.id]);
   if(!rows[0]) return res.status(404).json({error:"Note not found"});
   const attachments=await query(`
-    SELECT id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,created_at
+    SELECT id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,source_attachment_id,page_number,is_generated,created_at
     FROM note_attachments
     WHERE note_id=$2 AND user_id=$1
     ORDER BY sort_order ASC,created_at ASC
@@ -529,7 +543,7 @@ app.get("/attachments/:id", requireAuth, asyncRoute(async(req,res)=>{
 
 app.get("/notes/:id/attachments", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`
-    SELECT id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,created_at
+    SELECT id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,source_attachment_id,page_number,is_generated,created_at
     FROM note_attachments
     WHERE note_id=$2 AND user_id=$1
     ORDER BY sort_order ASC,created_at ASC
@@ -832,6 +846,41 @@ app.post("/ai/ocr", requireAuth, asyncRoute(async(req,res)=>{
   res.json({text:result.text,note,model:result.model,provider:result.provider});
 }));
 
+async function renderPdfPages(pdfBuffer,maxPages=12){
+  const dir=await mkdtemp(path.join(os.tmpdir(),"memorycast-pdf-"));
+  const pdfPath=path.join(dir,"source.pdf");
+  const prefix=path.join(dir,"page");
+  try{
+    await writeFile(pdfPath,pdfBuffer);
+    await execFileAsync("pdftoppm",[
+      "-jpeg",
+      "-r","135",
+      "-f","1",
+      "-l",String(maxPages),
+      pdfPath,
+      prefix
+    ],{maxBuffer:16*1024*1024});
+
+    const names=(await readdir(dir))
+      .filter(name=>/^page-\d+\.jpg$/i.test(name))
+      .sort((a,b)=>{
+        const na=Number(a.match(/(\d+)/)?.[1]||0);
+        const nb=Number(b.match(/(\d+)/)?.[1]||0);
+        return na-nb;
+      });
+
+    const pages=[];
+    for(const name of names){
+      const pageNumber=Number(name.match(/(\d+)/)?.[1]||0);
+      const data=await readFile(path.join(dir,name));
+      pages.push({pageNumber,data});
+    }
+    return pages;
+  }finally{
+    await rm(dir,{recursive:true,force:true}).catch(()=>{});
+  }
+}
+
 app.post("/ai/import-media", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const files=Array.isArray(req.body?.files)?req.body.files.slice(0,12):[];
@@ -903,12 +952,40 @@ app.post("/ai/import-media", requireAuth, asyncRoute(async(req,res)=>{
   for(const f of prepared){
     const {rows}=await query(`
       INSERT INTO note_attachments(
-        user_id,note_id,original_name,mime_type,byte_size,data,extracted_text,sort_order
+        user_id,note_id,original_name,mime_type,byte_size,data,extracted_text,sort_order,
+        source_attachment_id,page_number,is_generated
       )
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-      RETURNING id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,created_at
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL,NULL,FALSE)
+      RETURNING id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,
+        source_attachment_id,page_number,is_generated,created_at
     `,[uid,noteRow.id,f.name,f.mime,f.data.length,f.data,f.text,f.sortOrder]);
-    saved.push(normalizeAttachmentRow(rows[0]));
+
+    const original=rows[0];
+    saved.push(normalizeAttachmentRow(original));
+
+    if(f.mime==="application/pdf"){
+      try{
+        const pages=await renderPdfPages(f.data,12);
+        for(const p of pages){
+          const pageName=f.name.replace(/\.pdf$/i,"")+" · 第 "+p.pageNumber+" 页.jpg";
+          const pageSort=f.sortOrder*100+p.pageNumber;
+          const inserted=await query(`
+            INSERT INTO note_attachments(
+              user_id,note_id,original_name,mime_type,byte_size,data,extracted_text,sort_order,
+              source_attachment_id,page_number,is_generated
+            )
+            VALUES($1,$2,$3,'image/jpeg',$4,$5,'',$6,$7,$8,TRUE)
+            RETURNING id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,
+              source_attachment_id,page_number,is_generated,created_at
+          `,[
+            uid,noteRow.id,pageName,p.data.length,p.data,pageSort,original.id,p.pageNumber
+          ]);
+          saved.push(normalizeAttachmentRow(inserted.rows[0]));
+        }
+      }catch(err){
+        console.warn("PDF page rendering failed:",f.name,err?.message||err);
+      }
+    }
   }
 
   res.json({
@@ -1174,7 +1251,9 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
       FROM note_attachments
       WHERE user_id=$1 AND note_id=$2
         AND mime_type LIKE 'image/%'
-      ORDER BY sort_order ASC,created_at ASC
+      ORDER BY
+        CASE WHEN is_generated=TRUE AND page_number IS NOT NULL THEN 0 ELSE 1 END,
+        sort_order ASC,created_at ASC
       LIMIT 2
     `,[uid,r.source_note_id]);
     for(const a of ar.rows){
