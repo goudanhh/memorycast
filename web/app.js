@@ -1665,30 +1665,64 @@ function setupCustomNavOrder(){
   let startY=0;
   let moved=false;
 
+  const placeDraggedByY=clientY=>{
+    if(!dragged)return;
+    const siblings=[...nav.querySelectorAll("[data-page]")].filter(x=>x!==dragged);
+    let inserted=false;
+
+    for(const target of siblings){
+      const rect=target.getBoundingClientRect();
+      if(clientY < rect.top + rect.height/2){
+        nav.insertBefore(dragged,target);
+        inserted=true;
+        break;
+      }
+    }
+
+    if(!inserted)nav.appendChild(dragged);
+  };
+
+  // Desktop Edge/Chrome: listen on the whole nav container instead of relying
+  // on individual buttons receiving dragover while the native drag preview is active.
+  nav.addEventListener("dragover",e=>{
+    if(!dragged)return;
+    e.preventDefault();
+    if(e.dataTransfer)e.dataTransfer.dropEffect="move";
+    placeDraggedByY(e.clientY);
+  });
+
+  nav.addEventListener("drop",e=>{
+    if(!dragged)return;
+    e.preventDefault();
+    placeDraggedByY(e.clientY);
+    saveNavOrder();
+  });
+
   nav.querySelectorAll("[data-page]").forEach(btn=>{
     btn.draggable=true;
 
     btn.addEventListener("dragstart",e=>{
       dragged=btn;
+      moved=true;
       btn.classList.add("nav-dragging");
-      e.dataTransfer.effectAllowed="move";
-      try{e.dataTransfer.setData("text/plain",btn.dataset.page)}catch{}
-    });
-
-    btn.addEventListener("dragover",e=>{
-      if(!dragged||dragged===btn)return;
-      e.preventDefault();
-      const rect=btn.getBoundingClientRect();
-      const before=e.clientY < rect.top+rect.height/2;
-      nav.insertBefore(dragged,before?btn:btn.nextSibling);
+      if(e.dataTransfer){
+        e.dataTransfer.effectAllowed="move";
+        try{
+          e.dataTransfer.setData("text/plain",btn.dataset.page||"");
+          // Use the real button as the drag image with a small offset.
+          e.dataTransfer.setDragImage(btn,24,Math.min(24,btn.offsetHeight/2));
+        }catch{}
+      }
     });
 
     btn.addEventListener("dragend",()=>{
-      btn.classList.remove("nav-dragging");
+      if(dragged===btn)saveNavOrder();
+      btn.classList.remove("nav-dragging","nav-touch-ready");
       dragged=null;
-      saveNavOrder();
+      moved=false;
     });
 
+    // Touch / pen path.
     btn.addEventListener("pointerdown",e=>{
       if(e.pointerType==="mouse")return;
       dragged=btn;
@@ -1704,22 +1738,7 @@ function setupCustomNavOrder(){
       moved=true;
       btn.classList.add("nav-dragging");
       e.preventDefault();
-
-      // iOS Safari + pointer capture can make elementFromPoint() keep returning
-      // the dragged button itself. Instead, place by comparing the finger Y
-      // position with every other menu item's vertical midpoint.
-      const siblings=[...nav.querySelectorAll("[data-page]")].filter(x=>x!==btn);
-      let inserted=false;
-      for(const target of siblings){
-        const rect=target.getBoundingClientRect();
-        const mid=rect.top+rect.height/2;
-        if(e.clientY<mid){
-          nav.insertBefore(btn,target);
-          inserted=true;
-          break;
-        }
-      }
-      if(!inserted)nav.appendChild(btn);
+      placeDraggedByY(e.clientY);
     });
 
     const finishPointer=e=>{
@@ -1727,7 +1746,6 @@ function setupCustomNavOrder(){
       if(moved){
         e.preventDefault();
         saveNavOrder();
-        // Prevent the synthetic click after a touch drag from navigating.
         btn.dataset.skipNextClick="1";
         setTimeout(()=>delete btn.dataset.skipNextClick,350);
       }
@@ -1735,11 +1753,11 @@ function setupCustomNavOrder(){
       dragged=null;
       moved=false;
     };
+
     btn.addEventListener("pointerup",finishPointer);
     btn.addEventListener("pointercancel",finishPointer);
   });
 }
-
 function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
 function toggleMobileNav(){document.body.classList.toggle("mobile-nav-open")}
 document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{if(b.dataset.skipNextClick)return;go(b.dataset.page);closeMobileNav()});
