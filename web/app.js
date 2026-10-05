@@ -147,7 +147,7 @@ function pickVoice(locale){
 function voiceStyleName(locale){
   const isZh=locale.startsWith("zh");
   const id=isZh?"chineseVoiceStyle":"englishVoiceStyle";
-  return $(id)?.value||localStorage.getItem("memorycast_"+(isZh?"zh":"en")+"_voice_style")||"natural";
+  return $(id)?.value||localStorage.getItem("memorycast_"+(isZh?"zh":"en")+"_voice_style")||"smart";
 }
 function voiceStyleProfile(locale){
   const style=voiceStyleName(locale);
@@ -424,8 +424,8 @@ async function loadSettings(){
   $("dailyGoal").value=settings.daily_goal;
   $("reminderTime").value=String(settings.reminder_time||"09:00").slice(0,5);
   refreshVoices();
-  $("englishVoiceStyle").value=localStorage.getItem("memorycast_en_voice_style")||"natural";
-  $("chineseVoiceStyle").value=localStorage.getItem("memorycast_zh_voice_style")||"natural";
+  $("englishVoiceStyle").value=localStorage.getItem("memorycast_en_voice_style")||"smart";
+  $("chineseVoiceStyle").value=localStorage.getItem("memorycast_zh_voice_style")||"smart";
   updatePushUi();
 }
 async function saveSettings(){
