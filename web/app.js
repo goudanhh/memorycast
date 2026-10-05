@@ -428,6 +428,122 @@ async function openNoteReview(id){
   $("editNoteBtn").disabled=false;
   $("deleteNoteBtn").disabled=false;
 }
+function chunkNoteForTts(text,maxChars=220){
+  const clean=String(text||"").replace(/\r/g,"").trim();
+  if(!clean)return [];
+
+  const units=clean.split(/(?<=[。！？!?；;\n])/).map(x=>x.trim()).filter(Boolean);
+  const chunks=[];
+  let buf="";
+
+  const pushBuf=()=>{
+    if(buf.trim())chunks.push(buf.trim());
+    buf="";
+  };
+
+  for(const unit of units){
+    if(unit.length>maxChars){
+      pushBuf();
+      for(let i=0;i<unit.length;i+=maxChars){
+        chunks.push(unit.slice(i,i+maxChars).trim());
+      }
+      continue;
+    }
+    if((buf+" "+unit).trim().length>maxChars)pushBuf();
+    buf=(buf?buf+" ":"")+unit;
+  }
+  pushBuf();
+  return chunks;
+}
+
+async function fetchNoteTtsChunk(text,generation){
+  const parts=splitByLanguage(text).map(part=>({
+    text:part.text,
+    language:part.lang,
+    style:voiceStyleName(part.lang),
+    rate:part.lang==="zh-CN"
+      ? Number(settings.chinese_rate||1.0)
+      : Number(settings.english_rate||1.0)
+  }));
+  if(!parts.length)return null;
+
+  const controller=new AbortController();
+  activeTtsRequests.add(controller);
+  try{
+    const res=await fetch("/api/tts",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({parts}),
+      signal:controller.signal
+    });
+    activeTtsRequests.delete(controller);
+    if(!res.ok)throw new Error("Neural TTS HTTP "+res.status);
+    if(generation!==ttsPlaybackGeneration)return null;
+    const blob=await res.blob();
+    if(generation!==ttsPlaybackGeneration)return null;
+    return URL.createObjectURL(blob);
+  }catch(err){
+    activeTtsRequests.delete(controller);
+    if(err?.name==="AbortError"||generation!==ttsPlaybackGeneration)return null;
+    throw err;
+  }
+}
+
+async function playNoteChunks(chunks,generation,btn){
+  const audio=$("globalTtsAudio");
+  if(!audio)throw new Error("Global TTS player missing");
+
+  let nextPromise=fetchNoteTtsChunk(chunks[0],generation);
+
+  for(let i=0;i<chunks.length;i++){
+    if(generation!==ttsPlaybackGeneration)return;
+
+    btn.textContent=i===0
+      ?"⏳ 正在准备朗读…"
+      : "⏹ 停止朗读";
+
+    const url=await nextPromise;
+    if(!url||generation!==ttsPlaybackGeneration)return;
+
+    // Start preparing the next chunk before this one begins playback.
+    nextPromise=i+1<chunks.length
+      ? fetchNoteTtsChunk(chunks[i+1],generation)
+      : null;
+
+    if(currentTtsObjectUrl){
+      try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
+    }
+    currentTtsObjectUrl=url;
+    currentAudio=audio;
+    audio.pause();
+    audio.currentTime=0;
+    audio.src=url;
+
+    btn.textContent="⏹ 停止朗读 · "+(i+1)+"/"+chunks.length;
+
+    await new Promise((resolve,reject)=>{
+      audio.onended=resolve;
+      audio.onerror=()=>reject(new Error("音频播放失败"));
+      const p=audio.play();
+      if(p&&typeof p.catch==="function")p.catch(reject);
+    });
+
+    if(generation!==ttsPlaybackGeneration)return;
+  }
+
+  if(generation===ttsPlaybackGeneration){
+    noteSpeaking=false;
+    btn.textContent="🔊 朗读笔记";
+    if(currentTtsObjectUrl){
+      try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
+      currentTtsObjectUrl=null;
+    }
+    audio.removeAttribute("src");
+    audio.load();
+    currentAudio=null;
+  }
+}
+
 function speakSelectedNote(){
   if(!currentNoteId)return;
   const n=notes.find(x=>x.id===currentNoteId);
@@ -439,17 +555,22 @@ function speakSelectedNote(){
   }
 
   stopAllTts();
+  const chunks=chunkNoteForTts(n.content);
+  if(!chunks.length)return;
+
   noteSpeaking=true;
   const btn=$("speakNoteBtn");
-  btn.textContent="⏹ 停止朗读";
+  btn.textContent="⏳ 正在准备朗读…";
   btn.disabled=true;
   setTimeout(()=>{if(btn)btn.disabled=false},250);
 
   const generation=ttsPlaybackGeneration;
-  speakOne(n.content,()=>{
+  playNoteChunks(chunks,generation,btn).catch(err=>{
     if(generation!==ttsPlaybackGeneration)return;
+    console.error("Note TTS failed:",err);
     noteSpeaking=false;
     btn.textContent="🔊 朗读笔记";
+    alert("朗读失败："+err.message);
   });
 }
 async function markSelectedNoteReviewed(){
