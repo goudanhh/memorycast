@@ -394,26 +394,27 @@ function buildTimedSsml(lines){
   const allParts=cleanLines.flatMap(line=>line.parts);
   if(!allParts.length)return {ssml:"",lineCount:0,voice:""};
 
-  const dominant=dominantLocaleForParts(allParts);
-  const voice=dominant==="zh-CN"
-    ? (process.env.AZURE_ZH_MULTILINGUAL_VOICE||"zh-CN-YunxiaoMultilingualNeural")
-    : (process.env.AZURE_EN_MULTILINGUAL_VOICE||process.env.AZURE_MULTILINGUAL_VOICE||"en-US-AvaMultilingualNeural");
+  const enVoice=process.env.AZURE_EN_MULTILINGUAL_VOICE
+    ||process.env.AZURE_MULTILINGUAL_VOICE
+    ||"en-US-AvaMultilingualNeural";
+  const zhVoice=process.env.AZURE_ZH_MULTILINGUAL_VOICE
+    ||"zh-CN-YunxiaoMultilingualNeural";
 
-  const avgRate=allParts.reduce((sum,p)=>sum+p.rate,0)/allParts.length;
   const body=cleanLines.map((line,lineIndex)=>{
-    const xml=line.parts.map(p=>
-      `<lang xml:lang="${p.language}">${clearIsolatedFragment(p.text,p.language)}</lang>`
-    ).join("");
+    const xml=line.parts.map(p=>{
+      const voice=p.language==="zh-CN"?zhVoice:enVoice;
+      return `<voice name="${voice}"><prosody rate="${ratePercent(p.rate,1)}"><lang xml:lang="${p.language}">${clearIsolatedFragment(p.text,p.language)}</lang></prosody></voice>`;
+    }).join("");
+
     return `<bookmark mark="line-${lineIndex}"/>${xml}`;
-  }).join('<break time="80ms"/>');
+  }).join('<break time="25ms"/>');
 
   return {
     lineCount:cleanLines.length,
-    voice,
-    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${dominant}"><voice name="${voice}"><prosody rate="${ratePercent(avgRate,1)}">${body}</prosody></voice></speak>`
+    voice:"dual-language",
+    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">${body}</speak>`
   };
 }
-
 async function requestAzureTimed(ssml){
   const speechConfig=speechsdk.SpeechConfig.fromSubscription(KEY,REGION);
   speechConfig.speechSynthesisOutputFormat=speechsdk.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
@@ -524,7 +525,7 @@ export async function synthesizeTimedTts(lines){
     }))
   }));
   const cacheKey=crypto.createHash("sha256")
-    .update("timed-first-word-v2|"+JSON.stringify(keyPayload))
+    .update("timed-dual-voice-v3|"+JSON.stringify(keyPayload))
     .digest("hex");
   const audioFile=path.join(CACHE_DIR,`${cacheKey}.mp3`);
   const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
