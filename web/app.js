@@ -89,7 +89,12 @@ async function init(){
   // This runs in the background so opening Walkman usually has audio ready.
   if(ttsInfoState.enabled){
     loadWalkmanQueue()
-      .then(queue=>queue?.[0]?prefetchWalkmanCard(queue[0]):null)
+      .then(queue=>{
+        const card=queue?.[0];
+        if(!card)return null;
+        const groups=walkmanChunkGroups(walkmanSegments(card));
+        return groups[0]?prefetchWalkmanChunk(card,0,groups[0]):null;
+      })
       .catch(()=>{});
   }
 }
@@ -1756,19 +1761,47 @@ function showWalkmanSubtitle(text){
   renderWalkmanLyrics([String(text||"")],0);
 }
 
-function walkmanAudioKey(card){
+function walkmanChunkGroups(lines=[]){
+  const groups=[];
+  let current=[];
+  let chars=0;
+
+  for(const line of lines){
+    const text=String(line||"").trim();
+    if(!text)continue;
+    const len=text.length;
+
+    // Keep startup fast: usually 2 sentences per chunk, occasionally 3 if short.
+    const shouldFlush=current.length>=2 || (chars+len>180 && current.length>0);
+    if(shouldFlush){
+      groups.push(current);
+      current=[];
+      chars=0;
+    }
+
+    current.push(text);
+    chars+=len;
+  }
+
+  if(current.length)groups.push(current);
+  return groups;
+}
+
+function walkmanChunkKey(card,chunkIndex,lines){
   return [
     card?.id||"",
+    chunkIndex,
     walkmanRate,
     Number(settings.english_rate||1),
     Number(settings.chinese_rate||1),
     localStorage.getItem("memorycast_en_voice_style")||"smart",
-    localStorage.getItem("memorycast_zh_voice_style")||"smart"
+    localStorage.getItem("memorycast_zh_voice_style")||"smart",
+    lines.join("\n")
   ].join("|");
 }
 
 function trimWalkmanAudioCache(){
-  while(walkmanAudioCache.size>6){
+  while(walkmanAudioCache.size>12){
     const first=walkmanAudioCache.keys().next().value;
     walkmanAudioCache.delete(first);
   }
@@ -1782,13 +1815,7 @@ function decodeBase64UrlText(value=""){
   return new TextDecoder().decode(bytes);
 }
 
-async function requestWalkmanCardBlob(card){
-  const lines=walkmanSegments(card);
-  if(!lines.length)return null;
-
-  const totalText=lines.join("\n").length;
-  if(totalText>2900)return null;
-
+async function requestWalkmanChunk(card,chunkIndex,lines){
   const payloadLines=lines.map(line=>({
     parts:splitByLanguage(line).map(part=>({
       text:part.text,
@@ -1821,14 +1848,15 @@ async function requestWalkmanCardBlob(card){
     cacheHit:(res.headers.get("X-MemoryCast-TTS-Cache")||"").toUpperCase()==="HIT"
   };
 }
-function prefetchWalkmanCard(card){
-  if(!card||!ttsInfoState.enabled)return Promise.resolve(null);
 
-  const key=walkmanAudioKey(card);
+function prefetchWalkmanChunk(card,chunkIndex,lines){
+  if(!card||!lines?.length||!ttsInfoState.enabled)return Promise.resolve(null);
+
+  const key=walkmanChunkKey(card,chunkIndex,lines);
   if(walkmanAudioCache.has(key))return Promise.resolve(walkmanAudioCache.get(key));
   if(walkmanPrefetch.has(key))return walkmanPrefetch.get(key);
 
-  const promise=requestWalkmanCardBlob(card)
+  const promise=requestWalkmanChunk(card,chunkIndex,lines)
     .then(media=>{
       walkmanPrefetch.delete(key);
       if(media){
@@ -1839,7 +1867,7 @@ function prefetchWalkmanCard(card){
     })
     .catch(err=>{
       walkmanPrefetch.delete(key);
-      console.warn("Walkman prefetch failed:",err?.message||err);
+      console.warn("Walkman chunk prefetch failed:",err?.message||err);
       return null;
     });
 
@@ -1847,35 +1875,24 @@ function prefetchWalkmanCard(card){
   return promise;
 }
 
-async function getWalkmanCardBlob(card){
-  const key=walkmanAudioKey(card);
+async function getWalkmanChunk(card,chunkIndex,lines){
+  const key=walkmanChunkKey(card,chunkIndex,lines);
   if(walkmanAudioCache.has(key))return walkmanAudioCache.get(key);
-  return await prefetchWalkmanCard(card);
+  return await prefetchWalkmanChunk(card,chunkIndex,lines);
 }
-async function playWalkmanContinuousCard(card){
-  const lines=walkmanSegments(card);
-  if(!lines.length)return false;
 
+async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines){
   const generation=ttsPlaybackGeneration;
-  renderWalkmanLyrics(lines,0);
-
-  if(!ttsInfoState.enabled)return false;
-
-  const media=await getWalkmanCardBlob(card);
+  const media=await getWalkmanChunk(card,chunkIndex,lines);
   if(!media?.blob||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
 
   const audio=$("globalTtsAudio");
   if(!audio)return false;
 
-  // While the current card is about to play, prepare the next one in background.
-  if(walkmanQueue.length>1){
-    const nextCard=walkmanQueue[(walkmanIndex+1)%walkmanQueue.length];
-    prefetchWalkmanCard(nextCard);
-  }
-
   if(currentTtsObjectUrl){
     try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
   }
+
   const url=URL.createObjectURL(media.blob);
   currentTtsObjectUrl=url;
   currentAudio=audio;
@@ -1888,22 +1905,20 @@ async function playWalkmanContinuousCard(card){
     .filter(x=>Number.isFinite(x.offsetMs))
     .sort((x,y)=>x.offsetMs-y.offsetMs);
 
-  let activeIndex=0;
+  let localActive=0;
+  setWalkmanLyricIndex(allLines,globalStartIndex);
+
   const syncLyrics=()=>{
     const nowMs=audio.currentTime*1000;
     let idx=0;
-
-    // Timings now come from the first real WordBoundary after each line marker,
-    // so the subtitle changes only when that line actually begins speaking.
     for(const item of exactTimings){
       if(item.offsetMs<=nowMs)idx=item.index;
       else break;
     }
-
     idx=Math.max(0,Math.min(lines.length-1,idx));
-    if(idx!==activeIndex){
-      activeIndex=idx;
-      setWalkmanLyricIndex(lines,activeIndex);
+    if(idx!==localActive){
+      localActive=idx;
+      setWalkmanLyricIndex(allLines,globalStartIndex+idx);
     }
   };
 
@@ -1928,6 +1943,40 @@ async function playWalkmanContinuousCard(card){
   currentAudio=null;
 
   return generation===ttsPlaybackGeneration&&walkmanPlaying;
+}
+
+async function playWalkmanContinuousCard(card){
+  const lines=walkmanSegments(card);
+  if(!lines.length)return false;
+
+  renderWalkmanLyrics(lines,0);
+  if(!ttsInfoState.enabled)return false;
+
+  const groups=walkmanChunkGroups(lines);
+  if(!groups.length)return false;
+
+  // Only the first small chunk blocks startup.
+  prefetchWalkmanChunk(card,0,groups[0]);
+
+  let globalStart=0;
+  for(let i=0;i<groups.length;i++){
+    if(!walkmanPlaying)return false;
+
+    // Generate the next chunk while the current one is playing.
+    if(i+1<groups.length){
+      prefetchWalkmanChunk(card,i+1,groups[i+1]);
+    }else if(walkmanQueue.length>1){
+      const nextCard=walkmanQueue[(walkmanIndex+1)%walkmanQueue.length];
+      const nextGroups=walkmanChunkGroups(walkmanSegments(nextCard));
+      if(nextGroups[0])prefetchWalkmanChunk(nextCard,0,nextGroups[0]);
+    }
+
+    const ok=await playWalkmanChunk(card,i,groups[i],globalStart,lines);
+    if(!ok)return false;
+    globalStart+=groups[i].length;
+  }
+
+  return walkmanPlaying;
 }
 
 function stopWalkman(){
@@ -1998,13 +2047,14 @@ async function toggleWalkmanPlayback(){
   walkmanPlaying=true;
   $("walkmanPlayBtn").textContent="…";
   const current=walkmanQueue[walkmanIndex];
+  const currentGroups=current?walkmanChunkGroups(walkmanSegments(current)):[];
+  const firstKey=current&&currentGroups[0]?walkmanChunkKey(current,0,currentGroups[0]):"";
   const lyricTrack=$("walkmanSubtitle");
-  if(lyricTrack && current && !walkmanAudioCache.has(walkmanAudioKey(current))){
+  if(lyricTrack && firstKey && !walkmanAudioCache.has(firstKey)){
     lyricTrack.innerHTML='<div class="walkman-lyric active">正在准备语音…</div>';
   }
-  const key=current?walkmanAudioKey(current):"";
-  if(current && !walkmanAudioCache.has(key)){
-    prefetchWalkmanCard(current);
+  if(current&&currentGroups[0]&&!walkmanAudioCache.has(firstKey)){
+    prefetchWalkmanChunk(current,0,currentGroups[0]);
   }
   setTimeout(()=>{
     if(walkmanPlaying)$("walkmanPlayBtn").textContent="⏹";
@@ -2030,9 +2080,11 @@ async function enterWalkmanMode(){
   const initialLines=walkmanQueue.length?walkmanSegments(walkmanQueue[0]):[];
   renderWalkmanLyrics(initialLines.length?initialLines:["暂无可播放内容"],0);
 
-  // Give the first card exclusive priority. Prefetching multiple Azure
-  // syntheses at once can make the first audible result slower.
-  if(walkmanQueue[0])prefetchWalkmanCard(walkmanQueue[0]);
+  // Prepare only the first small chunk for fast start.
+  if(walkmanQueue[0]){
+    const groups=walkmanChunkGroups(walkmanSegments(walkmanQueue[0]));
+    if(groups[0])prefetchWalkmanChunk(walkmanQueue[0],0,groups[0]);
+  }
 
   // Browser Back exits the minimalist mode without needing another visible button.
   try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
@@ -2055,4 +2107,4 @@ $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;i
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
-$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{walkmanRate=Number($("walkmanRate").value||1);if(walkmanQueue[walkmanIndex])prefetchWalkmanCard(walkmanQueue[walkmanIndex]);if(walkmanPlaying){stopAllTts();setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{walkmanRate=Number($("walkmanRate").value||1);const c=walkmanQueue[walkmanIndex];if(c){const g=walkmanChunkGroups(walkmanSegments(c));if(g[0])prefetchWalkmanChunk(c,0,g[0])}if(walkmanPlaying){stopAllTts();setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
