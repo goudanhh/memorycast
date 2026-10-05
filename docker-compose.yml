@@ -45,6 +45,7 @@ services:
       TTS_PROVIDER: ${TTS_PROVIDER:-browser}
       AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}
       AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
+      AZURE_MULTILINGUAL_VOICE: ${AZURE_MULTILINGUAL_VOICE:-en-US-AvaMultilingualNeural}
       TTS_CACHE_DIR: /app/tts-cache
     depends_on:
       db:
