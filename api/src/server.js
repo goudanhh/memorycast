@@ -1282,7 +1282,6 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const count=Math.min(20,Math.max(3,Number(req.body?.count||10)));
   const mode=["mixed","weak","due"].includes(req.body?.mode)?req.body.mode:"mixed";
-  const watchMode=req.body?.watchMode===true;
   const requestedIds=Array.isArray(req.body?.cardIds)
     ? req.body.cardIds.map(String).filter(Boolean).slice(0,30)
     : [];
@@ -1423,7 +1422,6 @@ The visible prompt must be Simplified Chinese by default, while English target t
 Good visual questions may ask about a labeled structure, arrow, sequence, table cell, chart trend, diagram relation, or visible annotation.
 Do NOT ask a question that could be answered from the text context alone.
 For MCQ, provide exactly 4 plausible choices. Otherwise choices=[].
-${watchMode?"This is Apple Watch mode: the question type MUST be mcq, with exactly 4 choices. Do not generate fill, short-answer, or listening questions.":""}
 Return schema-valid JSON only.`,
         user:JSON.stringify({
           card:{
@@ -1441,7 +1439,6 @@ Return schema-valid JSON only.`,
           }
         })
       });
-      if(watchMode && (v.type!=="mcq" || !Array.isArray(v.choices) || v.choices.length!==4))continue;
       visualQuestions.push({
         ...v,
         id:crypto.randomUUID(),
@@ -1463,7 +1460,8 @@ Return schema-valid JSON only.`,
       name:"memorycast_quiz",
       schema:quizSchema,
       system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
-${watchMode?"Generate ONLY MCQ items. Every question type MUST be mcq and must have exactly 4 plausible choices.":"Mix MCQ, fill, short-answer and listening items when appropriate.\nFor MCQ provide exactly 4 plausible choices; otherwise choices must be []."}
+Mix MCQ, fill, short-answer and listening items when appropriate.
+For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
 Always set visualAttachmentId to an empty string for these normal text/listening questions.
 Use Simplified Chinese for the quiz prompt and all learner-facing instructions by default.
@@ -1488,7 +1486,6 @@ Return only schema-valid JSON.`,
     const allowed=new Set(source.map(x=>x.id));
     regularQuestions=(data.questions||[])
       .filter(q=>allowed.has(q.cardId))
-      .filter(q=>!watchMode || (q.type==="mcq" && Array.isArray(q.choices) && q.choices.length===4))
       .slice(0,remaining)
       .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
   }
@@ -1535,7 +1532,7 @@ Return schema-valid JSON.`,
     user:JSON.stringify({type:q.type,prompt:q.prompt,expected:q.answer,acceptable:q.acceptableAnswers,userAnswer})
   });
 }
-async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence,watchMode=false}){
+async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence}){
   const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const strongCorrect=verdict==="correct" && confidence==="sure";
   const target=strongCorrect?"challenge":(verdict==="wrong"?"foundation":"standard");
@@ -1554,7 +1551,7 @@ Use Simplified Chinese for the follow-up prompt and learner-facing instructions 
 Keep English target words, phrases, example sentences, and answer choices in English where appropriate.
 If the learner must answer in English, explicitly say "请用英文回答".
 For MCQ give exactly 4 plausible choices; otherwise choices=[].
-${watchMode?"This is Apple Watch mode: the follow-up type MUST be mcq with exactly 4 choices. Do not generate fill, short-answer, or listening questions.":"For listening, keep the visible prompt in Chinese; audioText is what TTS reads and the prompt must not reveal it."}
+For listening, keep the visible prompt in Chinese; audioText is what TTS reads and the prompt must not reveal it.
 Do not make the whole follow-up question English just because the source material is English.
 Always set visualAttachmentId to an empty string for adaptive follow-up questions.
 Return schema-valid JSON only.`,
@@ -1571,7 +1568,6 @@ Return schema-valid JSON only.`,
 
 app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   const {sessionId,questionId,answer=""}=req.body||{};
-  const watchMode=req.body?.watchMode===true;
   const confidence=["sure","unsure","guess"].includes(req.body?.confidence)
     ? req.body.confidence
     : "unsure";
@@ -1627,11 +1623,8 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
       const card=cardResult.rows[0];
       if(card){
         adaptiveQuestion=await makeAdaptiveQuizQuestion({
-          uid,card,q,verdict:grade.verdict,confidence,watchMode
+          uid,card,q,verdict:grade.verdict,confidence
         });
-        if(watchMode && (adaptiveQuestion.type!=="mcq" || !Array.isArray(adaptiveQuestion.choices) || adaptiveQuestion.choices.length!==4)){
-          adaptiveQuestion=null;
-        }
         const allQuestions=[...(sessionRow.questions||[]),adaptiveQuestion];
         await query(`
           UPDATE quiz_sessions SET answers=$3::jsonb,questions=$4::jsonb
