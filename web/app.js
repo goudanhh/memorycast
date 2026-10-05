@@ -195,16 +195,20 @@ function browserSpeakPart(part,cb){
   u.onerror=()=>cb&&cb();
   speechSynthesis.speak(u);
 }
-async function neuralSpeakPart(part,cb){
-  const rate=part.lang==="zh-CN"
-    ? Number(settings.chinese_rate||1.0)
-    : Number(settings.english_rate||1.0);
-  const style=voiceStyleName(part.lang);
+async function neuralSpeakMixed(parts,cb){
+  const payloadParts=parts.map(part=>({
+    text:part.text,
+    language:part.lang,
+    style:voiceStyleName(part.lang),
+    rate:part.lang==="zh-CN"
+      ? Number(settings.chinese_rate||1.0)
+      : Number(settings.english_rate||1.0)
+  }));
   try{
     const res=await fetch("/api/tts",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:part.text,language:part.lang,style,rate})
+      body:JSON.stringify({parts:payloadParts})
     });
     if(!res.ok)throw new Error("Neural TTS HTTP "+res.status);
     const blob=await res.blob();
@@ -220,25 +224,38 @@ async function neuralSpeakPart(part,cb){
     audio.onerror=()=>{
       URL.revokeObjectURL(url);
       if(currentAudio===audio)currentAudio=null;
-      browserSpeakPart(part,cb);
+      let i=0;
+      const fallback=()=>{
+        if(i>=parts.length){cb&&cb();return}
+        browserSpeakPart(parts[i++],fallback);
+      };
+      fallback();
     };
     await audio.play();
   }catch(err){
-    console.warn("Azure TTS unavailable; using browser fallback:",err.message);
-    browserSpeakPart(part,cb);
+    console.warn("Azure mixed TTS unavailable; using browser fallback:",err.message);
+    let i=0;
+    const fallback=()=>{
+      if(i>=parts.length){cb&&cb();return}
+      browserSpeakPart(parts[i++],fallback);
+    };
+    fallback();
   }
 }
 function speakOne(text,cb){
   if(!text){if(cb)cb();return}
   const parts=splitByLanguage(text);
   if(!parts.length){if(cb)cb();return}
-  const run=i=>{
+  if(ttsInfoState.enabled){
+    neuralSpeakMixed(parts,cb);
+    return;
+  }
+  let i=0;
+  const run=()=>{
     if(i>=parts.length){if(cb)cb();return}
-    const part=parts[i];
-    if(ttsInfoState.enabled)neuralSpeakPart(part,()=>run(i+1));
-    else browserSpeakPart(part,()=>run(i+1));
+    browserSpeakPart(parts[i++],run);
   };
-  run(0);
+  run();
 }
 function speakCurrent(){
   const c=due[dueIndex];if(!c)return;
