@@ -74,6 +74,90 @@ function buildSsml(text,language,style,baseRate){
     ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${cfg.locale}"><voice name="${cfg.voice}">${body}</voice></speak>`
   };
 }
+function buildMixedSsml(parts){
+  const normalized=parts.map(p=>{
+    const text=String(p.text||"").trim();
+    const language=p.language==="zh-CN"?"zh-CN":"en-US";
+    const style=["smart","natural","host","lazy"].includes(p.style)?p.style:"smart";
+    const rate=Math.min(2,Math.max(.5,Number(p.rate||1)));
+    const cfg=configFor(language,style,text);
+    const prosody=`<prosody rate="${ratePercent(rate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${escapeXml(text)}</prosody>`;
+    const body=cfg.express
+      ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
+      : prosody;
+    return {text,language,style,rate,cfg,xml:`<voice name="${cfg.voice}">${body}</voice>`};
+  }).filter(p=>p.text);
+
+  return {
+    normalized,
+    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">${normalized.map(p=>p.xml).join("")}</speak>`
+  };
+}
+
+async function requestAzure(ssml){
+  const response=await fetch(`https://${REGION}.tts.speech.microsoft.com/cognitiveservices/v1`,{
+    method:"POST",
+    headers:{
+      "Ocp-Apim-Subscription-Key":KEY,
+      "Content-Type":"application/ssml+xml",
+      "X-Microsoft-OutputFormat":"audio-24khz-48kbitrate-mono-mp3",
+      "User-Agent":"MemoryCast"
+    },
+    body:ssml
+  });
+
+  if(!response.ok){
+    const detail=(await response.text()).slice(0,500);
+    const err=new Error(`Azure TTS failed (${response.status})${detail?": "+detail:""}`);
+    err.statusCode=502;
+    throw err;
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+export async function synthesizeMixedTts(parts){
+  if(!hasAzureTts()){
+    const err=new Error("Azure TTS is not configured");
+    err.statusCode=503;
+    throw err;
+  }
+  if(!Array.isArray(parts)||!parts.length){
+    const err=new Error("TTS parts are required");
+    err.statusCode=400;
+    throw err;
+  }
+
+  const total=parts.reduce((n,p)=>n+String(p?.text||"").length,0);
+  if(total>3000){
+    const err=new Error("TTS text is too long");
+    err.statusCode=400;
+    throw err;
+  }
+
+  const {normalized,ssml}=buildMixedSsml(parts);
+  if(!normalized.length){
+    const err=new Error("TTS parts are empty");
+    err.statusCode=400;
+    throw err;
+  }
+
+  const cacheKey=crypto.createHash("sha256")
+    .update(JSON.stringify(normalized.map(p=>({
+      text:p.text,language:p.language,style:p.style,rate:p.rate,voice:p.cfg.voice
+    }))))
+    .digest("hex");
+  const file=path.join(CACHE_DIR,`${cacheKey}.mp3`);
+
+  await fs.mkdir(CACHE_DIR,{recursive:true});
+  try{
+    const cached=await fs.readFile(file);
+    return {audio:cached,cacheHit:true,voice:"mixed"};
+  }catch{}
+
+  const audio=await requestAzure(ssml);
+  await fs.writeFile(file,audio);
+  return {audio,cacheHit:false,voice:"mixed"};
+}
 
 export function hasAzureTts(){
   return PROVIDER==="azure" && Boolean(REGION && KEY);
@@ -120,25 +204,7 @@ export async function synthesizeTts({text,language="en-US",style="smart",rate=1}
     return {audio:cached,cacheHit:true,voice:cfg.voice};
   }catch{}
 
-  const response=await fetch(`https://${REGION}.tts.speech.microsoft.com/cognitiveservices/v1`,{
-    method:"POST",
-    headers:{
-      "Ocp-Apim-Subscription-Key":KEY,
-      "Content-Type":"application/ssml+xml",
-      "X-Microsoft-OutputFormat":"audio-24khz-48kbitrate-mono-mp3",
-      "User-Agent":"MemoryCast"
-    },
-    body:ssml
-  });
-
-  if(!response.ok){
-    const detail=(await response.text()).slice(0,500);
-    const err=new Error(`Azure TTS failed (${response.status})${detail?": "+detail:""}`);
-    err.statusCode=502;
-    throw err;
-  }
-
-  const audio=Buffer.from(await response.arrayBuffer());
+  const audio=await requestAzure(ssml);
   await fs.writeFile(file,audio);
   return {audio,cacheHit:false,voice:cfg.voice};
 }
