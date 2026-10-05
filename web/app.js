@@ -1748,60 +1748,44 @@ function showWalkmanSubtitle(text){
   renderWalkmanLyrics([String(text||"")],0);
 }
 
-function walkmanLineWeight(text=""){
-  const s=String(text||"");
-  const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
-  const words=(s.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g)||[]).length;
-  const nums=(s.match(/\d+(?:\.\d+)?/g)||[]).length;
-  return Math.max(1,zh+words*1.8+nums*1.3+s.length*0.08);
-}
-
-function walkmanAudioKey(card){
-  return [
-    card?.id||"",
-    walkmanRate,
-    Number(settings.english_rate||1),
-    Number(settings.chinese_rate||1),
-    localStorage.getItem("memorycast_en_voice_style")||"smart",
-    localStorage.getItem("memorycast_zh_voice_style")||"smart"
-  ].join("|");
-}
-
-function trimWalkmanAudioCache(){
-  while(walkmanAudioCache.size>6){
-    const first=walkmanAudioCache.keys().next().value;
-    walkmanAudioCache.delete(first);
-  }
-}
-
 async function requestWalkmanCardBlob(card){
-  const fullText=[card?.front,card?.back,card?.example]
-    .map(x=>String(x||"").trim())
-    .filter(Boolean)
-    .join("\n\n");
+  const lines=walkmanSegments(card);
+  if(!lines.length)return null;
 
-  if(!fullText || fullText.length>2900)return null;
+  const totalText=lines.join("\n").length;
+  if(totalText>2900)return null;
 
-  const parts=splitByLanguage(fullText).map(part=>({
-    text:part.text,
-    language:part.lang,
-    style:voiceStyleName(part.lang),
-    rate:(part.lang==="zh-CN"
-      ? Number(settings.chinese_rate||1.0)
-      : Number(settings.english_rate||1.0))*walkmanRate
+  const payloadLines=lines.map(line=>({
+    parts:splitByLanguage(line).map(part=>({
+      text:part.text,
+      language:part.lang,
+      style:voiceStyleName(part.lang),
+      rate:(part.lang==="zh-CN"
+        ? Number(settings.chinese_rate||1.0)
+        : Number(settings.english_rate||1.0))*walkmanRate
+    }))
   }));
 
-  if(!parts.length)return null;
-
-  const res=await fetch("/api/tts",{
+  const res=await fetch("/api/tts/timed",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({parts})
+    body:JSON.stringify({lines:payloadLines})
   });
-  if(!res.ok)throw new Error("Walkman TTS HTTP "+res.status);
-  return await res.blob();
-}
+  if(!res.ok)throw new Error("Timed Walkman TTS HTTP "+res.status);
 
+  const data=await res.json();
+  if(!data.audioBase64)return null;
+
+  const raw=atob(data.audioBase64);
+  const bytes=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+
+  return {
+    blob:new Blob([bytes],{type:"audio/mpeg"}),
+    timings:Array.isArray(data.timings)?data.timings:[],
+    cacheHit:data.cacheHit===true
+  };
+}
 function prefetchWalkmanCard(card){
   if(!card||!ttsInfoState.enabled)return Promise.resolve(null);
 
@@ -1810,13 +1794,13 @@ function prefetchWalkmanCard(card){
   if(walkmanPrefetch.has(key))return walkmanPrefetch.get(key);
 
   const promise=requestWalkmanCardBlob(card)
-    .then(blob=>{
+    .then(media=>{
       walkmanPrefetch.delete(key);
-      if(blob){
-        walkmanAudioCache.set(key,blob);
+      if(media){
+        walkmanAudioCache.set(key,media);
         trimWalkmanAudioCache();
       }
-      return blob;
+      return media;
     })
     .catch(err=>{
       walkmanPrefetch.delete(key);
@@ -1842,8 +1826,8 @@ async function playWalkmanContinuousCard(card){
 
   if(!ttsInfoState.enabled)return false;
 
-  const blob=await getWalkmanCardBlob(card);
-  if(!blob||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
+  const media=await getWalkmanCardBlob(card);
+  if(!media?.blob||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
 
   const audio=$("globalTtsAudio");
   if(!audio)return false;
@@ -1857,28 +1841,31 @@ async function playWalkmanContinuousCard(card){
   if(currentTtsObjectUrl){
     try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
   }
-  const url=URL.createObjectURL(blob);
+  const url=URL.createObjectURL(media.blob);
   currentTtsObjectUrl=url;
   currentAudio=audio;
   audio.pause();
   audio.currentTime=0;
   audio.src=url;
 
-  const weights=lines.map(walkmanLineWeight);
-  const total=weights.reduce((x,y)=>x+y,0)||1;
-  const cumulative=[];
-  let acc=0;
-  for(const weight of weights){
-    acc+=weight/total;
-    cumulative.push(acc);
-  }
+  const exactTimings=(media.timings||[])
+    .map(x=>({index:Number(x.index||0),offsetMs:Number(x.offsetMs||0)}))
+    .filter(x=>Number.isFinite(x.offsetMs))
+    .sort((x,y)=>x.offsetMs-y.offsetMs);
 
   let activeIndex=0;
   const syncLyrics=()=>{
-    if(!audio.duration||!Number.isFinite(audio.duration))return;
-    const ratio=Math.max(0,Math.min(0.9999,audio.currentTime/audio.duration));
-    let idx=cumulative.findIndex(x=>ratio<x);
-    if(idx<0)idx=lines.length-1;
+    const nowMs=audio.currentTime*1000;
+    let idx=0;
+
+    // Bookmark offsets are actual Azure synthesis timestamps. Pick the latest
+    // subtitle whose bookmark has already been reached.
+    for(const item of exactTimings){
+      if(item.offsetMs<=nowMs+25)idx=item.index;
+      else break;
+    }
+
+    idx=Math.max(0,Math.min(lines.length-1,idx));
     if(idx!==activeIndex){
       activeIndex=idx;
       setWalkmanLyricIndex(lines,activeIndex);
