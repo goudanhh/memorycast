@@ -1578,15 +1578,124 @@ async function togglePush(){
   }catch(e){alert(e.message)}
 }
 
+const DEFAULT_NAV_ORDER=[
+  "homePage","todayPage","importPage","notesPage","quizPage",
+  "feynmanPage","libraryPage","statsPage","settingsPage"
+];
+const NAV_ORDER_KEY="memorycast_nav_order_v1";
+
+function currentNavOrder(){
+  return [...document.querySelectorAll(".nav [data-page]")].map(x=>x.dataset.page);
+}
+
+function saveNavOrder(){
+  try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(currentNavOrder()))}catch{}
+}
+
+function applyNavOrder(order){
+  const nav=document.querySelector(".nav");
+  if(!nav)return;
+  const map=new Map([...nav.querySelectorAll("[data-page]")].map(el=>[el.dataset.page,el]));
+  const clean=[...(Array.isArray(order)?order:[]),...DEFAULT_NAV_ORDER]
+    .filter((id,i,arr)=>map.has(id)&&arr.indexOf(id)===i);
+  clean.forEach(id=>nav.appendChild(map.get(id)));
+}
+
+function loadNavOrder(){
+  try{
+    const raw=localStorage.getItem(NAV_ORDER_KEY);
+    if(raw)applyNavOrder(JSON.parse(raw));
+  }catch{}
+}
+
+function resetNavOrder(){
+  applyNavOrder(DEFAULT_NAV_ORDER);
+  saveNavOrder();
+}
+
+function setupCustomNavOrder(){
+  const nav=document.querySelector(".nav");
+  if(!nav)return;
+
+  loadNavOrder();
+
+  let dragged=null;
+  let startY=0;
+  let moved=false;
+
+  nav.querySelectorAll("[data-page]").forEach(btn=>{
+    btn.draggable=true;
+
+    btn.addEventListener("dragstart",e=>{
+      dragged=btn;
+      btn.classList.add("nav-dragging");
+      e.dataTransfer.effectAllowed="move";
+      try{e.dataTransfer.setData("text/plain",btn.dataset.page)}catch{}
+    });
+
+    btn.addEventListener("dragover",e=>{
+      if(!dragged||dragged===btn)return;
+      e.preventDefault();
+      const rect=btn.getBoundingClientRect();
+      const before=e.clientY < rect.top+rect.height/2;
+      nav.insertBefore(dragged,before?btn:btn.nextSibling);
+    });
+
+    btn.addEventListener("dragend",()=>{
+      btn.classList.remove("nav-dragging");
+      dragged=null;
+      saveNavOrder();
+    });
+
+    btn.addEventListener("pointerdown",e=>{
+      if(e.pointerType==="mouse")return;
+      dragged=btn;
+      startY=e.clientY;
+      moved=false;
+      try{btn.setPointerCapture(e.pointerId)}catch{}
+    });
+
+    btn.addEventListener("pointermove",e=>{
+      if(!dragged||dragged!==btn||e.pointerType==="mouse")return;
+      if(Math.abs(e.clientY-startY)<8&&!moved)return;
+      moved=true;
+      btn.classList.add("nav-dragging");
+      e.preventDefault();
+
+      const target=document.elementFromPoint(e.clientX,e.clientY)?.closest(".nav [data-page]");
+      if(!target||target===btn)return;
+      const rect=target.getBoundingClientRect();
+      const before=e.clientY < rect.top+rect.height/2;
+      nav.insertBefore(btn,before?target:target.nextSibling);
+    });
+
+    const finishPointer=e=>{
+      if(dragged!==btn)return;
+      if(moved){
+        e.preventDefault();
+        saveNavOrder();
+        // Prevent the synthetic click after a touch drag from navigating.
+        btn.dataset.skipNextClick="1";
+        setTimeout(()=>delete btn.dataset.skipNextClick,350);
+      }
+      btn.classList.remove("nav-dragging");
+      dragged=null;
+      moved=false;
+    };
+    btn.addEventListener("pointerup",finishPointer);
+    btn.addEventListener("pointercancel",finishPointer);
+  });
+}
+
 function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
 function toggleMobileNav(){document.body.classList.toggle("mobile-nav-open")}
-document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{go(b.dataset.page);closeMobileNav()});
+document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{if(b.dataset.skipNextClick)return;go(b.dataset.page);closeMobileNav()});
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
-$("mobileMenuBtn").onclick=toggleMobileNav;
+setupCustomNavOrder();$("mobileMenuBtn").onclick=toggleMobileNav;
 $("sidebarBackdrop").onclick=closeMobileNav;
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("resetNavOrderBtn").onclick=()=>{resetNavOrder();alert("菜单顺序已恢复默认。")};$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
