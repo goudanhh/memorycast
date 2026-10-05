@@ -817,70 +817,111 @@ app.post("/feynman/realtime", requireAuth, asyncRoute(async(req,res)=>{
     FROM feynman_turns
     WHERE session_id=$1
     ORDER BY created_at DESC,id DESC
-    LIMIT 8
+    LIMIT 10
   `,[sessionId]);
   const history=prior.rows.reverse().map(x=>({role:x.role,text:x.content}));
 
-  const data=await generateStructured({
-    name:"feynman_realtime",
+  const aiProvider=String(process.env.AI_PROVIDER||"gemini").toLowerCase();
+  const fastModel=process.env.FEYNMAN_FAST_MODEL ||
+    (aiProvider==="gemini" ? "gemini-3.5-flash-lite" : process.env.OPENAI_MODEL);
+  const deepModel=process.env.FEYNMAN_DEEP_MODEL ||
+    (aiProvider==="gemini" ? "gemini-3.8-flash" : process.env.OPENAI_MODEL);
+
+  // Stage 1: cheap, fast gate. Its job is mostly to say "keep listening".
+  const gate=await generateStructured({
+    name:"feynman_gate",
+    model:fastModel,
     schema:feynmanRealtimeSchema,
-    system:`You are a highly attentive Socratic conversation partner in a live Feynman learning session.
-The user is thinking aloud. Your first responsibility is to understand the structure of their thought before deciding whether to speak.
+    system:`You are the fast gate for a live Socratic tutor.
+Your main job is to avoid unnecessary interruptions.
 
-You must reason about two separate questions:
+Classify whether the user's CURRENT thought is still developing and whether there might be a high-value reasoning gap.
+A pause is not evidence that the thought is complete.
 
-A. Has the user actually completed a thought?
-- thoughtState="developing" when the user is still defining, listing, qualifying, comparing, giving an example, correcting themselves, or clearly continuing a sentence/idea.
-- thoughtState="complete" only when a coherent claim or explanation has reached a natural stopping point.
-- A pause in speech is NOT evidence that the thought is complete.
-
-B. Is there a genuinely important reasoning gap?
-Only use a non-"none" gapType for:
-- definition: a key term is being used without enough meaning to follow the argument
-- causal_jump: X is said to cause Y but the mechanism or connecting step is missing
-- hidden_assumption: the conclusion depends on an unstated premise
-- contradiction: this claim conflicts with something the user said earlier
-- circular_reasoning: the explanation restates the claim instead of explaining it
-- unsupported_claim: an important claim is asserted with no reason or evidence
-- boundary_case: the explanation sounds general but may fail in an important edge case
-
-Interruption policy:
-- Prefer silence.
-- If thoughtState="developing", action MUST be "listen" unless there is a direct contradiction that makes continuing impossible.
-- Only use action="intervene" when confidence >= 0.82 and the gap is important enough that a thoughtful human tutor would actually interrupt.
-- Do not intervene merely because the explanation is incomplete, informal, imprecise, or could be improved.
+Rules:
+- Prefer action="listen".
+- thoughtState="developing" for unfinished explanations, lists, examples, qualifications, self-corrections, or obvious continuations.
+- Only mark action="intervene" when the thought appears complete AND there may be a meaningful reasoning gap.
 - Do not ask generic questions.
-- The question must target the user's exact reasoning and should clearly connect to the specific claim they just made.
-- anchor should be a very short phrase identifying the exact part of the user's reasoning you are reacting to; do not invent wording the user did not imply.
-- When action="listen", question="" and gapType should usually be "none".
-- When action="intervene", ask exactly ONE concise spoken question. No preamble, no praise, no lecture, no summary.
-- Usually keep the spoken question under 30 Chinese characters or 20 English words.
-- clarityScore measures how understandable the explanation currently is, not the user's intelligence.
-- Reply mainly in the user's language.
-
-Examples of good behavior:
-User: "PEI 越多的话，氨基位点也会更多，然后……"
-=> developing, listen.
-
-User: "所以 PEI 越多，吸附量就一定越高。"
-If earlier context suggests pore blockage or diffusion limits were ignored:
-=> complete, hidden_assumption or boundary_case, intervene with a specific question such as:
-"如果 PEI 把孔道堵住了，吸附量还会一直升高吗？"
-
-User pauses after "第一点是传质阻力……"
-=> developing, listen.
-
+- At this stage, confidence means confidence that a second, stronger model should inspect the possible interruption.
+- If unsure, listen.
+- When listening, question="".
 Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   });
 
-  const shouldIntervene=
-    data.action==="intervene" &&
-    data.thoughtState==="complete" &&
-    Number(data.confidence)>=0.82 &&
-    String(data.question||"").trim();
+  const gateCandidate=
+    gate.action==="intervene" &&
+    gate.thoughtState==="complete" &&
+    gate.gapType!=="none" &&
+    Number(gate.confidence)>=0.68;
 
-  const question=shouldIntervene?String(data.question||"").trim():"";
+  let finalDecision={
+    ...gate,
+    action:"listen",
+    question:""
+  };
+  let deepChecked=false;
+
+  // Stage 2: only candidate interruptions go to the stronger model.
+  if(gateCandidate){
+    deepChecked=true;
+    finalDecision=await generateStructured({
+      name:"feynman_deep_judge",
+      model:deepModel,
+      schema:feynmanRealtimeSchema,
+      system:`You are the final judge for a live Feynman/Socratic conversation.
+A faster model thinks there may be a reason to interrupt. Your job is to independently verify that judgment using the full recent context.
+
+Be conservative: a thoughtful human mentor usually listens longer than an impatient chatbot.
+
+First decide whether the user has actually completed the current thought.
+Then determine whether there is a MATERIAL reasoning problem:
+- definition
+- causal_jump
+- hidden_assumption
+- contradiction
+- circular_reasoning
+- unsupported_claim
+- boundary_case
+
+Reject the interruption and return action="listen" if:
+- the user is obviously still developing the idea,
+- the missing detail could reasonably come next,
+- the issue is only wording or imprecision,
+- the proposed question is generic,
+- interrupting would break the user's train of thought.
+
+Approve action="intervene" only when:
+- thoughtState="complete",
+- the reasoning gap is important,
+- confidence >= 0.82,
+- and one short question would materially improve understanding.
+
+When intervening:
+- ask exactly ONE natural spoken question,
+- anchor it to the user's specific claim,
+- no praise, preamble, summary, or lecture,
+- usually under 30 Chinese characters or 20 English words.
+
+When listening, question="".
+Return schema-valid JSON only.`,
+      user:JSON.stringify({
+        topic:session.topic,
+        history,
+        currentExplanation:explanation,
+        fastModelAssessment:gate
+      })
+    });
+  }
+
+  const shouldIntervene=
+    finalDecision.action==="intervene" &&
+    finalDecision.thoughtState==="complete" &&
+    Number(finalDecision.confidence)>=0.82 &&
+    String(finalDecision.question||"").trim();
+
+  const question=shouldIntervene?String(finalDecision.question||"").trim():"";
   const action=shouldIntervene?"intervene":"listen";
   const aiContent=question || "（继续倾听）";
 
@@ -896,13 +937,22 @@ Return schema-valid JSON only.`,
     aiContent,
     JSON.stringify({
       action,
-      thoughtState:data.thoughtState,
-      gapType:data.gapType,
-      confidence:data.confidence,
-      anchor:data.anchor||"",
+      thoughtState:finalDecision.thoughtState,
+      gapType:finalDecision.gapType,
+      confidence:finalDecision.confidence,
+      anchor:finalDecision.anchor||"",
       followUpQuestion:question,
-      clarityScore:data.clarityScore,
-      realtime:true
+      clarityScore:finalDecision.clarityScore,
+      realtime:true,
+      fastModel,
+      deepModel:deepChecked?deepModel:null,
+      deepChecked,
+      gateAssessment:{
+        action:gate.action,
+        thoughtState:gate.thoughtState,
+        gapType:gate.gapType,
+        confidence:gate.confidence
+      }
     })
   ]);
 
@@ -910,20 +960,22 @@ Return schema-valid JSON only.`,
     UPDATE feynman_sessions
     SET topic=$3,status='active',clarity_score=$4,updated_at=NOW(),last_turn_at=NOW()
     WHERE id=$2 AND user_id=$1
-  `,[uid,sessionId,topic,data.clarityScore]);
+  `,[uid,sessionId,topic,finalDecision.clarityScore]);
 
   res.json({
     action,
-    thoughtState:data.thoughtState,
-    gapType:data.gapType,
-    confidence:data.confidence,
-    anchor:data.anchor||"",
+    thoughtState:finalDecision.thoughtState,
+    gapType:finalDecision.gapType,
+    confidence:finalDecision.confidence,
+    anchor:finalDecision.anchor||"",
     question,
-    clarityScore:data.clarityScore,
+    clarityScore:finalDecision.clarityScore,
     sessionId,
-    topic
+    topic,
+    deepChecked
   });
 }));
+
 
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
