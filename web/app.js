@@ -851,7 +851,7 @@ function scheduleAdaptiveQuestion(question){
 
   // Put the transformed question 2–4 questions later when possible.
   const gap=2+Math.floor(Math.random()*3);
-  const insertAt=Math.min(quizQuestions.length,quizIndex+gap);
+  const insertAt=Math.min(quizQuestions.length,quizIndex+gap+1);
   quizQuestions.splice(insertAt,0,question);
 }
 
@@ -933,10 +933,12 @@ function quizKnowledgeSummary(){
     const allCorrect=items.every(x=>x.verdict==="correct");
     const sureCorrect=items.some(x=>x.verdict==="correct"&&x.confidence==="sure");
     const trap=items.some(x=>x.metacognitiveTrap);
+    const latest=items[items.length-1];
+    const recovered=hasWrong && latest?.verdict==="correct";
 
-    const entry={cardId,name,trap,items};
-    if(hasWrong)weak.push(entry);
-    else if(hasPartial || !sureCorrect || !allCorrect)fuzzy.push(entry);
+    const entry={cardId,name,trap:trap&&!recovered,recovered,items};
+    if(latest?.verdict==="wrong")weak.push(entry);
+    else if(hasWrong || hasPartial || !sureCorrect || !allCorrect)fuzzy.push(entry);
     else stable.push(entry);
   }
 
@@ -947,7 +949,7 @@ function renderKnowledgeGroup(title,arr,emptyText){
   const rows=arr.slice(0,6).map(x=>
     '<div class="quiz-diagnosis-row">'+
       '<span>'+esc(x.name)+'</span>'+
-      (x.trap?'<span class="chip">高置信错题</span>':'')+
+      (x.trap?'<span class="chip">高置信错题</span>':x.recovered?'<span class="chip">已变式纠正</span>':'')+
     '</div>'
   ).join("");
   return '<div class="quiz-diagnosis-group"><b>'+title+'</b>'+
