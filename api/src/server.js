@@ -642,31 +642,34 @@ app.get("/walkman", requireAuth, asyncRoute(async(req,res)=>{
       FROM reviews
       WHERE user_id=$1
       ORDER BY card_id,reviewed_at DESC
+    ),
+    ranked AS (
+      SELECT
+        c.*,
+        lr.rating AS last_rating,
+        lr.verdict AS last_verdict,
+        lr.reviewed_at AS last_reviewed_at,
+        CASE
+          WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 1
+          WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 2
+          WHEN c.due<=NOW() THEN 3
+          ELSE 4
+        END AS listen_tier,
+        (
+          COALESCE((c.fsrs->>'difficulty')::float,0) * 10
+          + 100.0 / (1.0 + GREATEST(0,COALESCE((c.fsrs->>'stability')::float,0)))
+          + LEAST(60,GREATEST(0,EXTRACT(EPOCH FROM (NOW()-c.due))/86400))
+        ) AS instability_score
+      FROM cards c
+      LEFT JOIN latest_review lr ON lr.card_id=c.id
+      WHERE c.user_id=$1
     )
-    SELECT
-      c.*,
-      lr.rating AS last_rating,
-      lr.verdict AS last_verdict,
-      lr.reviewed_at AS last_reviewed_at,
-      CASE
-        WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 1
-        WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 2
-        WHEN c.due<=NOW() THEN 3
-        ELSE 4
-      END AS listen_tier,
-      (
-        COALESCE((c.fsrs->>'difficulty')::float,0) * 10
-        + 100.0 / (1.0 + GREATEST(0,COALESCE((c.fsrs->>'stability')::float,0)))
-        + LEAST(60,GREATEST(0,EXTRACT(EPOCH FROM (NOW()-c.due))/86400))
-      ) AS instability_score
-    FROM cards c
-    LEFT JOIN latest_review lr ON lr.card_id=c.id
-    WHERE c.user_id=$1
+    SELECT * FROM ranked
     ORDER BY
       listen_tier ASC,
-      CASE WHEN listen_tier IN (1,2) THEN lr.reviewed_at END DESC NULLS LAST,
+      CASE WHEN listen_tier IN (1,2) THEN last_reviewed_at END DESC NULLS LAST,
       instability_score DESC,
-      c.due ASC
+      due ASC
     LIMIT 500
   `,[uid]);
 
