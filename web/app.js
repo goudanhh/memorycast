@@ -197,11 +197,11 @@ function browserSpeakPart(part,cb){
   u.onerror=()=>cb&&cb();
   speechSynthesis.speak(u);
 }
-async function neuralSpeakMixed(parts,cb){
+async function neuralSpeakMixed(parts,cb,styleOverride=null){
   const payloadParts=parts.map(part=>({
     text:part.text,
     language:part.lang,
-    style:voiceStyleName(part.lang),
+    style:styleOverride||voiceStyleName(part.lang),
     rate:part.lang==="zh-CN"
       ? Number(settings.chinese_rate||1.0)
       : Number(settings.english_rate||1.0)
@@ -244,12 +244,12 @@ async function neuralSpeakMixed(parts,cb){
     fallback();
   }
 }
-function speakOne(text,cb){
+function speakOne(text,cb,styleOverride=null){
   if(!text){if(cb)cb();return}
   const parts=splitByLanguage(text);
   if(!parts.length){if(cb)cb();return}
   if(ttsInfoState.enabled){
-    neuralSpeakMixed(parts,cb);
+    neuralSpeakMixed(parts,cb,styleOverride);
     return;
   }
   let i=0;
@@ -615,7 +615,7 @@ function setupFeynmanRecognition(){
       feynmanPendingText=(feynmanPendingText+" "+finalText).trim();
       feynmanRecognitionBase=(feynmanRecognitionBase+" "+finalText).trim();
       feynmanInterimText="";
-      scheduleFeynmanRealtimeTurn(1250);
+      scheduleFeynmanRealtimeTurn(700);
     }else{
       feynmanInterimText=interim.trim();
     }
@@ -624,7 +624,7 @@ function setupFeynmanRecognition(){
   };
 
   recognition.onspeechend=()=>{
-    if(feynmanRealtimeActive&&!feynmanAiSpeaking)scheduleFeynmanRealtimeTurn(900);
+    if(feynmanRealtimeActive&&!feynmanAiSpeaking)scheduleFeynmanRealtimeTurn(550);
   };
 
   recognition.onerror=e=>{
@@ -715,46 +715,57 @@ async function processFeynmanRealtimeTurn(){
   setFeynmanRealtimeUi();
 
   try{
-    const d=await api("/feynman/respond",{method:"POST",body:JSON.stringify({
+    const d=await api("/feynman/realtime",{method:"POST",body:JSON.stringify({
       topic,explanation,sessionId:feynmanSessionId
     })});
 
     feynmanSessionId=d.sessionId||feynmanSessionId;
     feynmanHistory.push({role:"user",text:explanation});
-    const aiTurn=[d.studentReply,d.followUpQuestion].filter(Boolean).join(" ");
-    if(aiTurn)feynmanHistory.push({role:"ai",text:aiTurn});
     feynmanHistory=feynmanHistory.slice(-12);
-    feynmanLastQuestion=d.followUpQuestion||"";
+    feynmanLastQuestion=d.question||"";
 
     $("feynmanEmpty").classList.add("hidden");
     $("feynmanResult").classList.remove("hidden");
-    $("feynmanUnderstood").textContent=d.understood||d.studentReply||"";
-    $("feynmanStrengths").innerHTML=(d.strengths||[]).map(x=>'<div>✓ '+esc(x)+'</div>').join("")||'<div class="muted">这一段先继续听。</div>';
-    $("feynmanGaps").innerHTML=(d.gaps||[]).map(x=>'<div>→ '+esc(x)+'</div>').join("")||'<div class="muted">暂时没有值得打断的关键漏洞。</div>';
-    $("feynmanQuestion").textContent=d.followUpQuestion||"继续讲，我在听。";
+    $("feynmanUnderstood").textContent=d.action==="intervene"
+      ?"这里有一个值得停下来想清楚的点。"
+      :"这段逻辑可以继续展开。";
+    $("feynmanStrengths").innerHTML='<div class="muted">实时模式优先速度，不生成逐项点评。</div>';
+    $("feynmanGaps").innerHTML=d.action==="intervene"
+      ? '<div>→ '+esc(d.question||"")+'</div>'
+      : '<div class="muted">暂时没有值得打断的关键漏洞。</div>';
+    $("feynmanQuestion").textContent=d.question||"继续讲，我在听。";
     $("feynmanScore").textContent="清晰度 "+Number(d.clarityScore||0)+"%";
     $("feynmanStatus").textContent=d.action==="intervene"
-      ?"发现值得追问的逻辑点。"
-      :"逻辑还在正常展开，我先不打断。";
+      ?"我只问这一处。"
+      :"我先不打断。";
     renderFeynmanHistory();
 
-    await loadFeynmanSessions();
-    if($("feynmanSessionSelect")&&feynmanSessionId)$("feynmanSessionSelect").value=feynmanSessionId;
-
     feynmanProcessing=false;
-    if(d.action==="intervene"&&d.followUpQuestion){
+    if(d.action==="intervene"&&d.question){
+      feynmanHistory.push({role:"ai",text:d.question});
+      feynmanHistory=feynmanHistory.slice(-12);
+      renderFeynmanHistory();
       feynmanAiSpeaking=true;
       $("feynmanMicStatus").textContent="我想追问一句；你可以直接开口打断我。";
       setFeynmanRealtimeUi();
-      speakOne(d.followUpQuestion,()=>{
+
+      // Speak first. Refreshing the session selector must never delay the voice.
+      loadFeynmanSessions().then(()=>{
+        if($("feynmanSessionSelect")&&feynmanSessionId)$("feynmanSessionSelect").value=feynmanSessionId;
+      }).catch(()=>{});
+
+      speakOne(d.question,()=>{
         feynmanAiSpeaking=false;
         if(feynmanRealtimeActive){
           $("feynmanMicStatus").textContent="我说完了，继续讲吧。";
           setFeynmanRealtimeUi();
           startFeynmanRecognition();
         }
-      });
+      },"conversation");
     }else{
+      loadFeynmanSessions().then(()=>{
+        if($("feynmanSessionSelect")&&feynmanSessionId)$("feynmanSessionSelect").value=feynmanSessionId;
+      }).catch(()=>{});
       $("feynmanMicStatus").textContent="继续讲，我在听。";
       setFeynmanRealtimeUi();
     }
