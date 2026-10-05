@@ -14,8 +14,9 @@
     <div class="logo big">MemoryCast</div>
     <h1>MemoryCast 正在连接服务器…</h1>
     <p>单用户模式 · 无需登录 · PostgreSQL 云端同步</p>
-    <div class="muted">加载完成后会自动进入。</div>
+    <div class="muted" id="connectStatus">加载完成后会自动进入。</div>
     <div class="muted" id="aiStatusLogin"></div>
+    <button id="retryConnectBtn" class="btn dark hidden" type="button" style="margin-top:16px">重新连接</button>
   </div>
 </div>
 
@@ -389,7 +390,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=fixed-nav-notes-first-25"></script>
+<script type="module" src="/app.js?v=connection-recovery-26"></script>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
 </html>
