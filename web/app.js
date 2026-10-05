@@ -2299,6 +2299,14 @@ async function toggleWalkmanPlayback(){
 }
 async function enterWalkmanMode(){
   stopAllTts();
+
+  const watch=isAppleWatchLike();
+
+  // The "随身听" tap itself is the user gesture on Apple Watch.
+  // Prime the shared audio element immediately, before any await/fetch,
+  // so playback can continue automatically once TTS is ready.
+  if(watch)primeAppleWatchAudio();
+
   walkmanPlaying=false;
   walkmanIndex=0;
   walkmanChunkIndex=0;
@@ -2307,6 +2315,7 @@ async function enterWalkmanMode(){
   walkmanResumePending=false;
   walkmanPaused=false;
   walkmanRate=Number($("walkmanRate")?.value||1);
+
   try{
     await loadWalkmanQueue();
   }catch(e){
@@ -2316,7 +2325,13 @@ async function enterWalkmanMode(){
 
   document.body.classList.add("walkman");
   $("walkmanMode").classList.remove("hidden");
-  $("walkmanPlayBtn").textContent="▶";
+
+  const playBtn=$("walkmanPlayBtn");
+  if(playBtn){
+    playBtn.classList.toggle("hidden",watch);
+    playBtn.textContent=watch?"⏸":"▶";
+  }
+
   const initialLines=walkmanQueue.length?walkmanSegments(walkmanQueue[0]):[];
   renderWalkmanLyrics(initialLines.length?initialLines:["暂无可播放内容"],0);
 
@@ -2324,6 +2339,14 @@ async function enterWalkmanMode(){
   if(walkmanQueue[0]){
     const groups=walkmanChunkGroups(walkmanSegments(walkmanQueue[0]));
     if(groups[0])prefetchWalkmanChunk(walkmanQueue[0],0,groups[0]);
+  }
+
+  // Apple Watch starts immediately after entering Walkman mode.
+  // Other devices retain the existing manual play button behavior.
+  if(watch && walkmanQueue.length){
+    walkmanPlaying=true;
+    walkmanPaused=false;
+    playWalkmanCurrent();
   }
 
   // Browser Back exits the minimalist mode without needing another visible button.
@@ -2334,6 +2357,8 @@ function exitWalkmanMode(){
   stopWalkman();
   document.body.classList.remove("walkman");
   $("walkmanMode").classList.add("hidden");
+  const playBtn=$("walkmanPlayBtn");
+  if(playBtn)playBtn.classList.remove("hidden");
 }
 
 function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
