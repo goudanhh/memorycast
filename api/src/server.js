@@ -3,6 +3,7 @@ import helmet from "helmet";
 import compression from "compression";
 import webpush from "web-push";
 import crypto from "node:crypto";
+import pdfParse from "pdf-parse";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
 import { hasAI, generateStructured, aiInfo, extractTextFromImage } from "./ai.js";
@@ -13,7 +14,7 @@ const PORT = Number(process.env.PORT || 3000);
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
-app.use(express.json({ limit: "4mb" }));
+app.use(express.json({ limit: "24mb" }));
 let localUserIdCache = null;
 
 async function getLocalUserId() {
@@ -201,6 +202,22 @@ await query(`
   )
 `);
 await query(`CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id,created_at DESC)`);
+await query(`
+  CREATE TABLE IF NOT EXISTS note_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    original_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL DEFAULT 0,
+    data BYTEA NOT NULL,
+    extracted_text TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+await query(`CREATE INDEX IF NOT EXISTS idx_note_attachments_note ON note_attachments(note_id,sort_order,created_at)`);
+
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID`);
 await query(`ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_source_note_id_fkey`);
 await query(`
@@ -326,6 +343,18 @@ app.post("/push/unsubscribe", requireAuth, asyncRoute(async(req,res)=>{
   res.json({ok:true});
 }));
 
+function normalizeAttachmentRow(r){
+  return {
+    id:r.id,
+    noteId:r.note_id,
+    name:r.original_name,
+    mimeType:r.mime_type,
+    byteSize:Number(r.byte_size||0),
+    extractedText:r.extracted_text||"",
+    sortOrder:Number(r.sort_order||0),
+    url:"/api/attachments/"+r.id
+  };
+}
 function normalizeNoteRow(r){
   return {
     id:r.id,title:r.title,content:r.content,tags:r.tags||[],
@@ -343,9 +372,16 @@ app.get("/notes", requireAuth, asyncRoute(async(req,res)=>{
   res.json({notes:rows.map(normalizeNoteRow)});
 }));
 app.get("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
-  const {rows}=await query(`SELECT * FROM notes WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
+  const uid=userId(req);
+  const {rows}=await query(`SELECT * FROM notes WHERE id=$2 AND user_id=$1`,[uid,req.params.id]);
   if(!rows[0]) return res.status(404).json({error:"Note not found"});
-  res.json({note:normalizeNoteRow(rows[0])});
+  const attachments=await query(`
+    SELECT id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,created_at
+    FROM note_attachments
+    WHERE note_id=$2 AND user_id=$1
+    ORDER BY sort_order ASC,created_at ASC
+  `,[uid,req.params.id]);
+  res.json({note:{...normalizeNoteRow(rows[0]),attachments:attachments.rows.map(normalizeAttachmentRow)}});
 }));
 async function syncCardsFromEditedNote(uid,noteRow){
   const linked=await query(`
@@ -478,6 +514,29 @@ app.delete("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
   const result=await query(`DELETE FROM notes WHERE id=$2 AND user_id=$1`,[uid,noteId]);
   res.json({ok:result.rowCount>0,deletedCards:result.rowCount>0?(count.rows[0]?.n||0):0});
 }));
+app.get("/attachments/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`
+    SELECT * FROM note_attachments WHERE id=$2 AND user_id=$1
+  `,[userId(req),req.params.id]);
+  const a=rows[0];
+  if(!a) return res.status(404).json({error:"Attachment not found"});
+  res.setHeader("Content-Type",a.mime_type);
+  res.setHeader("Content-Length",String(a.byte_size||a.data.length||0));
+  res.setHeader("Content-Disposition",`inline; filename*=UTF-8''${encodeURIComponent(a.original_name)}`);
+  res.setHeader("Cache-Control","private, max-age=86400");
+  res.send(a.data);
+}));
+
+app.get("/notes/:id/attachments", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`
+    SELECT id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,created_at
+    FROM note_attachments
+    WHERE note_id=$2 AND user_id=$1
+    ORDER BY sort_order ASC,created_at ASC
+  `,[userId(req),req.params.id]);
+  res.json({attachments:rows.map(normalizeAttachmentRow)});
+}));
+
 app.post("/notes/:id/review", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`
     UPDATE notes SET manual_review_count=manual_review_count+1,last_reviewed_at=NOW(),updated_at=NOW()
@@ -773,6 +832,92 @@ app.post("/ai/ocr", requireAuth, asyncRoute(async(req,res)=>{
   res.json({text:result.text,note,model:result.model,provider:result.provider});
 }));
 
+app.post("/ai/import-media", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const files=Array.isArray(req.body?.files)?req.body.files.slice(0,12):[];
+  if(!files.length) return res.status(400).json({error:"请选择图片或 PDF。"});
+
+  let noteId=String(req.body?.noteId||"").trim();
+  let existingNote=null;
+  if(noteId){
+    const n=await query(`SELECT * FROM notes WHERE id=$2 AND user_id=$1`,[uid,noteId]);
+    existingNote=n.rows[0]||null;
+    if(!existingNote)noteId="";
+  }
+
+  const extracted=[];
+  const prepared=[];
+  const ocrProvider=await featureProvider(uid,"ocr_provider","gemini");
+
+  for(let i=0;i<files.length;i++){
+    const f=files[i]||{};
+    const mime=String(f.mimeType||"").split(";")[0].toLowerCase();
+    const name=String(f.name||("附件-"+(i+1))).slice(0,180);
+    const data=decodeBase64Payload(f.dataBase64);
+
+    if(!data.length)continue;
+    if(data.length>15_000_000) throw Object.assign(new Error(name+" 超过 15MB，请压缩后上传。"),{statusCode:413});
+
+    let text="";
+    if(["image/jpeg","image/png","image/webp"].includes(mime)){
+      const result=await extractTextFromImage({
+        base64:data.toString("base64"),
+        mimeType:mime,
+        provider:ocrProvider
+      });
+      text=String(result.text||"").trim();
+    }else if(mime==="application/pdf"){
+      const parsed=await pdfParse(data);
+      text=String(parsed?.text||"").replace(/\u0000/g,"").trim();
+      if(!text) text="[此 PDF 未提取到文字，可能是扫描版 PDF；原文件已保留。]";
+    }else{
+      throw Object.assign(new Error("暂不支持文件类型："+mime),{statusCode:400});
+    }
+
+    extracted.push(text);
+    prepared.push({name,mime,data,text,sortOrder:i});
+  }
+
+  if(!prepared.length) return res.status(400).json({error:"没有有效附件。"});
+
+  const joined=extracted.filter(Boolean).join("\n\n---\n\n");
+  let noteRow;
+  if(existingNote){
+    const nextContent=[String(existingNote.content||"").trim(),joined].filter(Boolean).join("\n\n");
+    const updated=await query(`
+      UPDATE notes SET content=$3,updated_at=NOW()
+      WHERE id=$2 AND user_id=$1 RETURNING *
+    `,[uid,existingNote.id,nextContent]);
+    noteRow=updated.rows[0];
+  }else{
+    const titleSource=joined && !joined.startsWith("[此 PDF") ? joined : prepared[0].name;
+    const created=await query(`
+      INSERT INTO notes(user_id,title,content,tags)
+      VALUES($1,$2,$3,$4) RETURNING *
+    `,[uid,noteTitle(titleSource),joined,normalizeTags(["多模态笔记"])]);
+    noteRow=created.rows[0];
+    noteId=noteRow.id;
+  }
+
+  const saved=[];
+  for(const f of prepared){
+    const {rows}=await query(`
+      INSERT INTO note_attachments(
+        user_id,note_id,original_name,mime_type,byte_size,data,extracted_text,sort_order
+      )
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING id,note_id,original_name,mime_type,byte_size,extracted_text,sort_order,created_at
+    `,[uid,noteRow.id,f.name,f.mime,f.data.length,f.data,f.text,f.sortOrder]);
+    saved.push(normalizeAttachmentRow(rows[0]));
+  }
+
+  res.json({
+    note:{...normalizeNoteRow(noteRow),attachments:saved},
+    text:joined,
+    attachments:saved
+  });
+}));
+
 const organizeSchema={
   type:"object",
   properties:{cards:{type:"array",minItems:1,maxItems:30,items:{
@@ -972,13 +1117,32 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     }
   }
 
-  const source=selectedRows.map(r=>({
-    id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,tags:r.tags||[],
-    difficulty:Number(r.fsrs?.difficulty||0),due:r.due,
-    weaknessScore:Number(r.weakness_score||0),
-    lastRating:r.last_rating||null,lastVerdict:r.last_verdict||null,
-    wrongCount:Number(r.wrong_count||0),hardCount:Number(r.hard_count||0)
-  }));
+  const source=[];
+  for(const r of selectedRows){
+    let attachmentContext=[];
+    if(r.source_note_id){
+      const ar=await query(`
+        SELECT original_name,mime_type,extracted_text
+        FROM note_attachments
+        WHERE user_id=$1 AND note_id=$2
+        ORDER BY sort_order ASC,created_at ASC
+        LIMIT 12
+      `,[uid,r.source_note_id]);
+      attachmentContext=ar.rows.map(a=>({
+        name:a.original_name,
+        mimeType:a.mime_type,
+        extractedText:String(a.extracted_text||"").slice(0,5000)
+      }));
+    }
+    source.push({
+      id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,tags:r.tags||[],
+      difficulty:Number(r.fsrs?.difficulty||0),due:r.due,
+      weaknessScore:Number(r.weakness_score||0),
+      lastRating:r.last_rating||null,lastVerdict:r.last_verdict||null,
+      wrongCount:Number(r.wrong_count||0),hardCount:Number(r.hard_count||0),
+      attachments:attachmentContext
+    });
+  }
 
   const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const data=await generateStructured({
