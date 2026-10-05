@@ -1835,6 +1835,15 @@ function walkmanChunkGroups(lines=[]){
   return groups;
 }
 
+function walkmanAudioFormat(){
+  const ua=String(navigator.userAgent||"");
+  const watchUa=/Apple Watch|WatchOS|watchOS/i.test(ua);
+  const tinyScreen=window.matchMedia
+    ? window.matchMedia("(max-width:260px), (max-height:330px) and (max-width:340px)").matches
+    : Math.min(screen.width||999,screen.height||999)<=260;
+  return watchUa||tinyScreen?"mp3":"aac";
+}
+
 function walkmanChunkKey(card,chunkIndex,lines){
   return [
     card?.id||"",
@@ -1844,6 +1853,7 @@ function walkmanChunkKey(card,chunkIndex,lines){
     Number(settings.chinese_rate||1),
     localStorage.getItem("memorycast_en_voice_style")||"smart",
     localStorage.getItem("memorycast_zh_voice_style")||"smart",
+    walkmanAudioFormat(),
     lines.join("\n")
   ].join("|");
 }
@@ -1878,7 +1888,7 @@ async function requestWalkmanChunk(card,chunkIndex,lines){
   const res=await fetch("/api/tts/timed",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({lines:payloadLines})
+    body:JSON.stringify({lines:payloadLines,format:walkmanAudioFormat()})
   });
   if(!res.ok)throw new Error("Timed Walkman TTS HTTP "+res.status);
 
