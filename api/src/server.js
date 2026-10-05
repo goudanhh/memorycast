@@ -633,6 +633,55 @@ app.get("/due", requireAuth, asyncRoute(async(req,res)=>{
   res.json({cards:rows.map(normalizeCardRow)});
 }));
 
+app.get("/walkman", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const {rows}=await query(`
+    WITH latest_review AS (
+      SELECT DISTINCT ON (card_id)
+        card_id,rating,verdict,reviewed_at
+      FROM reviews
+      WHERE user_id=$1
+      ORDER BY card_id,reviewed_at DESC
+    )
+    SELECT
+      c.*,
+      lr.rating AS last_rating,
+      lr.verdict AS last_verdict,
+      lr.reviewed_at AS last_reviewed_at,
+      CASE
+        WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 1
+        WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 2
+        WHEN c.due<=NOW() THEN 3
+        ELSE 4
+      END AS listen_tier,
+      (
+        COALESCE((c.fsrs->>'difficulty')::float,0) * 10
+        + 100.0 / (1.0 + GREATEST(0,COALESCE((c.fsrs->>'stability')::float,0)))
+        + LEAST(60,GREATEST(0,EXTRACT(EPOCH FROM (NOW()-c.due))/86400))
+      ) AS instability_score
+    FROM cards c
+    LEFT JOIN latest_review lr ON lr.card_id=c.id
+    WHERE c.user_id=$1
+    ORDER BY
+      listen_tier ASC,
+      CASE WHEN listen_tier IN (1,2) THEN lr.reviewed_at END DESC NULLS LAST,
+      instability_score DESC,
+      c.due ASC
+    LIMIT 500
+  `,[uid]);
+
+  res.json({
+    cards:rows.map(r=>({
+      ...normalizeCardRow(r),
+      lastRating:r.last_rating||null,
+      lastVerdict:r.last_verdict||null,
+      lastReviewedAt:r.last_reviewed_at||null,
+      listenTier:Number(r.listen_tier||4),
+      instabilityScore:Number(r.instability_score||0)
+    }))
+  });
+}));
+
 async function applyReview(uid, cardId, rating, source="review", verdict=null){
   const {rows}=await query(`SELECT * FROM cards WHERE id=$2 AND user_id=$1`,[uid,cardId]);
   const row=rows[0];
