@@ -394,20 +394,24 @@ function buildTimedSsml(lines){
   const allParts=cleanLines.flatMap(line=>line.parts);
   if(!allParts.length)return {ssml:"",lineCount:0,voice:""};
 
-  const enVoice=process.env.AZURE_EN_MULTILINGUAL_VOICE
-    ||process.env.AZURE_MULTILINGUAL_VOICE
-    ||"en-US-AvaMultilingualNeural";
-  const zhVoice=process.env.AZURE_ZH_MULTILINGUAL_VOICE
-    ||"zh-CN-YunxiaoMultilingualNeural";
+  // Walkman uses native voices for each language so Chinese does not inherit
+  // English/multilingual prosody after short code-switches.
+  const enVoice=process.env.AZURE_EN_NATIVE_VOICE
+    ||process.env.AZURE_EN_VOICE
+    ||"en-US-AvaNeural";
+  const zhVoice=process.env.AZURE_ZH_NATIVE_VOICE
+    ||process.env.AZURE_ZH_VOICE
+    ||"zh-CN-XiaoxiaoNeural";
 
   const body=cleanLines.map((line,lineIndex)=>{
-    const xml=line.parts.map(p=>{
+    const xml=line.parts.map((p,partIndex)=>{
       const voice=p.language==="zh-CN"?zhVoice:enVoice;
-      return `<voice name="${voice}"><prosody rate="${ratePercent(p.rate,1)}"><lang xml:lang="${p.language}">${clearIsolatedFragment(p.text,p.language)}</lang></prosody></voice>`;
+      const switchGuard=partIndex>0?'<break time="30ms"/>':"";
+      return `${switchGuard}<voice name="${voice}"><prosody rate="${ratePercent(p.rate,1)}"><lang xml:lang="${p.language}">${clearIsolatedFragment(p.text,p.language)}</lang></prosody></voice>`;
     }).join("");
 
     return `<bookmark mark="line-${lineIndex}"/>${xml}`;
-  }).join('<break time="25ms"/>');
+  }).join('<break time="20ms"/>');
 
   return {
     lineCount:cleanLines.length,
@@ -525,7 +529,7 @@ export async function synthesizeTimedTts(lines){
     }))
   }));
   const cacheKey=crypto.createHash("sha256")
-    .update("timed-dual-voice-v3|"+JSON.stringify(keyPayload))
+    .update("timed-native-dual-voice-v4|"+JSON.stringify(keyPayload))
     .digest("hex");
   const audioFile=path.join(CACHE_DIR,`${cacheKey}.mp3`);
   const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
