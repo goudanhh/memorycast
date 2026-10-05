@@ -3,6 +3,7 @@ let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,feynmanSessions=[];
+let feynmanRealtimeActive=false,feynmanProcessing=false,feynmanAiSpeaking=false,feynmanSilenceTimer=null,feynmanPendingText="",feynmanInterimText="";
 
 async function api(path,opts={}){
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
@@ -513,36 +514,89 @@ function renderFeynmanHistory(){
       '<div class="feynman-turn '+(x.role==="user"?"user":"ai")+'"><b>'+(x.role==="user"?"你":"AI 学生")+'</b><div>'+esc(x.text)+'</div></div>'
     ).join("");
 }
+function setFeynmanRealtimeUi(){
+  if(!$("submitFeynmanBtn"))return;
+  $("submitFeynmanBtn").textContent=feynmanRealtimeActive?"停止实时对话":"开始实时对话";
+  $("feynmanMicTitle").textContent=feynmanRealtimeActive
+    ? (feynmanAiSpeaking?"AI 正在说话…":feynmanProcessing?"AI 正在思考…":"正在实时倾听…")
+    : "点击开始实时对话";
+  if(feynmanRealtimeActive){
+    $("feynmanMicBtn").classList.add("listening");
+  }else{
+    $("feynmanMicBtn").classList.remove("listening");
+  }
+}
+
+function clearFeynmanSilenceTimer(){
+  if(feynmanSilenceTimer){
+    clearTimeout(feynmanSilenceTimer);
+    feynmanSilenceTimer=null;
+  }
+}
+
+function scheduleFeynmanRealtimeTurn(delay=1300){
+  clearFeynmanSilenceTimer();
+  if(!feynmanRealtimeActive||feynmanProcessing||feynmanAiSpeaking)return;
+  if(!feynmanPendingText.trim())return;
+  feynmanSilenceTimer=setTimeout(()=>processFeynmanRealtimeTurn(),delay);
+}
+
 function resetFeynman(){
-  if(feynmanRecognition&&feynmanListening)feynmanRecognition.stop();
+  feynmanRealtimeActive=false;
+  feynmanProcessing=false;
+  feynmanAiSpeaking=false;
+  clearFeynmanSilenceTimer();
+  stopAllTts();
+  if(feynmanRecognition&&feynmanListening){
+    try{feynmanRecognition.stop()}catch{}
+  }
   feynmanSessionId=null;
   if($("feynmanSessionSelect"))$("feynmanSessionSelect").value="";
   feynmanHistory=[];feynmanLastQuestion="";
+  feynmanRecognitionBase="";
+  feynmanPendingText="";
+  feynmanInterimText="";
   $("feynmanInput").value="";
   $("feynmanEmpty").classList.remove("hidden");
   $("feynmanResult").classList.add("hidden");
   $("feynmanScore").textContent="等待讲解";
-  $("feynmanMicTitle").textContent="点击开始讲";
-  $("feynmanMicStatus").textContent="支持 Edge / Chrome 语音转文字；也可以直接打字。";
+  $("feynmanMicStatus").textContent="开始后会持续监听；自然停顿时自动判断是否需要追问。";
+  setFeynmanRealtimeUi();
   renderFeynmanHistory();
 }
+
 function setupFeynmanRecognition(){
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!Recognition){
     $("feynmanMicBtn").disabled=true;
-    $("feynmanMicStatus").textContent="当前浏览器不支持语音识别，请直接输入文字。";
+    $("submitFeynmanBtn").disabled=true;
+    $("feynmanMicStatus").textContent="当前浏览器不支持实时语音识别，请使用最新版 Edge / Chrome。";
     return;
   }
   const recognition=new Recognition();
   recognition.continuous=true;
   recognition.interimResults=true;
   recognition.lang="zh-CN";
+
   recognition.onstart=()=>{
     feynmanListening=true;
-    $("feynmanMicBtn").classList.add("listening");
-    $("feynmanMicTitle").textContent="正在听你讲…";
-    $("feynmanMicStatus").textContent="可以自然说，中间停顿没关系。再次点击麦克风结束。";
+    if(feynmanRealtimeActive&&!feynmanAiSpeaking){
+      $("feynmanMicStatus").textContent="正在听。自然讲就行，停顿后我会判断是否需要插话。";
+    }
+    setFeynmanRealtimeUi();
   };
+
+  recognition.onspeechstart=()=>{
+    if(!feynmanRealtimeActive)return;
+    clearFeynmanSilenceTimer();
+    if(feynmanAiSpeaking){
+      stopAllTts();
+      feynmanAiSpeaking=false;
+      $("feynmanMicStatus").textContent="你打断了 AI，我继续听你说。";
+      setFeynmanRealtimeUi();
+    }
+  };
+
   recognition.onresult=e=>{
     let finalText="",interim="";
     for(let i=e.resultIndex;i<e.results.length;i++){
@@ -550,41 +604,116 @@ function setupFeynmanRecognition(){
       if(e.results[i].isFinal)finalText+=text;
       else interim+=text;
     }
-    if(finalText)feynmanRecognitionBase=(feynmanRecognitionBase+" "+finalText).trim();
-    $("feynmanInput").value=(feynmanRecognitionBase+(interim?" "+interim:"")).trim();
+
+    if(feynmanAiSpeaking&&(finalText.trim()||interim.trim())){
+      stopAllTts();
+      feynmanAiSpeaking=false;
+      setFeynmanRealtimeUi();
+    }
+
+    if(finalText.trim()){
+      feynmanPendingText=(feynmanPendingText+" "+finalText).trim();
+      feynmanRecognitionBase=(feynmanRecognitionBase+" "+finalText).trim();
+      feynmanInterimText="";
+      scheduleFeynmanRealtimeTurn(1250);
+    }else{
+      feynmanInterimText=interim.trim();
+    }
+
+    $("feynmanInput").value=(feynmanRecognitionBase+(feynmanInterimText?" "+feynmanInterimText:"")).trim();
   };
+
+  recognition.onspeechend=()=>{
+    if(feynmanRealtimeActive&&!feynmanAiSpeaking)scheduleFeynmanRealtimeTurn(900);
+  };
+
   recognition.onerror=e=>{
-    $("feynmanMicStatus").textContent=e.error==="not-allowed"
-      ?"没有麦克风权限。请允许浏览器使用麦克风，或直接输入文字。"
-      :"语音识别暂时中断，可以再次点击麦克风继续。";
-  };
-  recognition.onend=()=>{
-    feynmanListening=false;
-    $("feynmanMicBtn").classList.remove("listening");
-    $("feynmanMicTitle").textContent="点击继续讲";
-    if(!$("feynmanMicStatus").textContent.includes("权限")){
-      $("feynmanMicStatus").textContent="语音已转成文字；可以修改后提交给 AI 学生。";
+    if(e.error==="not-allowed"){
+      feynmanRealtimeActive=false;
+      $("feynmanMicStatus").textContent="没有麦克风权限。请允许此 HTTPS 网站使用麦克风。";
+      setFeynmanRealtimeUi();
+      return;
+    }
+    if(e.error!=="no-speech"&&e.error!=="aborted"){
+      $("feynmanMicStatus").textContent="语音识别暂时中断，正在尝试恢复…";
     }
   };
+
+  recognition.onend=()=>{
+    feynmanListening=false;
+    if(feynmanRealtimeActive){
+      setTimeout(()=>{
+        if(feynmanRealtimeActive&&!feynmanListening){
+          try{recognition.start()}catch{}
+        }
+      },250);
+    }else{
+      setFeynmanRealtimeUi();
+    }
+  };
+
   feynmanRecognition=recognition;
 }
-function toggleFeynmanMic(){
+
+function startFeynmanRecognition(){
   if(!feynmanRecognition)setupFeynmanRecognition();
-  if(!feynmanRecognition)return;
-  if(feynmanListening){feynmanRecognition.stop();return}
-  feynmanRecognitionBase=$("feynmanInput").value.trim();
+  if(!feynmanRecognition||feynmanListening)return;
   try{feynmanRecognition.start()}catch{}
 }
-async function submitFeynman(){
-  const topic=$("feynmanTopic").value.trim();
-  const explanation=$("feynmanInput").value.trim();
-  if(!topic)return alert("先填写一个要讲解的主题。");
-  if(!explanation)return alert("先讲一段你的理解，再让 AI 学生追问。");
-  if(!aiEnabled)return alert("AI 尚未配置。");
-  if(feynmanListening&&feynmanRecognition)feynmanRecognition.stop();
 
-  const btn=$("submitFeynmanBtn");
-  btn.disabled=true;btn.textContent="AI 学生正在思考…";
+function stopFeynmanRealtime(){
+  feynmanRealtimeActive=false;
+  feynmanProcessing=false;
+  feynmanAiSpeaking=false;
+  clearFeynmanSilenceTimer();
+  stopAllTts();
+  if(feynmanRecognition&&feynmanListening){
+    try{feynmanRecognition.stop()}catch{}
+  }
+  $("feynmanMicStatus").textContent="实时对话已停止。再次点击即可继续。";
+  setFeynmanRealtimeUi();
+}
+
+function startFeynmanRealtime(){
+  const topic=$("feynmanTopic").value.trim();
+  if(!topic){
+    alert("先填写一个要讲解的主题。");
+    $("feynmanTopic").focus();
+    return;
+  }
+  if(!aiEnabled){
+    alert("AI 尚未配置。");
+    return;
+  }
+  feynmanRealtimeActive=true;
+  feynmanRecognitionBase="";
+  feynmanPendingText="";
+  feynmanInterimText="";
+  $("feynmanInput").value="";
+  $("feynmanMicStatus").textContent="正在启动实时监听…";
+  setFeynmanRealtimeUi();
+  startFeynmanRecognition();
+}
+
+function toggleFeynmanRealtime(){
+  if(feynmanRealtimeActive)stopFeynmanRealtime();
+  else startFeynmanRealtime();
+}
+
+async function processFeynmanRealtimeTurn(){
+  if(!feynmanRealtimeActive||feynmanProcessing||feynmanAiSpeaking)return;
+  const topic=$("feynmanTopic").value.trim();
+  const explanation=feynmanPendingText.trim();
+  if(!topic||!explanation)return;
+
+  feynmanPendingText="";
+  feynmanRecognitionBase="";
+  feynmanInterimText="";
+  $("feynmanInput").value="";
+  feynmanProcessing=true;
+  $("feynmanMicStatus").textContent="我听到了，正在判断要不要插话…";
+  setFeynmanRealtimeUi();
+
   try{
     const d=await api("/feynman/respond",{method:"POST",body:JSON.stringify({
       topic,explanation,sessionId:feynmanSessionId
@@ -593,35 +722,48 @@ async function submitFeynman(){
     feynmanSessionId=d.sessionId||feynmanSessionId;
     feynmanHistory.push({role:"user",text:explanation});
     const aiTurn=[d.studentReply,d.followUpQuestion].filter(Boolean).join(" ");
-    feynmanHistory.push({role:"ai",text:aiTurn});
+    if(aiTurn)feynmanHistory.push({role:"ai",text:aiTurn});
     feynmanHistory=feynmanHistory.slice(-12);
     feynmanLastQuestion=d.followUpQuestion||"";
 
     $("feynmanEmpty").classList.add("hidden");
     $("feynmanResult").classList.remove("hidden");
     $("feynmanUnderstood").textContent=d.understood||d.studentReply||"";
-    $("feynmanStrengths").innerHTML=(d.strengths||[]).map(x=>'<div>✓ '+esc(x)+'</div>').join("")||'<div class="muted">这一轮暂时没有明确优势项。</div>';
-    $("feynmanGaps").innerHTML=(d.gaps||[]).map(x=>'<div>→ '+esc(x)+'</div>').join("")||'<div class="muted">核心逻辑暂时没有明显缺口。</div>';
-    $("feynmanQuestion").textContent=d.followUpQuestion||"";
+    $("feynmanStrengths").innerHTML=(d.strengths||[]).map(x=>'<div>✓ '+esc(x)+'</div>').join("")||'<div class="muted">这一段先继续听。</div>';
+    $("feynmanGaps").innerHTML=(d.gaps||[]).map(x=>'<div>→ '+esc(x)+'</div>').join("")||'<div class="muted">暂时没有值得打断的关键漏洞。</div>';
+    $("feynmanQuestion").textContent=d.followUpQuestion||"继续讲，我在听。";
     $("feynmanScore").textContent="清晰度 "+Number(d.clarityScore||0)+"%";
-    $("feynmanStatus").textContent=d.status==="mastered"
-      ?"已经基本讲通。可以用一个例子或类比做最后检验。"
-      :"继续回答这个问题，不需要重新从头讲。";
+    $("feynmanStatus").textContent=d.action==="intervene"
+      ?"发现值得追问的逻辑点。"
+      :"逻辑还在正常展开，我先不打断。";
     renderFeynmanHistory();
-
-    $("feynmanInput").value="";
-    feynmanRecognitionBase="";
-    $("feynmanInput").placeholder=d.followUpQuestion
-      ? "直接回答 AI 学生的追问："+d.followUpQuestion
-      : "继续补充你的解释……";
 
     await loadFeynmanSessions();
     if($("feynmanSessionSelect")&&feynmanSessionId)$("feynmanSessionSelect").value=feynmanSessionId;
-    if(d.followUpQuestion)speakOne(d.followUpQuestion);
+
+    feynmanProcessing=false;
+    if(d.action==="intervene"&&d.followUpQuestion){
+      feynmanAiSpeaking=true;
+      $("feynmanMicStatus").textContent="我想追问一句；你可以直接开口打断我。";
+      setFeynmanRealtimeUi();
+      speakOne(d.followUpQuestion,()=>{
+        feynmanAiSpeaking=false;
+        if(feynmanRealtimeActive){
+          $("feynmanMicStatus").textContent="我说完了，继续讲吧。";
+          setFeynmanRealtimeUi();
+          startFeynmanRecognition();
+        }
+      });
+    }else{
+      $("feynmanMicStatus").textContent="继续讲，我在听。";
+      setFeynmanRealtimeUi();
+    }
   }catch(e){
-    alert(e.message);
-  }finally{
-    btn.disabled=false;btn.textContent="让 AI 学生听一听";
+    feynmanProcessing=false;
+    feynmanPendingText=(explanation+" "+feynmanPendingText).trim();
+    $("feynmanMicStatus").textContent="刚才判断失败，已保留你的内容。继续讲或稍后重试。";
+    setFeynmanRealtimeUi();
+    console.error(e);
   }
 }
 
@@ -738,5 +880,5 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("feynmanSessionSelect").onchange=()=>openFeynmanSession($("feynmanSessionSelect").value);$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("feynmanMicBtn").onclick=toggleFeynmanRealtime;$("submitFeynmanBtn").onclick=toggleFeynmanRealtime;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase="";feynmanPendingText="";feynmanInterimText=""};$("resetFeynmanBtn").onclick=resetFeynman;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("feynmanSessionSelect").onchange=()=>openFeynmanSession($("feynmanSessionSelect").value);$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
