@@ -5,7 +5,7 @@ import webpush from "web-push";
 import crypto from "node:crypto";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
-import { hasAI, generateStructured, aiInfo } from "./ai.js";
+import { hasAI, generateStructured, aiInfo, extractTextFromImage } from "./ai.js";
 import { synthesizeTts, synthesizeMixedTts, ttsInfo } from "./tts.js";
 
 const app = express();
@@ -13,7 +13,7 @@ const PORT = Number(process.env.PORT || 3000);
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "4mb" }));
 let localUserIdCache = null;
 
 async function getLocalUserId() {
@@ -429,6 +429,68 @@ app.post("/review", requireAuth, asyncRoute(async(req,res)=>{
   res.json({card:await applyReview(userId(req),id,rating,"review")});
 }));
 
+
+function decodeBase64Payload(value=""){
+  const raw=String(value||"").replace(/^data:[^;]+;base64,/,"").trim();
+  if(!raw) return Buffer.alloc(0);
+  return Buffer.from(raw,"base64");
+}
+
+async function saveCapturedNote(uid,text,tag){
+  const content=String(text||"").trim();
+  if(!content) return null;
+  const tags=normalizeTags([tag]);
+  const {rows}=await query(`
+    INSERT INTO notes(user_id,title,content,tags)
+    VALUES($1,$2,$3,$4) RETURNING *
+  `,[uid,noteTitle(content),content,tags]);
+  return normalizeNoteRow(rows[0]);
+}
+
+app.post("/ai/transcribe", requireAuth, asyncRoute(async(req,res)=>{
+  const key=String(process.env.GROQ_API_KEY||"").trim();
+  if(!key) return res.status(503).json({error:"服务器尚未配置 GROQ_API_KEY。"});
+  const mimeType=String(req.body?.mimeType||"audio/webm").split(";")[0];
+  const filename=String(req.body?.filename||"voice-note.webm").replace(/[^a-zA-Z0-9._-]/g,"_");
+  const audio=decodeBase64Payload(req.body?.audioBase64);
+  if(!audio.length) return res.status(400).json({error:"没有收到录音数据。"});
+  if(audio.length>2_700_000) return res.status(413).json({error:"录音太大，请分段录制后再转写。"});
+
+  const form=new FormData();
+  form.append("file",new Blob([audio],{type:mimeType}),filename);
+  form.append("model",process.env.GROQ_WHISPER_MODEL||"whisper-large-v3-turbo");
+  form.append("response_format","json");
+  form.append("temperature","0");
+
+  const response=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",{
+    method:"POST",
+    headers:{Authorization:`Bearer ${key}`},
+    body:form
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const e=new Error(data?.error?.message||`Groq transcription error (${response.status})`);
+    e.statusCode=response.status===429?429:502;
+    throw e;
+  }
+  const text=String(data?.text||"").trim();
+  if(!text) return res.status(422).json({error:"没有识别到有效语音内容。"});
+  const note=await saveCapturedNote(userId(req),text,"语音笔记");
+  res.json({text,note,model:process.env.GROQ_WHISPER_MODEL||"whisper-large-v3-turbo"});
+}));
+
+app.post("/ai/ocr", requireAuth, asyncRoute(async(req,res)=>{
+  const mimeType=String(req.body?.mimeType||"image/jpeg").split(";")[0];
+  if(!["image/jpeg","image/png","image/webp"].includes(mimeType))
+    return res.status(400).json({error:"仅支持 JPG、PNG、WebP 图片。"});
+  const image=decodeBase64Payload(req.body?.imageBase64);
+  if(!image.length) return res.status(400).json({error:"没有收到图片数据。"});
+  if(image.length>2_700_000) return res.status(413).json({error:"图片太大，请压缩或重新拍摄。"});
+  const result=await extractTextFromImage({base64:image.toString("base64"),mimeType});
+  const note=await saveCapturedNote(userId(req),result.text,"OCR笔记");
+  res.json({text:result.text,note,model:result.model});
+}));
+
 const organizeSchema={
   type:"object",
   properties:{cards:{type:"array",minItems:1,maxItems:30,items:{
@@ -444,12 +506,23 @@ app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
   const splitMode=req.body?.splitMode==="single"?"single":"split";
   if(!text) return res.status(400).json({error:"Text is required"});
 
-  const noteTags=normalizeTags([]);
-  const savedNote=await query(`
-    INSERT INTO notes(user_id,title,content,tags)
-    VALUES($1,$2,$3,$4) RETURNING *
-  `,[userId(req),noteTitle(rawText),rawText,noteTags]);
-  const note=normalizeNoteRow(savedNote.rows[0]);
+  const existingNoteId=String(req.body?.noteId||"").trim();
+  let note;
+  if(existingNoteId){
+    const existing=await query(`
+      UPDATE notes SET title=$3,content=$4,updated_at=NOW()
+      WHERE id=$2 AND user_id=$1 RETURNING *
+    `,[userId(req),existingNoteId,noteTitle(rawText),rawText]);
+    if(existing.rows[0]) note=normalizeNoteRow(existing.rows[0]);
+  }
+  if(!note){
+    const noteTags=normalizeTags([]);
+    const savedNote=await query(`
+      INSERT INTO notes(user_id,title,content,tags)
+      VALUES($1,$2,$3,$4) RETURNING *
+    `,[userId(req),noteTitle(rawText),rawText,noteTags]);
+    note=normalizeNoteRow(savedNote.rows[0]);
+  }
 
   try{
     if(splitMode==="single"){
