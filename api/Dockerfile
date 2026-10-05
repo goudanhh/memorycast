@@ -1,5 +1,5 @@
 FROM node:20-alpine
-RUN apk add --no-cache poppler-utils
+RUN apk add --no-cache poppler-utils ffmpeg
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
