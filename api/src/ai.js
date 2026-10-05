@@ -79,7 +79,17 @@ async function generateGeminiJson({ system, user, schema, modelOverride }) {
     throw e;
   }
 
-  return JSON.parse(text);
+  try{
+    return JSON.parse(stripJsonFence(text));
+  }catch(err){
+    const match=stripJsonFence(text).match(/\{[\s\S]*\}/);
+    if(match){
+      try{return JSON.parse(match[0]);}catch{}
+    }
+    const e=new Error("Gemini returned invalid JSON.");
+    e.statusCode=502;
+    throw e;
+  }
 }
 
 async function generateOpenAIJson({ system, user, schema, name, modelOverride }) {
