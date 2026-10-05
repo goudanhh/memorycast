@@ -1963,6 +1963,10 @@ async function toggleWalkmanPlayback(){
   walkmanPlaying=true;
   $("walkmanPlayBtn").textContent="…";
   const current=walkmanQueue[walkmanIndex];
+  const lyricTrack=$("walkmanSubtitle");
+  if(lyricTrack && current && !walkmanAudioCache.has(walkmanAudioKey(current))){
+    lyricTrack.innerHTML='<div class="walkman-lyric active">正在准备语音…</div>';
+  }
   const key=current?walkmanAudioKey(current):"";
   if(current && !walkmanAudioCache.has(key)){
     prefetchWalkmanCard(current);
@@ -1991,8 +1995,9 @@ async function enterWalkmanMode(){
   const initialLines=walkmanQueue.length?walkmanSegments(walkmanQueue[0]):[];
   renderWalkmanLyrics(initialLines.length?initialLines:["暂无可播放内容"],0);
 
+  // Give the first card exclusive priority. Prefetching multiple Azure
+  // syntheses at once can make the first audible result slower.
   if(walkmanQueue[0])prefetchWalkmanCard(walkmanQueue[0]);
-  if(walkmanQueue[1])prefetchWalkmanCard(walkmanQueue[1]);
 
   // Browser Back exits the minimalist mode without needing another visible button.
   try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
