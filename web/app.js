@@ -7,7 +7,17 @@ let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanList
 
 
 async function api(path,opts={}){
-  const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
+  let res;
+  try{
+    res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
+  }catch(err){
+    const msg=String(err?.message||"");
+    if(/load failed|failed to fetch|network/i.test(msg)){
+      throw new Error("请求被中断了，可能是网络波动或 AI 出题超时。请重试一次。");
+    }
+    throw err;
+  }
+
   const text=await res.text();
   let data={};
   try{data=text?JSON.parse(text):{}}
@@ -17,7 +27,7 @@ async function api(path,opts={}){
   }
   if(res.status===401){showLogin();throw new Error("请先登录")}
   if(!res.ok){
-    if(res.status===504)throw new Error("AI 响应超时了，但本轮讲解没有丢失。请再次提交。");
+    if(res.status===504)throw new Error("AI 出题响应超时了。视觉题会自动降级，请重新生成一次。");
     if(res.status===502||res.status===503)throw new Error("AI 服务暂时不可用，请稍后重试或切换 API。");
     throw new Error(data.error||("HTTP "+res.status));
   }
