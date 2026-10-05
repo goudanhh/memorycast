@@ -1,0 +1,18 @@
+name: MemoryCastWatch
+options:
+  bundleIdPrefix: org.dpdns.goudan
+targets:
+  MemoryCastWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.dpdns.goudan.MemoryCastWatch
+        SWIFT_VERSION: 5.10
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_WKApplication: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MemoryCast
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads: NO
