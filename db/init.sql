@@ -128,6 +128,9 @@ CREATE TABLE IF NOT EXISTS note_attachments (
   data BYTEA NOT NULL,
   extracted_text TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
+  source_attachment_id UUID,
+  page_number INTEGER,
+  is_generated BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
