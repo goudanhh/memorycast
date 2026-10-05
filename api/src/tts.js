@@ -193,8 +193,8 @@ function buildMixedSsml(parts){
     // A short language-boundary pause keeps Chinese/English code-switching intelligible
     // without making the whole sentence sound chopped up.
     const boundary=currentSource!==nextSource
-      ? '<break time="150ms"/>'
-      : '<break time="45ms"/>';
+      ? (p.inline || next.inline ? '<break time="35ms"/>' : '<break time="60ms"/>')
+      : '';
     return p.xml+boundary;
   }).join("");
 
@@ -252,7 +252,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update("mixed-pause-v2|"+JSON.stringify(normalized.map(p=>({
+    .update("mixed-pause-v3|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
