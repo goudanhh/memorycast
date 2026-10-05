@@ -895,6 +895,88 @@ const feynmanSchema={
   additionalProperties:false
 };
 
+app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const exclude=String(req.query?.exclude||"").trim();
+
+  const {rows}=await query(`
+    WITH review_stats AS (
+      SELECT
+        card_id,
+        COUNT(*) FILTER (WHERE rating='Again' OR verdict='wrong')::int AS wrong_count,
+        COUNT(*) FILTER (WHERE rating='Hard' OR verdict='partial')::int AS hard_count,
+        MAX(reviewed_at) AS last_reviewed_at
+      FROM reviews
+      WHERE user_id=$1
+      GROUP BY card_id
+    )
+    SELECT
+      c.*,
+      COALESCE(rs.wrong_count,0) AS wrong_count,
+      COALESCE(rs.hard_count,0) AS hard_count,
+      rs.last_reviewed_at,
+      (
+        CASE WHEN c.due<=NOW() THEN 120 ELSE 0 END
+        + COALESCE(rs.wrong_count,0)*28
+        + COALESCE(rs.hard_count,0)*10
+        + LEAST(40,COALESCE((c.fsrs->>'difficulty')::float,0)*4)
+        + CASE WHEN c.review_count=0 THEN 12 ELSE 0 END
+        + GREATEST(0,LEAST(30,EXTRACT(EPOCH FROM (NOW()-c.due))/86400))
+      )::float AS weakness_score
+    FROM cards c
+    LEFT JOIN review_stats rs ON rs.card_id=c.id
+    WHERE c.user_id=$1
+      AND ($2='' OR c.id::text<>$2)
+    ORDER BY weakness_score DESC, RANDOM()
+    LIMIT 24
+  `,[uid,exclude]);
+
+  if(!rows.length){
+    return res.status(404).json({error:"知识库里还没有可用于费曼复习的卡片。"});
+  }
+
+  // Weighted random among weak candidates: weak cards appear more often,
+  // but the result still changes instead of always selecting the same card.
+  const weights=rows.map(r=>Math.max(1,Number(r.weakness_score||0)+20));
+  const total=weights.reduce((a,b)=>a+b,0);
+  let pick=Math.random()*total;
+  let chosen=rows[0];
+  for(let i=0;i<rows.length;i++){
+    pick-=weights[i];
+    if(pick<=0){chosen=rows[i];break;}
+  }
+
+  const due=chosen.due && new Date(chosen.due)<=new Date();
+  const wrong=Number(chosen.wrong_count||0);
+  const hard=Number(chosen.hard_count||0);
+  const difficulty=Number(chosen.fsrs?.difficulty||0);
+  const reason=due
+    ? "FSRS 已到期，优先复习"
+    : wrong>0
+      ? "过去有答错记录，优先巩固"
+      : hard>0
+        ? "过去有不熟记录，优先巩固"
+        : difficulty>=7
+          ? "FSRS 难度较高"
+          : chosen.review_count===0
+            ? "尚未充分复习"
+            : "从当前记忆队列随机抽取";
+
+  res.json({
+    card:{
+      id:chosen.id,
+      topic:chosen.front,
+      tags:chosen.tags||[],
+      due:chosen.due,
+      stateName:getStateName(chosen.fsrs),
+      difficulty,
+      reviewCount:chosen.review_count,
+      weaknessScore:Number(chosen.weakness_score||0),
+      reason
+    }
+  });
+}));
+
 app.get("/feynman/sessions", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`
     SELECT id,topic,status,clarity_score,created_at,updated_at,last_turn_at
