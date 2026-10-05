@@ -1904,7 +1904,28 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   audio.currentTime=0;
 
   const exactTimings=(media.timings||[])
-    .map(x=>({index:Number(x.index||0),offsetMs:Number(x.offsetMs||0)}))
+    .map(x=>{
+      const index=Number(x.index||0);
+      const spokenOffset=Number(x.offsetMs);
+      const bookmarkOffset=Number(x.bookmarkOffsetMs);
+      const hasRealWord=Boolean(String(x.firstWord||"").trim());
+
+      // HTMLAudioElement.currentTime can run slightly ahead of what the user
+      // actually hears because of decode/output buffering. Real word
+      // boundaries need a small listening compensation; bookmark fallbacks
+      // get a larger conservative delay. The first line of every later chunk
+      // gets an extra handoff guard so it never appears while waiting.
+      const base=hasRealWord && Number.isFinite(spokenOffset)
+        ? spokenOffset+180
+        : (Number.isFinite(bookmarkOffset)?bookmarkOffset:spokenOffset)+340;
+      const handoffGuard=index===0 && chunkIndex>0 ? 140 : 0;
+
+      return {
+        index,
+        offsetMs:base+handoffGuard,
+        hasRealWord
+      };
+    })
     .filter(x=>Number.isFinite(x.offsetMs))
     .sort((x,y)=>x.offsetMs-y.offsetMs);
 
@@ -1946,7 +1967,6 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
         audio.currentTime=Math.min(resumeAt,Math.max(0,audio.duration-.05));
       }
       walkmanResumePending=false;
-      syncLyrics();
     };
     audio.onended=resolve;
     audio.onerror=()=>reject(new Error("随身听音频播放失败"));
