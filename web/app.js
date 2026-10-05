@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
-let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false;
+let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsAudios=new Set(),activeTtsRequests=new Set();
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -190,9 +190,27 @@ function stopAllTts(){
   speechSynthesis.cancel();
   noteSpeaking=false;
   if($("speakNoteBtn"))$("speakNoteBtn").textContent="🔊 朗读笔记";
+
+  for(const controller of activeTtsRequests){
+    try{controller.abort()}catch{}
+  }
+  activeTtsRequests.clear();
+
+  for(const audio of activeTtsAudios){
+    try{
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }catch{}
+  }
+  activeTtsAudios.clear();
+
   if(currentAudio){
-    currentAudio.pause();
-    currentAudio.src="";
+    try{
+      currentAudio.pause();
+      currentAudio.removeAttribute("src");
+      currentAudio.load();
+    }catch{}
     currentAudio=null;
   }
 }
@@ -221,31 +239,39 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null,playbackGeneration=t
       ? Number(settings.chinese_rate||1.0)
       : Number(settings.english_rate||1.0)
   }));
+  const controller=new AbortController();
+  activeTtsRequests.add(controller);
   try{
     const res=await fetch("/api/tts",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({parts:payloadParts})
+      body:JSON.stringify({parts:payloadParts}),
+      signal:controller.signal
     });
+    activeTtsRequests.delete(controller);
     if(!res.ok)throw new Error("Neural TTS HTTP "+res.status);
     if(playbackGeneration!==ttsPlaybackGeneration)return;
     const blob=await res.blob();
     if(playbackGeneration!==ttsPlaybackGeneration)return;
     const url=URL.createObjectURL(blob);
     const audio=new Audio(url);
+    activeTtsAudios.add(audio);
     if(playbackGeneration!==ttsPlaybackGeneration){
       URL.revokeObjectURL(url);
+      activeTtsAudios.delete(audio);
       return;
     }
     currentAudio=audio;
     const finish=()=>{
       URL.revokeObjectURL(url);
+      activeTtsAudios.delete(audio);
       if(currentAudio===audio)currentAudio=null;
       cb&&cb();
     };
     audio.onended=finish;
     audio.onerror=()=>{
       URL.revokeObjectURL(url);
+      activeTtsAudios.delete(audio);
       if(currentAudio===audio)currentAudio=null;
       let i=0;
       const fallback=()=>{
@@ -263,6 +289,8 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null,playbackGeneration=t
     };
     await audio.play();
   }catch(err){
+    activeTtsRequests.delete(controller);
+    if(err?.name==="AbortError" || playbackGeneration!==ttsPlaybackGeneration)return;
     console.warn("Azure mixed TTS unavailable; using browser fallback:",err.message);
     let i=0;
     const fallback=()=>{
@@ -405,10 +433,12 @@ function speakSelectedNote(){
     return;
   }
 
+  // Never allow a previous note, Feynman reply, or pending TTS request to coexist.
   stopAllTts();
   noteSpeaking=true;
   $("speakNoteBtn").textContent="⏹ 停止朗读";
   const generation=ttsPlaybackGeneration;
+
   speakOne(n.content,()=>{
     if(generation!==ttsPlaybackGeneration)return;
     noteSpeaking=false;
