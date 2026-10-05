@@ -163,6 +163,13 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
   font-weight:700;
   white-space:pre-wrap;
   word-break:break-word;
+  opacity:.18;
+  transform:translateY(8px);
+  transition:opacity .18s ease,transform .18s ease;
+}
+.walkman-subtitle.walkman-subtitle-active{
+  opacity:1;
+  transform:translateY(0);
 }
 .walkman-controls{
   display:flex;
