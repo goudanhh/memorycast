@@ -1165,6 +1165,8 @@ Assign difficultyLevel:
 - challenge = transfer, contrast, explanation, or production
 In weak mode, prioritize cards with high weaknessScore, recent wrong/Hard outcomes, and overdue cards.
 A single card may contain a whole note: generate distinct questions from different facts or concepts.
+If a card includes attachments, their extractedText is part of the allowed source context. Use it when relevant, especially for image/PDF-derived notes.
+Do not invent visual facts that are not present in the extracted attachment text.
 Do not simply copy the card front as the answer cue.
 Return only schema-valid JSON.`,
     user:JSON.stringify({count,mode,cards:source})
