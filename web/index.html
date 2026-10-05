@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=ios-nav-drag-fix-23">
+<link rel="stylesheet" href="/styles.css?v=fixed-nav-notes-first-25">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -24,15 +24,15 @@
   <div class="logo">MemoryCast</div>
   <div class="logo-sub">AI Spaced Repetition</div>
   <nav class="nav">
-    <button data-page="homePage" class="active">🏠 首页</button>
+    <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
-    <button data-page="importPage">✨ AI 整理笔记</button>
-    <button data-page="notesPage">🗒️ 笔记库</button>
     <button data-page="quizPage">📝 AI 测试</button>
+    <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="feynmanPage">🧠 费曼模式</button>
     <button data-page="libraryPage">📚 知识库</button>
     <button data-page="statsPage">📊 学习统计</button>
     <button data-page="settingsPage">⚙️ 设置</button>
+    <button data-page="homePage">🏠 首页</button>
   </nav>
   <div class="side-bottom">
     <div class="userbox">
@@ -359,10 +359,6 @@
       </select>
     </div>
     <div class="setting"><div><b>每日目标</b></div><input id="dailyGoal" type="number" min="1" max="500"></div>
-    <div class="setting">
-      <div><b>左侧菜单排序</b><div class="muted">直接拖动左侧菜单即可自定义顺序，排序保存在当前设备。</div></div>
-      <button id="resetNavOrderBtn" class="ghost" type="button">恢复默认顺序</button>
-    </div>
     <div class="setting"><div><b>每日 FSRS 推送</b><div class="muted">到点后只在有到期卡片时提醒。需要 HTTPS。</div></div><button id="pushToggleBtn" class="ghost">启用推送</button></div>
     <div class="setting"><div><b>推送时间</b><div class="muted" id="pushStatus">默认 09:00</div></div><input id="reminderTime" type="time" value="09:00"></div>
     <button id="saveSettingsBtn" class="btn dark">保存设置</button>
@@ -393,7 +389,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=edge-nav-drag-fix-24"></script>
+<script type="module" src="/app.js?v=fixed-nav-notes-first-25"></script>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
 </html>
