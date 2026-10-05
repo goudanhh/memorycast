@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
-let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
+let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
@@ -765,24 +765,245 @@ async function organize(){
 }
 async function saveGenerated(){const d=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:generated,noteId:currentGeneratedNoteId})});generated=[];currentGeneratedNoteId=null;$("generatedCards").innerHTML='<div class="muted">已保存 '+d.cards.length+' 张卡片。</div>';$("saveGeneratedBtn").classList.add("hidden");await Promise.all([loadCards(),loadDue()])}
 
-async function generateQuiz(){
-  const b=$("generateQuizBtn");b.disabled=true;b.textContent="AI 出题中…";
-  try{const d=await api("/quiz/generate",{method:"POST",body:JSON.stringify({mode:$("quizMode").value,count:Number($("quizCount").value)})});quizSessionId=d.sessionId;quizQuestions=d.questions;quizIndex=0;quizStats={correct:0,partial:0,wrong:0};$("quizTitle").textContent=d.title;$("quizEmpty").classList.add("hidden");$("quizResult").classList.add("hidden");$("quizArea").classList.remove("hidden");renderQuiz()}
-  catch(e){alert(e.message)}finally{b.disabled=!aiEnabled;b.textContent="✨ AI 出题"}
+async function generateQuiz(options={}){
+  const b=$("generateQuizBtn");
+  b.disabled=true;
+  b.textContent="AI 出题中…";
+
+  const mode=options.mode||$("quizMode").value;
+  const count=Number(options.count||$("quizCount").value);
+  const cardIds=Array.isArray(options.cardIds)?options.cardIds:undefined;
+
+  try{
+    const d=await api("/quiz/generate",{
+      method:"POST",
+      body:JSON.stringify({mode,count,...(cardIds?{cardIds}:{})})
+    });
+
+    quizSessionId=d.sessionId;
+    quizQuestions=d.questions||[];
+    quizIndex=0;
+    quizStats={correct:0,partial:0,wrong:0};
+    quizAttempts=[];
+    quizAdaptiveAdded=0;
+    quizConfidence="";
+    $("quizTitle").textContent=d.title;
+    $("quizEmpty").classList.add("hidden");
+    $("quizResult").classList.add("hidden");
+    $("quizArea").classList.remove("hidden");
+    renderQuiz();
+  }catch(e){
+    alert(e.message);
+  }finally{
+    b.disabled=!aiEnabled;
+    b.textContent="✨ AI 出题";
+  }
 }
+
+function difficultyLabel(level){
+  return {
+    foundation:"基础",
+    standard:"标准",
+    challenge:"挑战"
+  }[level]||"标准";
+}
+
+function setQuizConfidence(value){
+  quizConfidence=value;
+  document.querySelectorAll("[data-confidence]").forEach(btn=>{
+    btn.classList.toggle("selected",btn.dataset.confidence===value);
+  });
+}
+
 function renderQuiz(){
-  const q=quizQuestions[quizIndex];if(!q)return finishQuiz();selectedChoice="";$("quizProgress").textContent=(quizIndex+1)+" / "+quizQuestions.length;
-  $("quizType").textContent={mcq:"选择题",fill:"填空题",short:"简答题",listening:"听力题"}[q.type]||q.type;$("quizPrompt").textContent=q.prompt;$("listenQuizBtn").classList.toggle("hidden",q.type!=="listening");
-  $("quizChoices").innerHTML=q.type==="mcq"?q.choices.map((x,i)=>'<button class="quiz-choice" data-choice="'+esc(x)+'">'+String.fromCharCode(65+i)+". "+esc(x)+"</button>").join(""):"";
-  $("quizAnswer").value="";$("quizAnswer").classList.toggle("hidden",q.type==="mcq");$("quizFeedback").className="feedback hidden";$("nextQuizBtn").classList.add("hidden");$("submitQuizBtn").classList.remove("hidden");
-  document.querySelectorAll(".quiz-choice").forEach(b=>b.onclick=()=>{document.querySelectorAll(".quiz-choice").forEach(x=>x.classList.remove("selected"));b.classList.add("selected");selectedChoice=b.dataset.choice});
+  const q=quizQuestions[quizIndex];
+  if(!q)return finishQuiz();
+
+  selectedChoice="";
+  quizConfidence="";
+  $("quizProgress").textContent=(quizIndex+1)+" / "+quizQuestions.length;
+  $("quizType").textContent=({mcq:"选择题",fill:"填空题",short:"简答题",listening:"听力题"}[q.type]||q.type)+(q.adaptive?" · 自适应变式":"");
+  $("quizDifficulty").textContent=difficultyLabel(q.difficultyLevel);
+  $("quizPrompt").textContent=q.prompt;
+  $("listenQuizBtn").classList.toggle("hidden",q.type!=="listening");
+
+  $("quizChoices").innerHTML=q.type==="mcq"
+    ? q.choices.map((x,i)=>'<button class="quiz-choice" data-choice="'+esc(x)+'">'+String.fromCharCode(65+i)+". "+esc(x)+"</button>").join("")
+    : "";
+
+  $("quizAnswer").value="";
+  $("quizAnswer").classList.toggle("hidden",q.type==="mcq");
+  $("quizFeedback").className="feedback hidden";
+  $("nextQuizBtn").classList.add("hidden");
+  $("submitQuizBtn").classList.remove("hidden");
+
+  document.querySelectorAll("[data-confidence]").forEach(btn=>btn.classList.remove("selected"));
+  document.querySelectorAll(".quiz-choice").forEach(btn=>btn.onclick=()=>{
+    document.querySelectorAll(".quiz-choice").forEach(x=>x.classList.remove("selected"));
+    btn.classList.add("selected");
+    selectedChoice=btn.dataset.choice;
+  });
 }
+
+function scheduleAdaptiveQuestion(question){
+  if(!question||quizAdaptiveAdded>=3)return;
+  quizAdaptiveAdded++;
+
+  // Put the transformed question 2–4 questions later when possible.
+  const gap=2+Math.floor(Math.random()*3);
+  const insertAt=Math.min(quizQuestions.length,quizIndex+gap);
+  quizQuestions.splice(insertAt,0,question);
+}
+
 async function submitQuiz(){
-  const q=quizQuestions[quizIndex],answer=q.type==="mcq"?selectedChoice:$("quizAnswer").value.trim();if(!answer)return alert("请先作答");const b=$("submitQuizBtn");b.disabled=true;b.textContent="AI 判分中…";
-  try{const d=await api("/quiz/grade",{method:"POST",body:JSON.stringify({sessionId:quizSessionId,questionId:q.id,answer})});quizStats[d.verdict]=(quizStats[d.verdict]||0)+1;const label=d.verdict==="correct"?"✅ 正确":d.verdict==="partial"?"🟡 基本正确":"❌ 错误";const box=$("quizFeedback");box.className="feedback "+d.verdict;box.innerHTML="<b>"+label+"</b><br>"+esc(d.feedback)+"<br><b>参考答案：</b>"+esc(d.correctAnswer)+"<br><b>解释：</b>"+esc(d.explanation)+'<br><span class="muted">FSRS：'+esc(d.fsrsRating)+"</span>";b.classList.add("hidden");$("nextQuizBtn").classList.remove("hidden");await Promise.all([loadCards(),loadDue(),loadStats()])}
-  catch(e){alert(e.message)}finally{b.disabled=false;b.textContent="提交答案"}
+  const q=quizQuestions[quizIndex];
+  const answer=q.type==="mcq"?selectedChoice:$("quizAnswer").value.trim();
+  if(!answer)return alert("请先作答");
+  if(!quizConfidence)return alert("请先选择你对这个答案有多确定");
+
+  const b=$("submitQuizBtn");
+  b.disabled=true;
+  b.textContent="AI 判分中…";
+
+  try{
+    const d=await api("/quiz/grade",{
+      method:"POST",
+      body:JSON.stringify({
+        sessionId:quizSessionId,
+        questionId:q.id,
+        answer,
+        confidence:quizConfidence
+      })
+    });
+
+    quizStats[d.verdict]=(quizStats[d.verdict]||0)+1;
+    quizAttempts.push({
+      cardId:q.cardId,
+      prompt:q.prompt,
+      verdict:d.verdict,
+      confidence:quizConfidence,
+      difficultyLevel:q.difficultyLevel||"standard",
+      adaptive:q.adaptive===true,
+      metacognitiveTrap:d.metacognitiveTrap===true,
+      correctAnswer:d.correctAnswer
+    });
+
+    if(d.adaptiveQuestion)scheduleAdaptiveQuestion(d.adaptiveQuestion);
+
+    const label=d.verdict==="correct"?"✅ 正确":d.verdict==="partial"?"🟡 基本正确":"❌ 错误";
+    const confidenceText={sure:"很确定",unsure:"不太确定",guess:"猜的 / 不会"}[quizConfidence]||quizConfidence;
+    const trap=d.metacognitiveTrap
+      ? '<br><b>⚠️ 高置信错觉：</b>你很确定，但答案实际上错误，这个知识点会被优先重测。'
+      : "";
+
+    const box=$("quizFeedback");
+    box.className="feedback "+d.verdict;
+    box.innerHTML=
+      "<b>"+label+"</b> · "+esc(confidenceText)+
+      "<br>"+esc(d.feedback)+
+      "<br><b>参考答案：</b>"+esc(d.correctAnswer)+
+      "<br><b>解释：</b>"+esc(d.explanation)+
+      trap+
+      '<br><span class="muted">FSRS：'+esc(d.fsrsRating)+(d.adaptiveQuestion?" · 已安排变式重测":"")+"</span>";
+
+    b.classList.add("hidden");
+    $("nextQuizBtn").classList.remove("hidden");
+    await Promise.all([loadCards(),loadDue(),loadStats()]);
+  }catch(e){
+    alert(e.message);
+  }finally{
+    b.disabled=false;
+    b.textContent="提交答案";
+  }
 }
-function finishQuiz(){$("quizArea").classList.add("hidden");$("quizResult").classList.remove("hidden");$("quizResult").innerHTML='<div class="quiz-empty"><b style="font-size:34px">'+quizStats.correct+"/"+quizQuestions.length+"</b><br>正确 "+quizStats.correct+" · 基本正确 "+quizStats.partial+" · 错误 "+quizStats.wrong+'<br><span class="muted">错误和不完整答案已经影响对应卡片的 FSRS 排期。</span></div>'}
+
+function quizKnowledgeSummary(){
+  const groups=new Map();
+  for(const a of quizAttempts){
+    if(!groups.has(a.cardId))groups.set(a.cardId,[]);
+    groups.get(a.cardId).push(a);
+  }
+
+  const stable=[],fuzzy=[],weak=[];
+  for(const [cardId,items] of groups){
+    const card=cards.find(c=>String(c.id)===String(cardId));
+    const name=card?.front||items[0]?.prompt||"知识点";
+    const hasWrong=items.some(x=>x.verdict==="wrong");
+    const hasPartial=items.some(x=>x.verdict==="partial");
+    const allCorrect=items.every(x=>x.verdict==="correct");
+    const sureCorrect=items.some(x=>x.verdict==="correct"&&x.confidence==="sure");
+    const trap=items.some(x=>x.metacognitiveTrap);
+
+    const entry={cardId,name,trap,items};
+    if(hasWrong)weak.push(entry);
+    else if(hasPartial || !sureCorrect || !allCorrect)fuzzy.push(entry);
+    else stable.push(entry);
+  }
+
+  return {stable,fuzzy,weak};
+}
+
+function renderKnowledgeGroup(title,arr,emptyText){
+  const rows=arr.slice(0,6).map(x=>
+    '<div class="quiz-diagnosis-row">'+
+      '<span>'+esc(x.name)+'</span>'+
+      (x.trap?'<span class="chip">高置信错题</span>':'')+
+    '</div>'
+  ).join("");
+  return '<div class="quiz-diagnosis-group"><b>'+title+'</b>'+
+    (rows||'<div class="muted">'+emptyText+'</div>')+
+  '</div>';
+}
+
+function finishQuiz(){
+  $("quizArea").classList.add("hidden");
+  $("quizResult").classList.remove("hidden");
+
+  const total=quizAttempts.length||quizQuestions.length||1;
+  const mastery=Math.round(
+    ((quizStats.correct||0)+(quizStats.partial||0)*0.5)/total*100
+  );
+  const summary=quizKnowledgeSummary();
+  const wrongIds=[...new Set(summary.weak.map(x=>x.cardId))];
+  const weakest=summary.weak[0]||summary.fuzzy[0]||null;
+
+  $("quizResult").innerHTML=
+    '<div class="quiz-diagnosis">'+
+      '<div class="quiz-empty"><b style="font-size:34px">'+mastery+'%</b><br>本次掌握度'+
+      '<br>正确 '+quizStats.correct+' · 基本正确 '+quizStats.partial+' · 错误 '+quizStats.wrong+
+      '<br><span class="muted">自适应变式题 '+quizAdaptiveAdded+' 道；结果已更新 FSRS。</span></div>'+
+      '<div class="quiz-diagnosis-grid">'+
+        renderKnowledgeGroup("✅ 稳定掌握",summary.stable,"本次暂无稳定掌握项")+
+        renderKnowledgeGroup("⚠️ 模糊",summary.fuzzy,"本次暂无模糊项")+
+        renderKnowledgeGroup("❌ 未掌握",summary.weak,"本次没有明显未掌握项")+
+      '</div>'+
+      '<div class="row quiz-result-actions" style="flex-wrap:wrap;margin-top:16px">'+
+        '<button id="quizWrongBtn" class="ghost" '+(!wrongIds.length?'disabled':'')+'>只复习错题</button>'+
+        '<button id="quizWeakBtn" class="ghost">再测薄弱点 5 题</button>'+
+        '<button id="quizFeynmanBtn" class="btn dark" '+(!weakest?'disabled':'')+'>进入费曼模式补薄弱点</button>'+
+      '</div>'+
+    '</div>';
+
+  const wrongBtn=$("quizWrongBtn");
+  if(wrongBtn)wrongBtn.onclick=()=>generateQuiz({
+    mode:"weak",
+    count:Math.max(3,Math.min(10,wrongIds.length*2)),
+    cardIds:wrongIds
+  });
+
+  const weakBtn=$("quizWeakBtn");
+  if(weakBtn)weakBtn.onclick=()=>generateQuiz({mode:"weak",count:5});
+
+  const feynmanBtn=$("quizFeynmanBtn");
+  if(feynmanBtn&&weakest)feynmanBtn.onclick=()=>{
+    const card=cards.find(c=>String(c.id)===String(weakest.cardId));
+    currentFeynmanCardId=weakest.cardId;
+    resetFeynmanConversation(false);
+    $("feynmanTopic").value=card?.front||weakest.name;
+    $("feynmanTopicMeta").textContent="来自本次 AI 测试的薄弱知识点";
+    go("feynmanPage");
+  };
+}
 
 async function loadRandomFeynmanTopic(){
   const btn=$("randomFeynmanTopicBtn");
@@ -1119,5 +1340,5 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handlePhotoOcr(e.target.files?.[0]);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handlePhotoOcr(e.target.files?.[0]);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
