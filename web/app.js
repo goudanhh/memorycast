@@ -750,13 +750,16 @@ async function processFeynmanRealtimeTurn(){
     $("feynmanGaps").innerHTML=d.action==="intervene"
       ? '<div>→ '+esc(gapLabels[d.gapType]||"发现关键逻辑点")+'</div>'
       : '<div class="muted">'+esc(gapLabels[d.gapType]||"暂无关键逻辑缺口")+'</div>';
-    $("feynmanQuestion").textContent=d.question||"继续讲，我在听。";
+    const spokenReply=d.response||d.question||"";
+    $("feynmanQuestion").textContent=spokenReply||"继续讲，我在听。";
     $("feynmanScore").textContent="清晰度 "+Number(d.clarityScore||0)+"%";
-    $("feynmanStatus").textContent=d.action==="intervene"
-      ?"判断置信度 "+Math.round(Number(d.confidence||0)*100)+"%"
-      : d.thoughtState==="developing"
-        ?"还在听你把这一层讲完。"
-        :"这个节点先不插话。";
+    $("feynmanStatus").textContent=d.action==="respond"
+      ?"你主动要反馈，我会直接回答。"
+      : d.action==="intervene"
+        ?"判断置信度 "+Math.round(Number(d.confidence||0)*100)+"%"
+        : d.thoughtState==="developing"
+          ?"还在听你把这一层讲完。"
+          :"这个节点先不插话。";
     renderFeynmanHistory();
 
     feynmanProcessing=false;
@@ -765,8 +768,9 @@ async function processFeynmanRealtimeTurn(){
       if($("feynmanSessionSelect")&&feynmanSessionId)$("feynmanSessionSelect").value=feynmanSessionId;
     }).catch(()=>{});
 
-    if(d.action==="intervene"&&d.question){
-      feynmanHistory.push({role:"ai",text:d.question});
+    const spoken=d.response||d.question||"";
+    if((d.action==="intervene"||d.action==="respond")&&spoken){
+      feynmanHistory.push({role:"ai",text:spoken});
       feynmanHistory=feynmanHistory.slice(-12);
       renderFeynmanHistory();
 
@@ -776,7 +780,7 @@ async function processFeynmanRealtimeTurn(){
       $("feynmanMicStatus").textContent="我想追问一句。";
       setFeynmanRealtimeUi();
 
-      speakOne(d.question,()=>{
+      speakOne(spoken,()=>{
         if(turnToken!==feynmanTurnToken)return;
         feynmanAiSpeaking=false;
         if(feynmanRealtimeActive){
