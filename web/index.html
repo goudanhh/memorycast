@@ -208,16 +208,16 @@
       <div class="feynman-mic-box">
         <button id="feynmanMicBtn" class="feynman-mic" type="button">🎙️</button>
         <div>
-          <b id="feynmanMicTitle">点击开始讲</b>
-          <div id="feynmanMicStatus" class="muted">支持 Edge / Chrome 语音转文字；也可以直接打字。</div>
+          <b id="feynmanMicTitle">点击开始实时对话</b>
+          <div id="feynmanMicStatus" class="muted">开始后会持续监听；自然停顿时自动判断是否需要追问。</div>
         </div>
       </div>
 
-      <label>你的讲解</label>
-      <textarea id="feynmanInput" class="feynman-input" placeholder="像给一个完全不懂的人解释一样讲出来……"></textarea>
+      <label>实时转写</label>
+      <textarea id="feynmanInput" class="feynman-input" placeholder="点击麦克风后直接开始讲；系统会自动分段并保存……"></textarea>
       <div class="row" style="margin-top:10px;flex-wrap:wrap">
-        <button id="submitFeynmanBtn" class="btn dark">让 AI 学生听一听</button>
-        <button id="clearFeynmanInputBtn" class="ghost">清空本轮</button>
+        <button id="submitFeynmanBtn" class="btn dark">开始实时对话</button>
+        <button id="clearFeynmanInputBtn" class="ghost">清空当前转写</button>
       </div>
     </article>
 
@@ -229,7 +229,7 @@
         </div>
         <span id="feynmanScore" class="chip">等待讲解</span>
       </div>
-      <div id="feynmanEmpty" class="quiz-empty">你讲完一轮后，AI 会先复述它听懂了什么，再指出逻辑缺口，并只追问一个问题。</div>
+      <div id="feynmanEmpty" class="quiz-empty">AI 默认继续倾听；只有遇到关键逻辑断点时才会插话追问。</div>
       <div id="feynmanResult" class="hidden">
         <div class="feynman-student-bubble">
           <div class="eyebrow">我听懂的是</div>
@@ -339,6 +339,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=feynman-db-memory-1"></script>
+<script type="module" src="/app.js?v=realtime-feynman-1"></script>
 </body>
 </html>
