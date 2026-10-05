@@ -602,7 +602,7 @@ async function transcribeAudio(audio,mimeType,providerChoice="auto"){
   };
   const selected=cleanAiProviderChoice(providerChoice,"auto");
   const providers=selected==="auto"
-    ? [transcribeWithCloudflare,transcribeWithGemini,transcribeWithOpenRouter]
+    ? [transcribeWithCloudflare,transcribeWithGemini]
     : [providerMap[selected]];
   const failures=[];
   let configured=0;
