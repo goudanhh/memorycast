@@ -8,6 +8,8 @@ let watchDiagEl=null;
 let watchPreparedFirstMedia=null;
 let watchPreparedFirstKey="";
 let watchInitialVideoStarted=false;
+let watchAudioContext=null;
+let watchAudioSource=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -2192,6 +2194,161 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   return generation===ttsPlaybackGeneration&&walkmanPlaying;
 }
 
+function getWatchAudioContext(){
+  if(watchAudioContext)return watchAudioContext;
+  const Ctx=window.AudioContext||window.webkitAudioContext;
+  if(!Ctx)return null;
+  try{
+    watchAudioContext=new Ctx();
+    return watchAudioContext;
+  }catch{
+    return null;
+  }
+}
+
+function unlockWatchWebAudio(){
+  if(!isAppleWatchLike())return;
+  const ctx=getWatchAudioContext();
+  if(!ctx)return;
+  try{
+    if(ctx.state==="suspended"){
+      const p=ctx.resume();
+      if(p&&typeof p.catch==="function")p.catch(()=>{});
+    }
+  }catch{}
+}
+
+async function requestWatchWebAudioChunk(card,chunkIndex,lines){
+  const payloadLines=lines.map(line=>({
+    parts:splitByLanguage(line).map(part=>({
+      text:part.text,
+      language:part.lang,
+      style:voiceStyleName(part.lang),
+      rate:(part.lang==="zh-CN"
+        ? Number(settings.chinese_rate||1.0)
+        : Number(settings.english_rate||1.0))*walkmanRate
+    }))
+  }));
+
+  const res=await fetch("/api/tts/timed",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      lines:payloadLines,
+      format:"mp3",
+      delivery:"binary"
+    })
+  });
+  if(!res.ok)throw new Error("Watch WebAudio TTS HTTP "+res.status);
+
+  let timings=[];
+  try{
+    const raw=res.headers.get("X-MemoryCast-Timings")||"";
+    timings=raw?JSON.parse(decodeBase64UrlText(raw)):[];
+  }catch{}
+
+  return {
+    buffer:await res.arrayBuffer(),
+    timings:Array.isArray(timings)?timings:[]
+  };
+}
+
+async function playWalkmanWatchWebAudio(card){
+  const ctx=getWatchAudioContext();
+  if(!ctx)return false;
+
+  const lines=walkmanSegments(card);
+  if(!lines.length)return false;
+  renderWalkmanLyrics(lines,0);
+
+  const generation=ttsPlaybackGeneration;
+  const groups=walkmanChunkGroups(lines);
+  let globalStart=0;
+
+  try{
+    if(ctx.state==="suspended")await ctx.resume();
+  }catch{
+    return false;
+  }
+
+  for(let i=0;i<groups.length;i++){
+    if(!walkmanPlaying||generation!==ttsPlaybackGeneration)return false;
+
+    let media;
+    try{
+      media=await requestWatchWebAudioChunk(card,i,groups[i]);
+    }catch{
+      return false;
+    }
+
+    let decoded;
+    try{
+      // Safari implementations may detach the passed ArrayBuffer.
+      decoded=await ctx.decodeAudioData(media.buffer.slice(0));
+    }catch{
+      return false;
+    }
+
+    const source=ctx.createBufferSource();
+    source.buffer=decoded;
+    source.connect(ctx.destination);
+    watchAudioSource=source;
+
+    const exactTimings=(media.timings||[])
+      .map(x=>({
+        index:Number(x.index||0),
+        offsetMs:Number.isFinite(Number(x.offsetMs))
+          ? Number(x.offsetMs)
+          : Number(x.bookmarkOffsetMs||0)
+      }))
+      .filter(x=>Number.isFinite(x.offsetMs))
+      .sort((a,b)=>a.offsetMs-b.offsetMs);
+
+    const startedAt=ctx.currentTime;
+    setWalkmanLyricIndex(lines,globalStart);
+
+    const ok=await new Promise(resolve=>{
+      let done=false;
+      const finish=value=>{
+        if(done)return;
+        done=true;
+        clearInterval(timer);
+        resolve(value);
+      };
+
+      const timer=setInterval(()=>{
+        if(!walkmanPlaying||generation!==ttsPlaybackGeneration){
+          try{source.stop()}catch{}
+          finish(false);
+          return;
+        }
+
+        const elapsed=(ctx.currentTime-startedAt)*1000;
+        let local=0;
+        for(const t of exactTimings){
+          if(elapsed>=t.offsetMs)local=t.index;
+          else break;
+        }
+        setWalkmanLyricIndex(lines,Math.min(lines.length-1,globalStart+local));
+      },80);
+
+      source.onended=()=>finish(true);
+
+      try{
+        source.start(0);
+      }catch{
+        finish(false);
+      }
+    });
+
+    if(watchAudioSource===source)watchAudioSource=null;
+    if(!ok)return false;
+    globalStart+=groups[i].length;
+  }
+
+  return generation===ttsPlaybackGeneration&&walkmanPlaying;
+}
+
 function getWatchVideoElement(){
   let video=document.getElementById("watchWalkmanVideo");
   if(video)return video;
@@ -2492,6 +2649,10 @@ function pauseWalkman(){
 
 function stopWalkman(){
   walkmanPlaying=false;
+  if(watchAudioSource){
+    try{watchAudioSource.stop()}catch{}
+    watchAudioSource=null;
+  }
   walkmanPaused=false;
   walkmanResumePending=false;
   walkmanChunkIndex=0;
@@ -2516,12 +2677,11 @@ async function playWalkmanCurrent(){
     return;
   }
 
-  // Apple Watch: try the server's natural AAC voice through a hidden
-  // HTMLVideoElement. This avoids the HTMLAudioElement path that watchOS
-  // rejected, while keeping browser speech as a fallback.
+  // Apple Watch: use Web Audio first. This bypasses HTMLAudioElement /
+  // HTMLVideoElement entirely while preserving the server's natural TTS.
   if(isAppleWatchLike()){
-    const videoPlayed=await playWalkmanWatchVideo(card);
-    if(videoPlayed){
+    const webAudioPlayed=await playWalkmanWatchWebAudio(card);
+    if(webAudioPlayed){
       walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
       setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},120);
       return;
@@ -2638,6 +2798,9 @@ async function enterWalkmanMode(){
   stopAllTts();
 
   const watch=isAppleWatchLike();
+
+  // Resume the Web Audio context immediately inside the user's tap.
+  if(watch)unlockWatchWebAudio();
 
   // Important for watchOS: if the first natural-voice MP4 was prepared in the
   // background, start it synchronously inside the user's "随身听" tap before
