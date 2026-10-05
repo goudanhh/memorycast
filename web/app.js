@@ -1020,9 +1020,19 @@ function renderQuiz(){
   selectedChoice="";
   quizConfidence="";
   $("quizProgress").textContent=(quizIndex+1)+" / "+quizQuestions.length;
-  $("quizType").textContent=({mcq:"选择题",fill:"填空题",short:"简答题",listening:"听力题"}[q.type]||q.type)+(q.adaptive?" · 自适应变式":"");
+  $("quizType").textContent=(q.visualAttachmentId?"看图题 · ":"")+({mcq:"选择题",fill:"填空题",short:"简答题",listening:"听力题"}[q.type]||q.type)+(q.adaptive?" · 自适应变式":"");
   $("quizDifficulty").textContent=difficultyLabel(q.difficultyLevel);
   $("quizPrompt").textContent=q.prompt;
+
+  const visual=$("quizVisual");
+  if(q.visualAttachmentId){
+    visual.innerHTML='<img src="/api/attachments/'+encodeURIComponent(q.visualAttachmentId)+'" alt="题目图片" loading="eager">';
+    visual.classList.remove("hidden");
+  }else{
+    visual.innerHTML="";
+    visual.classList.add("hidden");
+  }
+
   $("listenQuizBtn").classList.toggle("hidden",q.type!=="listening");
 
   $("quizChoices").innerHTML=q.type==="mcq"
