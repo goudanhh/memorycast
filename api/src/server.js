@@ -775,10 +775,14 @@ const feynmanRealtimeSchema={
   type:"object",
   properties:{
     action:{type:"string",enum:["listen","intervene"]},
+    thoughtState:{type:"string",enum:["developing","complete"]},
+    gapType:{type:"string",enum:["none","definition","causal_jump","hidden_assumption","contradiction","circular_reasoning","unsupported_claim","boundary_case"]},
+    confidence:{type:"number",minimum:0,maximum:1},
+    anchor:{type:"string"},
     question:{type:"string"},
     clarityScore:{type:"integer",minimum:0,maximum:100}
   },
-  required:["action","question","clarityScore"],
+  required:["action","thoughtState","gapType","confidence","anchor","question","clarityScore"],
   additionalProperties:false
 };
 
@@ -820,24 +824,64 @@ app.post("/feynman/realtime", requireAuth, asyncRoute(async(req,res)=>{
   const data=await generateStructured({
     name:"feynman_realtime",
     schema:feynmanRealtimeSchema,
-    system:`You are a wise, concise conversation partner in a live Feynman learning session.
-The user is explaining a topic aloud. Optimize for a natural spoken conversation with minimal interruption.
+    system:`You are a highly attentive Socratic conversation partner in a live Feynman learning session.
+The user is thinking aloud. Your first responsibility is to understand the structure of their thought before deciding whether to speak.
 
-Decide only this:
-1. Stay silent and keep listening, or
-2. Interrupt with exactly one high-value question.
+You must reason about two separate questions:
 
-Use action="listen" if the thought is still developing coherently. Prefer silence.
-Use action="intervene" only for a real logical break: contradiction, undefined key term, circular reasoning, unsupported causal leap, hidden assumption, or a clearly completed thought that needs one decisive question.
-When listening, question must be "".
-When intervening, question must be short, conversational, and easy to say aloud. Usually one sentence, preferably under 28 Chinese characters or 18 English words.
-Never lecture. Never summarize the whole explanation. Never add preambles such as "I understand" or "Let me ask".
-Reply mainly in the user's language.
+A. Has the user actually completed a thought?
+- thoughtState="developing" when the user is still defining, listing, qualifying, comparing, giving an example, correcting themselves, or clearly continuing a sentence/idea.
+- thoughtState="complete" only when a coherent claim or explanation has reached a natural stopping point.
+- A pause in speech is NOT evidence that the thought is complete.
+
+B. Is there a genuinely important reasoning gap?
+Only use a non-"none" gapType for:
+- definition: a key term is being used without enough meaning to follow the argument
+- causal_jump: X is said to cause Y but the mechanism or connecting step is missing
+- hidden_assumption: the conclusion depends on an unstated premise
+- contradiction: this claim conflicts with something the user said earlier
+- circular_reasoning: the explanation restates the claim instead of explaining it
+- unsupported_claim: an important claim is asserted with no reason or evidence
+- boundary_case: the explanation sounds general but may fail in an important edge case
+
+Interruption policy:
+- Prefer silence.
+- If thoughtState="developing", action MUST be "listen" unless there is a direct contradiction that makes continuing impossible.
+- Only use action="intervene" when confidence >= 0.82 and the gap is important enough that a thoughtful human tutor would actually interrupt.
+- Do not intervene merely because the explanation is incomplete, informal, imprecise, or could be improved.
+- Do not ask generic questions.
+- The question must target the user's exact reasoning and should clearly connect to the specific claim they just made.
+- anchor should be a very short phrase identifying the exact part of the user's reasoning you are reacting to; do not invent wording the user did not imply.
+- When action="listen", question="" and gapType should usually be "none".
+- When action="intervene", ask exactly ONE concise spoken question. No preamble, no praise, no lecture, no summary.
+- Usually keep the spoken question under 30 Chinese characters or 20 English words.
+- clarityScore measures how understandable the explanation currently is, not the user's intelligence.
+- Reply mainly in the user's language.
+
+Examples of good behavior:
+User: "PEI 越多的话，氨基位点也会更多，然后……"
+=> developing, listen.
+
+User: "所以 PEI 越多，吸附量就一定越高。"
+If earlier context suggests pore blockage or diffusion limits were ignored:
+=> complete, hidden_assumption or boundary_case, intervene with a specific question such as:
+"如果 PEI 把孔道堵住了，吸附量还会一直升高吗？"
+
+User pauses after "第一点是传质阻力……"
+=> developing, listen.
+
 Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   });
 
-  const question=data.action==="intervene"?String(data.question||"").trim():"";
+  const shouldIntervene=
+    data.action==="intervene" &&
+    data.thoughtState==="complete" &&
+    Number(data.confidence)>=0.82 &&
+    String(data.question||"").trim();
+
+  const question=shouldIntervene?String(data.question||"").trim():"";
+  const action=shouldIntervene?"intervene":"listen";
   const aiContent=question || "（继续倾听）";
 
   await query(`
@@ -851,7 +895,11 @@ Return schema-valid JSON only.`,
     JSON.stringify({topic:session.topic,realtime:true}),
     aiContent,
     JSON.stringify({
-      action:data.action,
+      action,
+      thoughtState:data.thoughtState,
+      gapType:data.gapType,
+      confidence:data.confidence,
+      anchor:data.anchor||"",
       followUpQuestion:question,
       clarityScore:data.clarityScore,
       realtime:true
@@ -864,7 +912,17 @@ Return schema-valid JSON only.`,
     WHERE id=$2 AND user_id=$1
   `,[uid,sessionId,topic,data.clarityScore]);
 
-  res.json({action:data.action,question,clarityScore:data.clarityScore,sessionId,topic});
+  res.json({
+    action,
+    thoughtState:data.thoughtState,
+    gapType:data.gapType,
+    confidence:data.confidence,
+    anchor:data.anchor||"",
+    question,
+    clarityScore:data.clarityScore,
+    sessionId,
+    topic
+  });
 }));
 
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
