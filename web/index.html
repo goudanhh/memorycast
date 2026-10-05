@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=adaptive-quiz-9">
+<link rel="stylesheet" href="/styles.css?v=flashcard-front-back-11">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -81,15 +81,18 @@
           <button id="loopBtn" class="ghost">↻ 循环：关</button>
         </div>
       </div>
-      <div class="review-card">
+      <div id="reviewFlashcard" class="review-card review-flashcard" role="button" tabindex="0" aria-label="点击翻转卡片">
         <div id="cardCat" class="eyebrow">TODAY</div>
         <div id="cardFront" class="front">加载中…</div>
-        <div id="cardBack" class="back"></div>
-        <div id="cardExample" class="example"></div>
+        <div id="cardBack" class="back hidden"></div>
+        <div id="cardExample" class="example hidden"></div>
         <div id="cardProgress" class="muted"></div>
+        <div class="review-flip-hint muted">点击卡片查看答案</div>
       </div>
       <div class="row">
-        <button id="speakBtn" class="btn dark">▶ 连续播放</button>
+        <button id="revealCardBtn" class="btn dark">显示答案</button>
+        <button id="hideCardBtn" class="ghost hidden">隐藏答案</button>
+        <button id="speakBtn" class="ghost">🔊 朗读</button>
         <button id="nextCardBtn" class="ghost">下一条 →</button>
       </div>
       <div class="ratings">
@@ -386,7 +389,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=adaptive-quiz-10"></script>
+<script type="module" src="/app.js?v=flashcard-front-back-11"></script>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
 </html>
