@@ -23,6 +23,41 @@ const timedTtsMedia=new Map();
 const TIMED_TTS_MEDIA_TTL_MS=30*60*1000;
 const TIMED_TTS_MEDIA_MAX=48;
 
+async function wrapTimedTtsAsWatchVideo(result){
+  const dir=await mkdtemp(path.join(os.tmpdir(),"memorycast-watch-"));
+  const input=path.join(dir,"input.m4a");
+  const output=path.join(dir,"output.mp4");
+
+  try{
+    await writeFile(input,result.audio);
+
+    await execFileAsync("ffmpeg",[
+      "-hide_banner","-loglevel","error","-y",
+      "-f","lavfi",
+      "-i","color=c=black:s=16x16:r=1",
+      "-i",input,
+      "-map","0:v:0",
+      "-map","1:a:0",
+      "-c:v","libx264",
+      "-preset","ultrafast",
+      "-tune","stillimage",
+      "-pix_fmt","yuv420p",
+      "-c:a","copy",
+      "-shortest",
+      "-movflags","+faststart",
+      output
+    ]);
+
+    return {
+      ...result,
+      audio:await readFile(output),
+      mimeType:"video/mp4"
+    };
+  }finally{
+    await rm(dir,{recursive:true,force:true}).catch(()=>{});
+  }
+}
+
 function storeTimedTtsMedia(result){
   const now=Date.now();
   for(const [id,item] of timedTtsMedia){
@@ -277,13 +312,17 @@ app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
   const delivery=String(req.body?.delivery||"binary").toLowerCase();
   const result=await synthesizeTimedTts(lines,{format});
 
-  if(delivery==="url"){
-    const mediaId=storeTimedTtsMedia(result);
+  if(delivery==="url"||delivery==="video"){
+    const mediaResult=delivery==="video"
+      ? await wrapTimedTtsAsWatchVideo(result)
+      : result;
+    const mediaId=storeTimedTtsMedia(mediaResult);
     return res.json({
       audioUrl:"/api/tts/media/"+mediaId,
       timings:Array.isArray(result.timings)?result.timings:[],
       cacheHit:result.cacheHit===true,
-      voice:result.voice||"mixed"
+      voice:result.voice||"mixed",
+      mediaType:mediaResult.mimeType
     });
   }
 
