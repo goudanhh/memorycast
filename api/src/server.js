@@ -916,6 +916,8 @@ app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
       c.*,
       COALESCE(rs.wrong_count,0) AS wrong_count,
       COALESCE(rs.hard_count,0) AS hard_count,
+      rs.last_rating,
+      rs.last_verdict,
       rs.last_reviewed_at,
       (
         CASE WHEN c.due<=NOW() THEN 120 ELSE 0 END
@@ -1089,8 +1091,9 @@ Return schema-valid JSON only.`,
     try{
       updatedCard=await applyReview(uid,sourceCardId,feynmanFsrsRating,"feynman",data.status);
     }catch(err){
-      if(err?.statusCode!==404) throw err;
+      console.warn("Feynman FSRS writeback failed; continuing conversation:",err?.message||err);
       feynmanFsrsRating=null;
+      updatedCard=null;
     }
   }
 
@@ -1399,7 +1402,10 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
 app.use((err,req,res,next)=>{
   console.error(err);
   const status=err.statusCode||500;
-  res.status(status).json({error: status===500 ? "Server error" : err.message});
+  const safeMessage=status===500
+    ? "服务器处理失败，请稍后重试。若持续出现，请查看 API 日志。"
+    : (err.message||("HTTP "+status));
+  res.status(status).json({error:safeMessage});
 });
 app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
 setTimeout(()=>runDailyReminders().catch(console.error),5000);
