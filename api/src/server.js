@@ -600,6 +600,57 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   res.json({verdict:grade.verdict,score:grade.score,feedback:grade.feedback,correctAnswer:q.answer,explanation:q.explanation,fsrsRating:rating,updatedCard});
 }));
 
+const feynmanSchema={
+  type:"object",
+  properties:{
+    studentReply:{type:"string"},
+    understood:{type:"string"},
+    strengths:{type:"array",items:{type:"string"},maxItems:4},
+    gaps:{type:"array",items:{type:"string"},maxItems:4},
+    followUpQuestion:{type:"string"},
+    status:{type:"string",enum:["continue","mastered"]},
+    clarityScore:{type:"integer",minimum:0,maximum:100}
+  },
+  required:["studentReply","understood","strengths","gaps","followUpQuestion","status","clarityScore"],
+  additionalProperties:false
+};
+
+app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
+  if(!hasAI()) return res.status(503).json({error:"AI 未配置，暂时无法使用费曼模式。"});
+  const topic=String(req.body?.topic||"").trim().slice(0,300);
+  const explanation=String(req.body?.explanation||"").trim().slice(0,8000);
+  const history=Array.isArray(req.body?.history)?req.body.history.slice(-12).map(x=>({
+    role:x?.role==="ai"?"ai":"user",
+    text:String(x?.text||"").slice(0,3000)
+  })):[];
+
+  if(!topic) return res.status(400).json({error:"请先填写要讲解的主题。"});
+  if(!explanation) return res.status(400).json({error:"请先讲一段你的理解。"});
+
+  const data=await generateStructured({
+    name:"feynman_student",
+    schema:feynmanSchema,
+    system:`You are the learner in a Feynman-technique study session, not a lecturer.
+The user is teaching you a topic aloud. Your job is to expose unclear reasoning by behaving like an intelligent but genuinely curious student.
+
+Rules:
+- First state briefly what you think you understood from the user's explanation.
+- Identify only meaningful strengths and gaps. Do not nitpick wording, accent, transcription mistakes, or harmless omissions.
+- Look especially for undefined concepts, hidden assumptions, skipped causal steps, circular reasoning, contradictions, and claims that are asserted without explaining why.
+- Ask exactly ONE most useful follow-up question at a time.
+- The follow-up should sound like a real student question, e.g. "为什么这里会导致……？" or "你说的 X 具体是什么意思？"
+- Do not dump the correct answer unless the user explicitly asks for it. The purpose is retrieval and explanation by the user.
+- If the explanation is already coherent, ask for a simple analogy, concrete example, boundary case, or causal explanation before marking mastery.
+- Mark status="mastered" only when the user has explained the core idea clearly enough that a beginner could follow it.
+- clarityScore measures clarity of explanation, not the user's intelligence or worth.
+- Reply in the language mainly used by the user; preserve English technical terms when useful.
+Return schema-valid JSON only.`,
+    user:JSON.stringify({topic,history,currentExplanation:explanation})
+  });
+
+  res.json(data);
+}));
+
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const [cards, reviews, recent, categories]=await Promise.all([
