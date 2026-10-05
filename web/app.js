@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
-let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1;
+let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map();
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
@@ -1756,7 +1756,25 @@ function walkmanLineWeight(text=""){
   return Math.max(1,zh+words*1.8+nums*1.3+s.length*0.08);
 }
 
-async function fetchWalkmanCardAudio(card,generation){
+function walkmanAudioKey(card){
+  return [
+    card?.id||"",
+    walkmanRate,
+    Number(settings.english_rate||1),
+    Number(settings.chinese_rate||1),
+    localStorage.getItem("memorycast_en_voice_style")||"smart",
+    localStorage.getItem("memorycast_zh_voice_style")||"smart"
+  ].join("|");
+}
+
+function trimWalkmanAudioCache(){
+  while(walkmanAudioCache.size>6){
+    const first=walkmanAudioCache.keys().next().value;
+    walkmanAudioCache.delete(first);
+  }
+}
+
+async function requestWalkmanCardBlob(card){
   const fullText=[card?.front,card?.back,card?.example]
     .map(x=>String(x||"").trim())
     .filter(Boolean)
@@ -1775,29 +1793,46 @@ async function fetchWalkmanCardAudio(card,generation){
 
   if(!parts.length)return null;
 
-  const controller=new AbortController();
-  activeTtsRequests.add(controller);
-  try{
-    const res=await fetch("/api/tts",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({parts}),
-      signal:controller.signal
-    });
-    activeTtsRequests.delete(controller);
-    if(!res.ok)throw new Error("Walkman TTS HTTP "+res.status);
-    if(generation!==ttsPlaybackGeneration)return null;
-    const blob=await res.blob();
-    if(generation!==ttsPlaybackGeneration)return null;
-    return URL.createObjectURL(blob);
-  }catch(err){
-    activeTtsRequests.delete(controller);
-    if(err?.name==="AbortError"||generation!==ttsPlaybackGeneration)return null;
-    console.warn("Walkman continuous TTS unavailable:",err?.message||err);
-    return null;
-  }
+  const res=await fetch("/api/tts",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({parts})
+  });
+  if(!res.ok)throw new Error("Walkman TTS HTTP "+res.status);
+  return await res.blob();
 }
 
+function prefetchWalkmanCard(card){
+  if(!card||!ttsInfoState.enabled)return Promise.resolve(null);
+
+  const key=walkmanAudioKey(card);
+  if(walkmanAudioCache.has(key))return Promise.resolve(walkmanAudioCache.get(key));
+  if(walkmanPrefetch.has(key))return walkmanPrefetch.get(key);
+
+  const promise=requestWalkmanCardBlob(card)
+    .then(blob=>{
+      walkmanPrefetch.delete(key);
+      if(blob){
+        walkmanAudioCache.set(key,blob);
+        trimWalkmanAudioCache();
+      }
+      return blob;
+    })
+    .catch(err=>{
+      walkmanPrefetch.delete(key);
+      console.warn("Walkman prefetch failed:",err?.message||err);
+      return null;
+    });
+
+  walkmanPrefetch.set(key,promise);
+  return promise;
+}
+
+async function getWalkmanCardBlob(card){
+  const key=walkmanAudioKey(card);
+  if(walkmanAudioCache.has(key))return walkmanAudioCache.get(key);
+  return await prefetchWalkmanCard(card);
+}
 async function playWalkmanContinuousCard(card){
   const lines=walkmanSegments(card);
   if(!lines.length)return false;
@@ -1807,15 +1842,22 @@ async function playWalkmanContinuousCard(card){
 
   if(!ttsInfoState.enabled)return false;
 
-  const url=await fetchWalkmanCardAudio(card,generation);
-  if(!url||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
+  const blob=await getWalkmanCardBlob(card);
+  if(!blob||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
 
   const audio=$("globalTtsAudio");
   if(!audio)return false;
 
+  // While the current card is about to play, prepare the next one in background.
+  if(walkmanQueue.length>1){
+    const nextCard=walkmanQueue[(walkmanIndex+1)%walkmanQueue.length];
+    prefetchWalkmanCard(nextCard);
+  }
+
   if(currentTtsObjectUrl){
     try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
   }
+  const url=URL.createObjectURL(blob);
   currentTtsObjectUrl=url;
   currentAudio=audio;
   audio.pause();
@@ -1932,7 +1974,15 @@ async function toggleWalkmanPlayback(){
 
   stopAllTts();
   walkmanPlaying=true;
-  $("walkmanPlayBtn").textContent="⏹";
+  $("walkmanPlayBtn").textContent="…";
+  const current=walkmanQueue[walkmanIndex];
+  const key=current?walkmanAudioKey(current):"";
+  if(current && !walkmanAudioCache.has(key)){
+    prefetchWalkmanCard(current);
+  }
+  setTimeout(()=>{
+    if(walkmanPlaying)$("walkmanPlayBtn").textContent="⏹";
+  },120);
   playWalkmanCurrent();
 }
 
@@ -1953,6 +2003,9 @@ async function enterWalkmanMode(){
   $("walkmanPlayBtn").textContent="▶";
   const initialLines=walkmanQueue.length?walkmanSegments(walkmanQueue[0]):[];
   renderWalkmanLyrics(initialLines.length?initialLines:["暂无可播放内容"],0);
+
+  if(walkmanQueue[0])prefetchWalkmanCard(walkmanQueue[0]);
+  if(walkmanQueue[1])prefetchWalkmanCard(walkmanQueue[1]);
 
   // Browser Back exits the minimalist mode without needing another visible button.
   try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
@@ -1975,4 +2028,4 @@ $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;i
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
-$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{walkmanRate=Number($("walkmanRate").value||1);if(walkmanPlaying){stopAllTts();setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{walkmanRate=Number($("walkmanRate").value||1);if(walkmanQueue[walkmanIndex])prefetchWalkmanCard(walkmanQueue[walkmanIndex]);if(walkmanPlaying){stopAllTts();setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
