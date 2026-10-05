@@ -535,7 +535,7 @@ async function handlePhotoOcr(file){
       mimeType:"image/jpeg"
     })});
     appendImportedText(d.text,d.note);
-    $("captureStatus").textContent="✓ 图片文字已识别并保存到笔记库，可直接整理成卡片。";
+    const ocrNames={gemini:"Gemini OCR",cloudflare:"Cloudflare Moondream OCR"}; $("captureStatus").textContent="✓ "+(ocrNames[d.provider]||"OCR")+" 已识别并保存到笔记库，可直接整理成卡片。";
   }catch(e){
     $("captureStatus").textContent="OCR 失败："+e.message;
   }finally{
