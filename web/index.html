@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=visual-quiz-17">
+<link rel="stylesheet" href="/styles.css?v=custom-nav-order-21">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -359,6 +359,10 @@
       </select>
     </div>
     <div class="setting"><div><b>每日目标</b></div><input id="dailyGoal" type="number" min="1" max="500"></div>
+    <div class="setting">
+      <div><b>左侧菜单排序</b><div class="muted">直接拖动左侧菜单即可自定义顺序，排序保存在当前设备。</div></div>
+      <button id="resetNavOrderBtn" class="ghost" type="button">恢复默认顺序</button>
+    </div>
     <div class="setting"><div><b>每日 FSRS 推送</b><div class="muted">到点后只在有到期卡片时提醒。需要 HTTPS。</div></div><button id="pushToggleBtn" class="ghost">启用推送</button></div>
     <div class="setting"><div><b>推送时间</b><div class="muted" id="pushStatus">默认 09:00</div></div><input id="reminderTime" type="time" value="09:00"></div>
     <button id="saveSettingsBtn" class="btn dark">保存设置</button>
@@ -389,7 +393,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=quiz-timeout-fallback-20"></script>
+<script type="module" src="/app.js?v=custom-nav-order-21"></script>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
 </html>
