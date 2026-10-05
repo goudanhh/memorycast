@@ -196,6 +196,11 @@
       </div>
       <p class="muted">目标不是背答案，而是把一个概念讲到“初学者也能跟上”。AI 每轮只追问一个最关键的逻辑缺口。</p>
 
+      <label>历史会话</label>
+      <select id="feynmanSessionSelect">
+        <option value="">新会话</option>
+      </select>
+
       <label>你要讲什么？</label>
       <input id="feynmanTopic" list="feynmanTopicList" placeholder="例如：为什么动词过去式 -ed 有三种发音？">
       <datalist id="feynmanTopicList"></datalist>
@@ -334,6 +339,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=feynman-mode-1"></script>
+<script type="module" src="/app.js?v=feynman-db-memory-1"></script>
 </body>
 </html>
