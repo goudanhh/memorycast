@@ -1254,7 +1254,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
       ORDER BY
         CASE WHEN is_generated=TRUE AND page_number IS NOT NULL THEN 0 ELSE 1 END,
         RANDOM()
-      LIMIT 12
+      LIMIT 4
     `,[uid,r.source_note_id]);
     for(const a of ar.rows){
       if(visualCandidates.some(x=>String(x.attachment.id)===String(a.id)))continue;
@@ -1264,7 +1264,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     if(visualCandidates.length>=6)break;
   }
 
-  const visualTarget=Math.min(3,Math.max(0,Math.floor(count/3)),visualCandidates.length);
+  const visualTarget=Math.min(2,Math.max(0,Math.floor(count/3)),visualCandidates.length);
   for(let i=0;i<visualTarget;i++){
     const item=visualCandidates[i];
     try{
