@@ -458,7 +458,7 @@ async function startVoiceNote(){
         return;
       }
 
-      $("captureStatus").textContent="正在用 Groq Whisper 转文字…";
+      $("captureStatus").textContent="正在转写语音…";
       $("voiceNoteBtn").disabled=true;
       try{
         const audioBase64=await blobToBase64(blob);
@@ -469,7 +469,7 @@ async function startVoiceNote(){
           filename:"voice-note."+ext
         })});
         appendImportedText(d.text,d.note);
-        $("captureStatus").textContent="✓ 语音已转成文字并保存到笔记库，可继续编辑或整理成卡片。";
+        const names={cloudflare:"Cloudflare Whisper",gemini:"Gemini Transcribe",openrouter:"OpenRouter"}; $("captureStatus").textContent="✓ "+(names[d.provider]||d.provider||"AI")+" 已完成转写并保存到笔记库，可继续编辑或整理成卡片。";
       }catch(e){
         $("captureStatus").textContent="语音转写失败："+e.message;
       }finally{
