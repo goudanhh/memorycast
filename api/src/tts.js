@@ -185,9 +185,22 @@ function buildMixedSsml(parts){
     normalized.push({...p,inline:false,cfg,xml:`<voice name="${cfg.voice}">${body}</voice>`});
   }
 
+  const mixedBody=normalized.map((p,i)=>{
+    const next=normalized[i+1];
+    if(!next)return p.xml;
+    const currentSource=p.sourceLanguage||p.language;
+    const nextSource=next.sourceLanguage||next.language;
+    // A short language-boundary pause keeps Chinese/English code-switching intelligible
+    // without making the whole sentence sound chopped up.
+    const boundary=currentSource!==nextSource
+      ? '<break time="150ms"/>'
+      : '<break time="45ms"/>';
+    return p.xml+boundary;
+  }).join("");
+
   return {
     normalized,
-    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">${normalized.map(p=>p.xml).join("")}</speak>`
+    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">${mixedBody}</speak>`
   };
 }
 
@@ -239,7 +252,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update(JSON.stringify(normalized.map(p=>({
+    .update("mixed-pause-v2|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
