@@ -2182,6 +2182,74 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   return generation===ttsPlaybackGeneration&&walkmanPlaying;
 }
 
+function watchLineLanguage(text=""){
+  const s=String(text||"");
+  const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
+  const en=(s.match(/[A-Za-z]/g)||[]).length;
+  return zh>en?"zh-CN":"en-US";
+}
+
+function watchPickVoice(lang){
+  const voices=speechSynthesis.getVoices?.()||[];
+  const exact=voices.find(v=>String(v.lang||"").toLowerCase()===lang.toLowerCase());
+  if(exact)return exact;
+  const base=lang.split("-")[0].toLowerCase();
+  return voices.find(v=>String(v.lang||"").toLowerCase().startsWith(base))||null;
+}
+
+async function playWalkmanWatchBrowserTts(card){
+  const lines=walkmanSegments(card);
+  if(!lines.length)return false;
+
+  renderWalkmanLyrics(lines,0);
+  try{speechSynthesis.cancel()}catch{}
+
+  const generation=ttsPlaybackGeneration;
+
+  for(let i=0;i<lines.length;i++){
+    if(!walkmanPlaying||generation!==ttsPlaybackGeneration)return false;
+
+    const text=String(lines[i]||"").trim();
+    if(!text)continue;
+
+    setWalkmanLyricIndex(lines,i);
+
+    const ok=await new Promise(resolve=>{
+      const utterance=new SpeechSynthesisUtterance(text);
+      const lang=watchLineLanguage(text);
+      utterance.lang=lang;
+      const voice=watchPickVoice(lang);
+      if(voice)utterance.voice=voice;
+
+      const baseRate=lang==="zh-CN"
+        ? Number(settings.chinese_rate||1.0)
+        : Number(settings.english_rate||1.0);
+      utterance.rate=Math.max(0.6,Math.min(1.8,baseRate*walkmanRate));
+      utterance.pitch=1;
+      utterance.volume=1;
+
+      utterance.onstart=()=>{
+        if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="⏸";
+      };
+      utterance.onend=()=>resolve(true);
+      utterance.onerror=()=>resolve(false);
+
+      try{
+        speechSynthesis.speak(utterance);
+      }catch{
+        resolve(false);
+      }
+    });
+
+    if(!ok)return false;
+    if(i<lines.length-1){
+      await new Promise(r=>setTimeout(r,40));
+    }
+  }
+
+  return generation===ttsPlaybackGeneration&&walkmanPlaying;
+}
+
 async function playWalkmanContinuousCard(card){
   const lines=walkmanSegments(card);
   if(!lines.length)return false;
@@ -2263,8 +2331,19 @@ async function playWalkmanCurrent(){
     return;
   }
 
-  // Preferred path: one continuous MP3 for the whole card. Lyrics scroll
-  // independently, so sentence boundaries no longer cause audible TTS gaps.
+  // Apple Watch web content can speak with the browser TTS engine even when
+  // HTMLAudioElement rejects MP3/AAC sources. Keep this path Watch-only.
+  if(isAppleWatchLike()){
+    const spoken=await playWalkmanWatchBrowserTts(card);
+    if(spoken){
+      walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
+      setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},120);
+      return;
+    }
+    if(!walkmanPlaying)return;
+  }
+
+  // Other devices keep the existing server-generated audio path unchanged.
   const continuous=await playWalkmanContinuousCard(card);
   if(continuous){
     walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
@@ -2367,10 +2446,8 @@ async function enterWalkmanMode(){
 
   const watch=isAppleWatchLike();
 
-  // The "随身听" tap itself is the user gesture on Apple Watch.
-  // Prime the shared audio element immediately, before any await/fetch,
-  // so playback can continue automatically once TTS is ready.
-  if(watch)primeAppleWatchAudio();
+  // Apple Watch uses native browser speechSynthesis in Walkman mode.
+  // Do not touch the HTML audio element here.
 
   walkmanPlaying=false;
   walkmanIndex=0;
@@ -2409,7 +2486,12 @@ async function enterWalkmanMode(){
   // Apple Watch starts immediately after entering Walkman mode.
   // Other devices retain the existing manual play button behavior.
   if(watch && walkmanQueue.length){
-    watchDiag("autoplay walkman start");
+    const direct=document.getElementById("watchDirectAudioLink");
+    if(direct)direct.remove();
+    if(watchDiagEl){
+      watchDiagEl.remove();
+      watchDiagEl=null;
+    }
     walkmanPlaying=true;
     walkmanPaused=false;
     playWalkmanCurrent();
