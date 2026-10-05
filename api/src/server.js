@@ -1003,7 +1003,7 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   const answers=[...(sessionRow.answers||[]),answerRecord];
 
   let adaptiveQuestion=null;
-  const existingAdaptive=answers.filter(a=>a.adaptive).length;
+  const existingAdaptive=(sessionRow.questions||[]).filter(x=>x.adaptive===true).length;
   const shouldAdapt=existingAdaptive<3 && (
     grade.verdict!=="correct" ||
     (grade.verdict==="correct" && confidence==="sure" && q.difficultyLevel!=="challenge")
