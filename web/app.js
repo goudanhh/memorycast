@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
-let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map(),walkmanChunkIndex=0,walkmanChunkTime=0,walkmanGlobalLineIndex=0,walkmanResumePending=false;
+let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map(),walkmanChunkIndex=0,walkmanChunkTime=0,walkmanGlobalLineIndex=0,walkmanResumePending=false,walkmanPaused=false;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
@@ -2011,6 +2011,7 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
     };
     audio.onplaying=()=>{
       audioHasStarted=true;
+      if(walkmanPlaying && $("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="⏸";
       if(resumeThisChunk && resumeAt>0 && Number.isFinite(audio.duration)){
         audio.currentTime=Math.min(resumeAt,Math.max(0,audio.duration-.05));
       }
@@ -2079,15 +2080,29 @@ async function playWalkmanContinuousCard(card){
   return walkmanPlaying;
 }
 
+function pauseWalkman(){
+  if(!walkmanPlaying)return;
+  walkmanPlaying=false;
+  walkmanPaused=true;
+
+  if(currentAudio && !currentAudio.paused){
+    walkmanChunkTime=currentAudio.currentTime||walkmanChunkTime||0;
+    currentAudio.pause();
+  }
+
+  // Keep the currently highlighted lyric exactly as-is.
+  if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
+}
+
 function stopWalkman(){
   walkmanPlaying=false;
+  walkmanPaused=false;
   walkmanResumePending=false;
   walkmanChunkIndex=0;
   walkmanChunkTime=0;
   walkmanGlobalLineIndex=0;
   stopAllTts();
   if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
-  showWalkmanSubtitle("已暂停");
 }
 
 async function playWalkmanCurrent(){
@@ -2135,8 +2150,26 @@ async function playWalkmanCurrent(){
 }
 async function toggleWalkmanPlayback(){
   if(walkmanPlaying){
-    stopWalkman();
+    pauseWalkman();
     return;
+  }
+
+  // True pause/resume: keep the same audio element, object URL, currentTime
+  // and lyric state. No Azure request and no chunk restart.
+  if(walkmanPaused && currentAudio && currentAudio.src){
+    try{
+      walkmanPlaying=true;
+      walkmanPaused=false;
+      $("walkmanPlayBtn").textContent="⏸";
+      await currentAudio.play();
+      return;
+    }catch(err){
+      walkmanPlaying=false;
+      walkmanPaused=true;
+      $("walkmanPlayBtn").textContent="▶";
+      console.warn("Walkman resume failed:",err?.message||err);
+      return;
+    }
   }
 
   if(!walkmanQueue.length){
@@ -2147,25 +2180,41 @@ async function toggleWalkmanPlayback(){
     return;
   }
 
+  // If pause happened during a tiny between-chunk loading gap, resume from
+  // the saved chunk state rather than jumping back to the card beginning.
+  if(walkmanPaused){
+    walkmanPlaying=true;
+    walkmanPaused=false;
+    walkmanResumePending=true;
+    $("walkmanPlayBtn").textContent="…";
+    playWalkmanCurrent();
+    return;
+  }
+
   stopAllTts();
   walkmanPlaying=true;
+  walkmanPaused=false;
   $("walkmanPlayBtn").textContent="…";
+
   const current=walkmanQueue[walkmanIndex];
   const currentGroups=current?walkmanChunkGroups(walkmanSegments(current)):[];
   const firstKey=current&&currentGroups[0]?walkmanChunkKey(current,0,currentGroups[0]):"";
   const lyricTrack=$("walkmanSubtitle");
+
   if(lyricTrack && firstKey && !walkmanAudioCache.has(firstKey)){
     lyricTrack.innerHTML='<div class="walkman-lyric active">正在准备语音…</div>';
   }
+
   if(current&&currentGroups[0]&&!walkmanAudioCache.has(firstKey)){
     prefetchWalkmanChunk(current,0,currentGroups[0]);
   }
+
   setTimeout(()=>{
-    if(walkmanPlaying)$("walkmanPlayBtn").textContent="⏹";
+    if(walkmanPlaying)$("walkmanPlayBtn").textContent="⏸";
   },120);
+
   playWalkmanCurrent();
 }
-
 async function enterWalkmanMode(){
   stopAllTts();
   walkmanPlaying=false;
@@ -2174,6 +2223,7 @@ async function enterWalkmanMode(){
   walkmanChunkTime=0;
   walkmanGlobalLineIndex=0;
   walkmanResumePending=false;
+  walkmanPaused=false;
   walkmanRate=Number($("walkmanRate")?.value||1);
   try{
     await loadWalkmanQueue();
@@ -2215,4 +2265,36 @@ $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;i
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
-$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{const wasPlaying=walkmanPlaying;walkmanRate=Number($("walkmanRate").value||1);const c=walkmanQueue[walkmanIndex];if(c){const g=walkmanChunkGroups(walkmanSegments(c));const idx=Math.max(0,Math.min(g.length-1,walkmanChunkIndex));if(g[idx])prefetchWalkmanChunk(c,idx,g[idx])}if(wasPlaying){walkmanResumePending=true;stopAllTts();walkmanPlaying=true;setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{
+  const wasPlaying=walkmanPlaying;
+  const wasPaused=walkmanPaused;
+  walkmanRate=Number($("walkmanRate").value||1);
+
+  const c=walkmanQueue[walkmanIndex];
+  if(c){
+    const g=walkmanChunkGroups(walkmanSegments(c));
+    const idx=Math.max(0,Math.min(g.length-1,walkmanChunkIndex));
+    if(g[idx])prefetchWalkmanChunk(c,idx,g[idx]);
+  }
+
+  if(wasPlaying || wasPaused){
+    walkmanChunkTime=currentAudio?.currentTime||walkmanChunkTime||0;
+    walkmanResumePending=true;
+    walkmanPaused=wasPaused;
+    walkmanPlaying=wasPlaying;
+
+    stopAllTts();
+
+    if(wasPlaying){
+      walkmanPlaying=true;
+      walkmanPaused=false;
+      setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80);
+    }else{
+      // Stay paused at the same logical position. Resume will regenerate only
+      // the current chunk at the new speed, not restart the card.
+      walkmanPlaying=false;
+      walkmanPaused=true;
+      if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
+    }
+  }
+};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
