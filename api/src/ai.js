@@ -171,12 +171,33 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
 
 export async function generateStructured({ system, user, schema, name, model, provider:providerOverride }) {
   const p = String(providerOverride || provider()).toLowerCase();
-  if (p === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model });
-  if (p === "cloudflare" || p === "openrouter") return generateCompatibleJson({providerName:p,system,user,schema,modelOverride:model});
-  if (p === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model });
 
-  const e = new Error("No supported AI provider is configured.");
-  e.statusCode = 503;
+  const run=async chosen=>{
+    if (chosen === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model });
+    if (chosen === "cloudflare" || chosen === "openrouter")
+      return generateCompatibleJson({providerName:chosen,system,user,schema,modelOverride:model});
+    if (chosen === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model });
+    const e = new Error("No supported AI provider is configured.");e.statusCode=503;throw e;
+  };
+
+  if(p!=="auto") return run(p);
+
+  const order=["gemini","cloudflare","openrouter"];
+  const failures=[];
+  for(const chosen of order){
+    const configured=
+      chosen==="gemini" ? Boolean(process.env.GEMINI_API_KEY) :
+      chosen==="cloudflare" ? Boolean(process.env.CLOUDFLARE_API_KEY&&process.env.CLOUDFLARE_ACCOUNT_ID) :
+      Boolean(process.env.OPENROUTER_API_KEY);
+    if(!configured)continue;
+    try{return await run(chosen);}
+    catch(err){
+      failures.push(chosen+": "+(err?.message||String(err)));
+      console.warn("AI auto provider failed:",chosen,err?.message||err);
+    }
+  }
+  const e=new Error(failures.length?"所有免费 AI API 当前都不可用，请稍后重试。":"尚未配置可用的 AI API。");
+  e.statusCode=failures.length?502:503;
   throw e;
 }
 
