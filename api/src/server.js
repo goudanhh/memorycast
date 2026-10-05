@@ -989,6 +989,11 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
 Mix MCQ, fill, short-answer and listening items when appropriate.
 For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
 For listening, audioText is what TTS reads and the prompt must not reveal it.
+Use Simplified Chinese for the quiz prompt and all learner-facing instructions by default.
+Keep English words, phrases, sentences, answer choices, and examples in English when they are the learning target.
+If the learner must answer in English, explicitly say "请用英文回答".
+For listening questions, keep the visible prompt in Chinese while audioText may be English.
+Do not turn the whole question into English merely because the source card contains English.
 For English, test recognition and production. For technical material, test understanding.
 Assign difficultyLevel:
 - foundation = recognition/basic recall
@@ -1057,8 +1062,12 @@ Do not reveal or paraphrase the previous answer in the prompt.
 Target difficulty is ${target}.
 If the learner was wrong/partial, prefer a clearer foundation/standard retrieval cue, not a duplicate.
 If the learner was correct and confident, make a genuine challenge/transfer question.
+Use Simplified Chinese for the follow-up prompt and learner-facing instructions by default.
+Keep English target words, phrases, example sentences, and answer choices in English where appropriate.
+If the learner must answer in English, explicitly say "请用英文回答".
 For MCQ give exactly 4 plausible choices; otherwise choices=[].
-For listening, audioText is what TTS reads and prompt must not reveal it.
+For listening, keep the visible prompt in Chinese; audioText is what TTS reads and the prompt must not reveal it.
+Do not make the whole follow-up question English just because the source material is English.
 Return schema-valid JSON only.`,
     user:JSON.stringify({
       card:{id:card.id,front:card.front,back:card.back,example:card.example,tags:card.tags||[]},
