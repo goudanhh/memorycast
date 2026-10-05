@@ -905,6 +905,8 @@ app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
         card_id,
         COUNT(*) FILTER (WHERE rating='Again' OR verdict='wrong')::int AS wrong_count,
         COUNT(*) FILTER (WHERE rating='Hard' OR verdict='partial')::int AS hard_count,
+        (ARRAY_AGG(rating ORDER BY reviewed_at DESC))[1] AS last_rating,
+        (ARRAY_AGG(verdict ORDER BY reviewed_at DESC))[1] AS last_verdict,
         MAX(reviewed_at) AS last_reviewed_at
       FROM reviews
       WHERE user_id=$1
@@ -917,8 +919,10 @@ app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
       rs.last_reviewed_at,
       (
         CASE WHEN c.due<=NOW() THEN 120 ELSE 0 END
-        + COALESCE(rs.wrong_count,0)*28
-        + COALESCE(rs.hard_count,0)*10
+        + CASE WHEN rs.last_rating='Again' OR rs.last_verdict='wrong' THEN 85 ELSE 0 END
+        + CASE WHEN rs.last_rating='Hard' OR rs.last_verdict='partial' THEN 40 ELSE 0 END
+        + LEAST(30,COALESCE(rs.wrong_count,0)*8)
+        + LEAST(20,COALESCE(rs.hard_count,0)*4)
         + LEAST(40,COALESCE((c.fsrs->>'difficulty')::float,0)*4)
         + CASE WHEN c.review_count=0 THEN 12 ELSE 0 END
         + GREATEST(0,LEAST(30,EXTRACT(EPOCH FROM (NOW()-c.due))/86400))
@@ -949,18 +953,24 @@ app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
   const due=chosen.due && new Date(chosen.due)<=new Date();
   const wrong=Number(chosen.wrong_count||0);
   const hard=Number(chosen.hard_count||0);
+  const lastWrong=chosen.last_rating==="Again"||chosen.last_verdict==="wrong";
+  const lastHard=chosen.last_rating==="Hard"||chosen.last_verdict==="partial";
   const difficulty=Number(chosen.fsrs?.difficulty||0);
   const reason=due
     ? "FSRS 已到期，优先复习"
-    : wrong>0
-      ? "过去有答错记录，优先巩固"
-      : hard>0
-        ? "过去有不熟记录，优先巩固"
-        : difficulty>=7
-          ? "FSRS 难度较高"
-          : chosen.review_count===0
-            ? "尚未充分复习"
-            : "从当前记忆队列随机抽取";
+    : lastWrong
+      ? "最近一次没掌握，优先重学"
+      : lastHard
+        ? "最近一次不熟，优先巩固"
+        : wrong>0
+          ? "有过答错记录，随机加强"
+          : hard>0
+            ? "有过困难记录，随机加强"
+            : difficulty>=7
+              ? "FSRS 难度较高"
+              : Number(chosen.review_count||0)===0
+                ? "尚未充分复习"
+                : "从当前记忆队列随机抽取";
 
   res.json({
     card:{
@@ -1010,6 +1020,7 @@ app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const topic=String(req.body?.topic||"").trim().slice(0,300);
   const explanation=String(req.body?.explanation||"").trim().slice(0,10000);
+  const sourceCardId=String(req.body?.cardId||"").trim();
   let sessionId=String(req.body?.sessionId||"").trim();
 
   if(!topic) return res.status(400).json({error:"请先填写要讲解的主题。"});
@@ -1066,6 +1077,23 @@ Return schema-valid JSON only.`,
 
   const data=await generateStructured({...analysisRequest,provider:aiProvider});
 
+  let feynmanFsrsRating=null;
+  let updatedCard=null;
+  if(sourceCardId){
+    const score=Number(data.clarityScore||0);
+    feynmanFsrsRating=data.status==="mastered" && score>=80
+      ? "Good"
+      : score>=50
+        ? "Hard"
+        : "Again";
+    try{
+      updatedCard=await applyReview(uid,sourceCardId,feynmanFsrsRating,"feynman",data.status);
+    }catch(err){
+      if(err?.statusCode!==404) throw err;
+      feynmanFsrsRating=null;
+    }
+  }
+
   const aiContent=[data.studentReply,data.followUpQuestion].filter(Boolean).join(" ");
 
   await query(`
@@ -1097,7 +1125,7 @@ Return schema-valid JSON only.`,
     WHERE id=$2 AND user_id=$1
   `,[uid,sessionId,topic,data.status,data.clarityScore]);
 
-  res.json({...data,sessionId,topic});
+  res.json({...data,sessionId,topic,feynmanFsrsRating,updatedCard});
 }));
 
 
