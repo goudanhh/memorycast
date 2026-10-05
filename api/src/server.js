@@ -105,13 +105,6 @@ await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_grade_provide
 await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_feynman_provider TEXT NOT NULL DEFAULT 'gemini'`);
 await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stt_provider TEXT NOT NULL DEFAULT 'cloudflare'`);
 await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ocr_provider TEXT NOT NULL DEFAULT 'gemini'`);
-await query(`
-  ALTER TABLE user_settings
-  ADD COLUMN IF NOT EXISTS nav_order TEXT[] NOT NULL DEFAULT ARRAY[
-    'homePage','todayPage','importPage','notesPage','quizPage',
-    'feynmanPage','libraryPage','statsPage','settingsPage'
-  ]::text[]
-`);
 
 await query(`UPDATE user_settings SET english_rate=1.0 WHERE english_rate=1.2`);
 await query(`UPDATE user_settings SET chinese_rate=1.0 WHERE chinese_rate=1.3`);
@@ -302,27 +295,6 @@ app.get("/settings", requireAuth, asyncRoute(async(req,res)=>{
   res.json(rows[0]);
 }));
 
-const DEFAULT_NAV_ORDER_SERVER=[
-  "homePage","todayPage","importPage","notesPage","quizPage",
-  "feynmanPage","libraryPage","statsPage","settingsPage"
-];
-function cleanNavOrder(input){
-  const allowed=new Set(DEFAULT_NAV_ORDER_SERVER);
-  const supplied=Array.isArray(input)?input.map(String):[];
-  const unique=supplied.filter((id,i)=>allowed.has(id)&&supplied.indexOf(id)===i);
-  return [...unique,...DEFAULT_NAV_ORDER_SERVER.filter(id=>!unique.includes(id))];
-}
-
-app.put("/settings/nav-order", requireAuth, asyncRoute(async(req,res)=>{
-  const navOrder=cleanNavOrder(req.body?.nav_order);
-  const {rows}=await query(`
-    UPDATE user_settings
-    SET nav_order=$2::text[],updated_at=NOW()
-    WHERE user_id=$1
-    RETURNING nav_order
-  `,[userId(req),navOrder]);
-  res.json({nav_order:rows[0]?.nav_order||navOrder});
-}));
 
 app.put("/settings", requireAuth, asyncRoute(async(req,res)=>{
   const b=req.body||{};
