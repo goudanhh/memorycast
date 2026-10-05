@@ -110,3 +110,11 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .quiz-diagnosis-row{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line,#eee)}
 .quiz-diagnosis-row:last-child{border-bottom:0}
 @media(max-width:760px){.quiz-diagnosis-grid{grid-template-columns:1fr}}
+
+.review-flashcard{cursor:pointer;user-select:none;transition:transform .15s ease,box-shadow .15s ease}
+.review-flashcard:hover{transform:translateY(-1px)}
+.review-flashcard .review-flip-hint{margin-top:14px;font-size:.88rem;text-align:center}
+.review-flashcard.revealed .review-flip-hint{display:none}
+.review-flashcard .back{margin-top:18px;padding-top:18px;border-top:1px solid var(--line,#e5e7eb)}
+.review-flashcard .example{margin-top:10px}
+.ratings button:disabled{opacity:.4;cursor:not-allowed}
