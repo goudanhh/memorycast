@@ -177,11 +177,20 @@
     <div id="quizArea" class="hidden">
       <div class="panel-head"><b id="quizTitle"></b><span id="quizProgress" class="muted"></span></div>
       <div class="quiz-card">
-        <div id="quizType" class="eyebrow"></div>
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div id="quizType" class="eyebrow"></div>
+          <span id="quizDifficulty" class="chip"></span>
+        </div>
         <h3 id="quizPrompt"></h3>
         <button id="listenQuizBtn" class="ghost hidden">🔊 播放听力</button>
         <div id="quizChoices" class="quiz-choices"></div>
         <textarea id="quizAnswer" placeholder="输入答案…"></textarea>
+        <div class="quiz-confidence">
+          <span class="muted">你有多确定？</span>
+          <button type="button" class="ghost" data-confidence="sure">✅ 很确定</button>
+          <button type="button" class="ghost" data-confidence="unsure">🤔 不太确定</button>
+          <button type="button" class="ghost" data-confidence="guess">❓ 猜的 / 不会</button>
+        </div>
         <button id="submitQuizBtn" class="btn dark">提交答案</button>
         <div id="quizFeedback" class="feedback hidden"></div>
         <button id="nextQuizBtn" class="ghost hidden">下一题 →</button>
@@ -377,7 +386,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=tts-clear-isolated-8"></script>
+<script type="module" src="/app.js?v=adaptive-quiz-9"></script>
 <audio id="globalTtsAudio" preload="none" class="hidden"></audio>
 </body>
 </html>
