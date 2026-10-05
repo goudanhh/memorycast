@@ -774,15 +774,16 @@ Return schema-valid JSON only.`,
 const feynmanRealtimeSchema={
   type:"object",
   properties:{
-    action:{type:"string",enum:["listen","intervene"]},
+    action:{type:"string",enum:["listen","intervene","respond"]},
     thoughtState:{type:"string",enum:["developing","complete"]},
     gapType:{type:"string",enum:["none","definition","causal_jump","hidden_assumption","contradiction","circular_reasoning","unsupported_claim","boundary_case"]},
     confidence:{type:"number",minimum:0,maximum:1},
     anchor:{type:"string"},
     question:{type:"string"},
+    response:{type:"string"},
     clarityScore:{type:"integer",minimum:0,maximum:100}
   },
-  required:["action","thoughtState","gapType","confidence","anchor","question","clarityScore"],
+  required:["action","thoughtState","gapType","confidence","anchor","question","response","clarityScore"],
   additionalProperties:false
 };
 
@@ -827,6 +828,8 @@ app.post("/feynman/realtime", requireAuth, asyncRoute(async(req,res)=>{
   const deepModel=process.env.FEYNMAN_DEEP_MODEL ||
     (aiProvider==="gemini" ? "gemini-3.8-flash" : process.env.OPENAI_MODEL);
 
+  const explicitResponseRequested=/(对吗|对不对|是不是这样|是不是这样子|我理解得对吗|我说得对吗|给我.*反馈|给点.*反馈|评价一下|你怎么看|你觉得呢|有没有问题|有问题吗|正确吗|right\??|am i right|is that right|does that make sense)/i.test(explanation);
+
   // Stage 1: cheap, fast gate. Its job is mostly to say "keep listening".
   const gate=await generateStructured({
     name:"feynman_gate",
@@ -845,7 +848,8 @@ Rules:
 - Do not ask generic questions.
 - At this stage, confidence means confidence that a second, stronger model should inspect the possible interruption.
 - If unsure, listen.
-- When listening, question="".
+- When listening, question="" and response="".
+- This fast gate normally does not provide feedback; response should be "".
 Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   });
@@ -859,12 +863,13 @@ Return schema-valid JSON only.`,
   let finalDecision={
     ...gate,
     action:"listen",
-    question:""
+    question:"",
+    response:""
   };
   let deepChecked=false;
 
-  // Stage 2: only candidate interruptions go to the stronger model.
-  if(gateCandidate){
+  // Stage 2: candidate interruptions OR explicit requests for feedback go to the stronger model.
+  if(gateCandidate || explicitResponseRequested){
     deepChecked=true;
     finalDecision=await generateStructured({
       name:"feynman_deep_judge",
@@ -873,9 +878,19 @@ Return schema-valid JSON only.`,
       system:`You are the final judge for a live Feynman/Socratic conversation.
 A faster model thinks there may be a reason to interrupt. Your job is to independently verify that judgment using the full recent context.
 
-Be conservative: a thoughtful human mentor usually listens longer than an impatient chatbot.
+Be conservative when deciding whether to interrupt: a thoughtful human mentor usually listens longer than an impatient chatbot.
 
-First decide whether the user has actually completed the current thought.
+IMPORTANT EXCEPTION — explicit request:
+If the user directly asks for confirmation, feedback, evaluation, or an answer (for example “对吗？”, “给我点反馈”, “我这样理解对不对？”), you MUST respond.
+For an explicit request:
+- action="respond"
+- response should be a concise spoken answer that directly addresses what the user asked.
+- If their explanation is substantially correct, say what is correct and make the most important correction or refinement.
+- If it is wrong, explain the key correction briefly.
+- You may put ONE useful follow-up question in question, but only if it helps the user continue reasoning.
+- Do not hide behind a Socratic question when the user explicitly asked for feedback.
+
+Otherwise, first decide whether the user has actually completed the current thought.
 Then determine whether there is a MATERIAL reasoning problem:
 - definition
 - causal_jump
@@ -901,29 +916,40 @@ Approve action="intervene" only when:
 When intervening:
 - ask exactly ONE natural spoken question,
 - anchor it to the user's specific claim,
+- response="",
 - no praise, preamble, summary, or lecture,
 - usually under 30 Chinese characters or 20 English words.
 
-When listening, question="".
+When listening, question="" and response="".
+When responding to an explicit request, response must be non-empty and directly useful.
 Return schema-valid JSON only.`,
       user:JSON.stringify({
         topic:session.topic,
         history,
         currentExplanation:explanation,
-        fastModelAssessment:gate
+        fastModelAssessment:gate,
+        explicitResponseRequested
       })
     });
   }
 
+  const shouldRespond=
+    explicitResponseRequested &&
+    finalDecision.action==="respond" &&
+    String(finalDecision.response||"").trim();
+
   const shouldIntervene=
+    !shouldRespond &&
     finalDecision.action==="intervene" &&
     finalDecision.thoughtState==="complete" &&
     Number(finalDecision.confidence)>=0.82 &&
     String(finalDecision.question||"").trim();
 
-  const question=shouldIntervene?String(finalDecision.question||"").trim():"";
-  const action=shouldIntervene?"intervene":"listen";
-  const aiContent=question || "（继续倾听）";
+  const response=shouldRespond?String(finalDecision.response||"").trim():"";
+  const question=shouldIntervene?String(finalDecision.question||"").trim():
+    (shouldRespond?String(finalDecision.question||"").trim():"");
+  const action=shouldRespond?"respond":shouldIntervene?"intervene":"listen";
+  const aiContent=response || question || "（继续倾听）";
 
   await query(`
     INSERT INTO feynman_turns(session_id,role,content,metadata)
@@ -942,6 +968,8 @@ Return schema-valid JSON only.`,
       confidence:finalDecision.confidence,
       anchor:finalDecision.anchor||"",
       followUpQuestion:question,
+      response,
+      explicitResponseRequested,
       clarityScore:finalDecision.clarityScore,
       realtime:true,
       fastModel,
@@ -969,6 +997,7 @@ Return schema-valid JSON only.`,
     confidence:finalDecision.confidence,
     anchor:finalDecision.anchor||"",
     question,
+    response,
     clarityScore:finalDecision.clarityScore,
     sessionId,
     topic,
