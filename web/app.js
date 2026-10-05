@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
-let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map();
+let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map(),walkmanChunkIndex=0,walkmanChunkTime=0,walkmanGlobalLineIndex=0,walkmanResumePending=false;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
@@ -1897,20 +1897,25 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   currentTtsObjectUrl=url;
   currentAudio=audio;
   audio.pause();
-  audio.currentTime=0;
   audio.src=url;
+
+  const resumeThisChunk=walkmanResumePending && chunkIndex===walkmanChunkIndex;
+  const resumeAt=resumeThisChunk?Math.max(0,Number(walkmanChunkTime||0)):0;
+  audio.currentTime=0;
 
   const exactTimings=(media.timings||[])
     .map(x=>({index:Number(x.index||0),offsetMs:Number(x.offsetMs||0)}))
     .filter(x=>Number.isFinite(x.offsetMs))
     .sort((x,y)=>x.offsetMs-y.offsetMs);
 
-  // Keep the previous chunk's final lyric highlighted while the next audio
-  // is loading. Do not jump to this chunk until its first real spoken-word
-  // boundary has actually been reached.
+  // Do not move to the next chunk's first lyric until the audio element is
+  // actually playing and the real first-word boundary has been crossed.
   let localActive=-1;
+  let audioHasStarted=false;
 
   const syncLyrics=()=>{
+    if(!audioHasStarted || audio.paused || audio.readyState<2)return;
+
     const nowMs=audio.currentTime*1000;
     let idx=-1;
 
@@ -1924,12 +1929,25 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
 
     if(idx!==localActive){
       localActive=idx;
-      setWalkmanLyricIndex(allLines,globalStartIndex+idx);
+      walkmanGlobalLineIndex=globalStartIndex+idx;
+      setWalkmanLyricIndex(allLines,walkmanGlobalLineIndex);
     }
   };
 
   await new Promise((resolve,reject)=>{
-    audio.ontimeupdate=syncLyrics;
+    audio.ontimeupdate=()=>{
+      walkmanChunkIndex=chunkIndex;
+      walkmanChunkTime=audio.currentTime||0;
+      syncLyrics();
+    };
+    audio.onplaying=()=>{
+      audioHasStarted=true;
+      if(resumeThisChunk && resumeAt>0 && Number.isFinite(audio.duration)){
+        audio.currentTime=Math.min(resumeAt,Math.max(0,audio.duration-.05));
+      }
+      walkmanResumePending=false;
+      syncLyrics();
+    };
     audio.onended=resolve;
     audio.onerror=()=>reject(new Error("随身听音频播放失败"));
     const p=audio.play();
@@ -1937,6 +1955,7 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   }).catch(err=>console.warn(err.message));
 
   audio.ontimeupdate=null;
+  audio.onplaying=null;
   audio.onended=null;
   audio.onerror=null;
 
@@ -1964,8 +1983,11 @@ async function playWalkmanContinuousCard(card){
   // Only the first small chunk blocks startup.
   prefetchWalkmanChunk(card,0,groups[0]);
 
+  let startChunk=walkmanResumePending?Math.max(0,Math.min(groups.length-1,walkmanChunkIndex)):0;
   let globalStart=0;
-  for(let i=0;i<groups.length;i++){
+  for(let j=0;j<startChunk;j++)globalStart+=groups[j].length;
+
+  for(let i=startChunk;i<groups.length;i++){
     if(!walkmanPlaying)return false;
 
     // Generate the next chunk while the current one is playing.
@@ -1982,11 +2004,19 @@ async function playWalkmanContinuousCard(card){
     globalStart+=groups[i].length;
   }
 
+  walkmanChunkIndex=0;
+  walkmanChunkTime=0;
+  walkmanGlobalLineIndex=0;
+  walkmanResumePending=false;
   return walkmanPlaying;
 }
 
 function stopWalkman(){
   walkmanPlaying=false;
+  walkmanResumePending=false;
+  walkmanChunkIndex=0;
+  walkmanChunkTime=0;
+  walkmanGlobalLineIndex=0;
   stopAllTts();
   if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
   showWalkmanSubtitle("已暂停");
@@ -2072,6 +2102,10 @@ async function enterWalkmanMode(){
   stopAllTts();
   walkmanPlaying=false;
   walkmanIndex=0;
+  walkmanChunkIndex=0;
+  walkmanChunkTime=0;
+  walkmanGlobalLineIndex=0;
+  walkmanResumePending=false;
   walkmanRate=Number($("walkmanRate")?.value||1);
   try{
     await loadWalkmanQueue();
@@ -2113,4 +2147,4 @@ $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;i
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
-$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{walkmanRate=Number($("walkmanRate").value||1);const c=walkmanQueue[walkmanIndex];if(c){const g=walkmanChunkGroups(walkmanSegments(c));if(g[0])prefetchWalkmanChunk(c,0,g[0])}if(walkmanPlaying){stopAllTts();setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+$("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{const wasPlaying=walkmanPlaying;walkmanRate=Number($("walkmanRate").value||1);const c=walkmanQueue[walkmanIndex];if(c){const g=walkmanChunkGroups(walkmanSegments(c));const idx=Math.max(0,Math.min(g.length-1,walkmanChunkIndex));if(g[idx])prefetchWalkmanChunk(c,idx,g[idx])}if(wasPlaying){walkmanResumePending=true;stopAllTts();walkmanPlaying=true;setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},80)}};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
