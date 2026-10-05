@@ -29,9 +29,15 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
       FSRS_RETENTION: ${FSRS_RETENTION:-0.90}
+      TTS_PROVIDER: ${TTS_PROVIDER:-browser}
+      AZURE_SPEECH_KEY: ${AZURE_SPEECH_KEY:-}
+      AZURE_SPEECH_REGION: ${AZURE_SPEECH_REGION:-}
+      TTS_CACHE_DIR: /app/tts-cache
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - tts_cache:/app/tts-cache
     networks: [memorycast]
 
   web:
@@ -56,6 +62,7 @@ services:
 
 volumes:
   postgres_data:
+  tts_cache:
 
 networks:
   memorycast:
