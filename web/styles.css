@@ -150,26 +150,42 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
   background:#0f172a;
   padding:28px;
 }
-.walkman-subtitle{
-  width:min(900px,90vw);
-  min-height:120px;
+.walkman-lyrics{
+  width:min(980px,92vw);
+  height:min(48vh,420px);
+  overflow:hidden;
+  position:relative;
+  mask-image:linear-gradient(to bottom,transparent 0%,#000 18%,#000 82%,transparent 100%);
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 18%,#000 82%,transparent 100%);
+}
+.walkman-lyrics-track{
+  height:100%;
+  overflow-y:auto;
+  scrollbar-width:none;
+  padding:150px 10px;
+  scroll-behavior:smooth;
+}
+.walkman-lyrics-track::-webkit-scrollbar{display:none}
+.walkman-lyric{
+  min-height:72px;
   display:flex;
   align-items:center;
   justify-content:center;
   text-align:center;
-  color:#fff;
-  font-size:clamp(24px,4vw,52px);
+  color:rgba(255,255,255,.34);
+  font-size:clamp(20px,3vw,38px);
   line-height:1.45;
-  font-weight:700;
-  white-space:pre-wrap;
-  word-break:break-word;
-  opacity:.18;
-  transform:translateY(8px);
-  transition:opacity .18s ease,transform .18s ease;
+  font-weight:650;
+  transform:scale(.96);
+  transition:color .24s ease,opacity .24s ease,transform .24s ease,font-size .24s ease;
+  padding:8px 20px;
 }
-.walkman-subtitle.walkman-subtitle-active{
+.walkman-lyric.active{
+  color:#fff;
   opacity:1;
-  transform:translateY(0);
+  transform:scale(1);
+  font-size:clamp(28px,4vw,52px);
+  font-weight:800;
 }
 .walkman-controls{
   display:flex;
@@ -205,7 +221,7 @@ body.walkman #loginScreen{visibility:hidden}
 body.walkman .walkman-mode{visibility:visible}
 @media(max-width:560px){
   .walkman-mode{gap:22px;padding:22px}
-  .walkman-subtitle{width:92vw;min-height:160px;font-size:30px}
+  .walkman-lyrics{width:94vw;height:48vh}.walkman-lyrics-track{padding:120px 6px}.walkman-lyric{min-height:64px;font-size:22px;padding:8px 10px}.walkman-lyric.active{font-size:32px}
   .walkman-controls{gap:16px}
   .walkman-play{width:120px;height:120px;font-size:46px}
   .walkman-rate{width:120px;min-width:120px;text-align:center}
