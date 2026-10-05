@@ -21,7 +21,7 @@ function openaiModel() {
   return process.env.OPENAI_MODEL || "gpt-5.4-mini";
 }
 
-async function generateGeminiJson({ system, user, schema }) {
+async function generateGeminiJson({ system, user, schema, modelOverride }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     const e = new Error("GEMINI_API_KEY is not configured on the server.");
@@ -29,7 +29,7 @@ async function generateGeminiJson({ system, user, schema }) {
     throw e;
   }
 
-  const model = geminiModel();
+  const model = modelOverride || geminiModel();
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const response = await fetch(url, {
@@ -75,7 +75,7 @@ async function generateGeminiJson({ system, user, schema }) {
   return JSON.parse(text);
 }
 
-async function generateOpenAIJson({ system, user, schema, name }) {
+async function generateOpenAIJson({ system, user, schema, name, modelOverride }) {
   if (!process.env.OPENAI_API_KEY) {
     const e = new Error("OPENAI_API_KEY is not configured on the server.");
     e.statusCode = 503;
@@ -84,7 +84,7 @@ async function generateOpenAIJson({ system, user, schema, name }) {
   if (!openaiClient) openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const response = await openaiClient.responses.create({
-    model: openaiModel(),
+    model: modelOverride || openaiModel(),
     input: [
       { role: "system", content: system },
       { role: "user", content: user }
@@ -102,10 +102,10 @@ async function generateOpenAIJson({ system, user, schema, name }) {
   return JSON.parse(response.output_text);
 }
 
-export async function generateStructured({ system, user, schema, name }) {
+export async function generateStructured({ system, user, schema, name, model }) {
   const p = provider();
-  if (p === "gemini") return generateGeminiJson({ system, user, schema });
-  if (p === "openai") return generateOpenAIJson({ system, user, schema, name });
+  if (p === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model });
+  if (p === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model });
 
   const e = new Error("No AI provider is configured.");
   e.statusCode = 503;
