@@ -91,6 +91,12 @@ await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS reminder_enabled
 await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS reminder_time TIME NOT NULL DEFAULT '09:00'`);
 await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS reminder_timezone TEXT NOT NULL DEFAULT 'UTC'`);
 await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_reminder_date DATE`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_organize_provider TEXT NOT NULL DEFAULT 'gemini'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_quiz_provider TEXT NOT NULL DEFAULT 'gemini'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_grade_provider TEXT NOT NULL DEFAULT 'gemini'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_feynman_provider TEXT NOT NULL DEFAULT 'gemini'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stt_provider TEXT NOT NULL DEFAULT 'cloudflare'`);
+await query(`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ocr_provider TEXT NOT NULL DEFAULT 'gemini'`);
 await query(`UPDATE user_settings SET english_rate=1.0 WHERE english_rate=1.2`);
 await query(`UPDATE user_settings SET chinese_rate=1.0 WHERE chinese_rate=1.3`);
 await query(`
@@ -241,6 +247,20 @@ app.get("/auth/github", (req,res) => res.redirect("/"));
 app.get("/auth/github/callback", (req,res) => res.redirect("/"));
 app.post("/auth/logout", (req,res) => res.json({ ok:true }));
 
+function cleanAiProviderChoice(value,fallback="gemini"){
+  const v=String(value||"").toLowerCase();
+  return ["gemini","cloudflare","openrouter","auto"].includes(v)?v:fallback;
+}
+async function featureProvider(uid,column,fallback="gemini"){
+  const allowed=new Set([
+    "ai_organize_provider","ai_quiz_provider","ai_grade_provider",
+    "ai_feynman_provider","stt_provider","ocr_provider"
+  ]);
+  if(!allowed.has(column))return fallback;
+  const {rows}=await query(`SELECT ${column} AS provider FROM user_settings WHERE user_id=$1`,[uid]);
+  return cleanAiProviderChoice(rows[0]?.provider,fallback);
+}
+
 app.get("/settings", requireAuth, asyncRoute(async(req,res)=>{
   const {rows} = await query(`SELECT * FROM user_settings WHERE user_id=$1`,[userId(req)]);
   res.json(rows[0]);
@@ -255,13 +275,31 @@ app.put("/settings", requireAuth, asyncRoute(async(req,res)=>{
   const reminderEnabled=b.reminder_enabled === true;
   const reminderTime=/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(String(b.reminder_time||"")) ? String(b.reminder_time) : "09:00";
   const reminderTimezone=String(b.reminder_timezone||"UTC").slice(0,80);
+
+  const organizeProvider=b.ai_organize_provider==null?null:cleanAiProviderChoice(b.ai_organize_provider);
+  const quizProvider=b.ai_quiz_provider==null?null:cleanAiProviderChoice(b.ai_quiz_provider);
+  const gradeProvider=b.ai_grade_provider==null?null:cleanAiProviderChoice(b.ai_grade_provider);
+  const feynmanProvider=b.ai_feynman_provider==null?null:cleanAiProviderChoice(b.ai_feynman_provider);
+  const sttProvider=b.stt_provider==null?null:cleanAiProviderChoice(b.stt_provider,"cloudflare");
+  const ocrProvider=b.ocr_provider==null?null:cleanAiProviderChoice(b.ocr_provider,"gemini");
+
   const {rows}=await query(`
     UPDATE user_settings SET
       english_rate=$2,chinese_rate=$3,daily_goal=$4,
       fsrs_retention=$5,wrong_requeue=$6,
-      reminder_enabled=$7,reminder_time=$8,reminder_timezone=$9,updated_at=NOW()
+      reminder_enabled=$7,reminder_time=$8,reminder_timezone=$9,
+      ai_organize_provider=COALESCE($10,ai_organize_provider),
+      ai_quiz_provider=COALESCE($11,ai_quiz_provider),
+      ai_grade_provider=COALESCE($12,ai_grade_provider),
+      ai_feynman_provider=COALESCE($13,ai_feynman_provider),
+      stt_provider=COALESCE($14,stt_provider),
+      ocr_provider=COALESCE($15,ocr_provider),
+      updated_at=NOW()
     WHERE user_id=$1 RETURNING *
-  `,[userId(req),en,zh,goal,retention,wrong,reminderEnabled,reminderTime,reminderTimezone]);
+  `,[
+    userId(req),en,zh,goal,retention,wrong,reminderEnabled,reminderTime,reminderTimezone,
+    organizeProvider,quizProvider,gradeProvider,feynmanProvider,sttProvider,ocrProvider
+  ]);
   res.json(rows[0]);
 }));
 async function getRetention(uid){
@@ -556,12 +594,16 @@ async function transcribeWithOpenRouter(audio,mimeType){
   return {text,provider:"openrouter",model};
 }
 
-async function transcribeAudio(audio,mimeType){
-  const providers=[
-    transcribeWithCloudflare,
-    transcribeWithGemini,
-    transcribeWithOpenRouter
-  ];
+async function transcribeAudio(audio,mimeType,providerChoice="auto"){
+  const providerMap={
+    cloudflare:transcribeWithCloudflare,
+    gemini:transcribeWithGemini,
+    openrouter:transcribeWithOpenRouter
+  };
+  const selected=cleanAiProviderChoice(providerChoice,"auto");
+  const providers=selected==="auto"
+    ? [transcribeWithCloudflare,transcribeWithGemini,transcribeWithOpenRouter]
+    : [providerMap[selected]];
   const failures=[];
   let configured=0;
 
@@ -593,7 +635,8 @@ app.post("/ai/transcribe", requireAuth, asyncRoute(async(req,res)=>{
   if(!audio.length) return res.status(400).json({error:"没有收到录音数据。"});
   if(audio.length>2_700_000) return res.status(413).json({error:"录音太大，请分段录制后再转写。"});
 
-  const result=await transcribeAudio(audio,mimeType);
+  const sttProvider=await featureProvider(userId(req),"stt_provider","cloudflare");
+  const result=await transcribeAudio(audio,mimeType,sttProvider);
   const note=await saveCapturedNote(userId(req),result.text,"语音笔记");
   res.json({
     text:result.text,
@@ -611,7 +654,8 @@ app.post("/ai/ocr", requireAuth, asyncRoute(async(req,res)=>{
   const image=decodeBase64Payload(req.body?.imageBase64);
   if(!image.length) return res.status(400).json({error:"没有收到图片数据。"});
   if(image.length>2_700_000) return res.status(413).json({error:"图片太大，请压缩或重新拍摄。"});
-  const result=await extractTextFromImage({base64:image.toString("base64"),mimeType});
+  const ocrProvider=await featureProvider(userId(req),"ocr_provider","gemini");
+  const result=await extractTextFromImage({base64:image.toString("base64"),mimeType,provider:ocrProvider});
   const note=await saveCapturedNote(userId(req),result.text,"OCR笔记");
   res.json({text:result.text,note,model:result.model,provider:result.provider});
 }));
@@ -663,7 +707,9 @@ app.post("/ai/organize", requireAuth, asyncRoute(async(req,res)=>{
         splitMode
       });
     }
+    const organizeProvider=await featureProvider(userId(req),"ai_organize_provider","gemini");
     const data=await generateStructured({
+      provider:organizeProvider,
       name:"study_cards",
       schema:organizeSchema,
       system:`Turn the user's study notes into concise spaced-repetition cards.
@@ -734,7 +780,9 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,tags:r.tags||[],
     difficulty:Number(r.fsrs?.difficulty||0),due:r.due
   }));
+  const quizProvider=await featureProvider(userId(req),"ai_quiz_provider","gemini");
   const data=await generateStructured({
+    provider:quizProvider,
     name:"memorycast_quiz",
     schema:quizSchema,
     system:`Generate a rigorous but fair study quiz only from the supplied cards.
@@ -757,7 +805,7 @@ For English, test recognition and production. For technical material, test under
   });
 }));
 function norm(s=""){return String(s).toLowerCase().trim().replace(/[.,!?;:'"()[\]{}，。！？；：“”‘’、\s]+/g," ");}
-async function judgeAnswer(q,userAnswer){
+async function judgeAnswer(q,userAnswer,providerChoice="gemini"){
   const n=norm(userAnswer);
   const acceptable=[q.answer,...(q.acceptableAnswers||[])].map(norm).filter(Boolean);
   if(acceptable.includes(n)) return {verdict:"correct",score:1,feedback:"回答正确。"};
@@ -768,6 +816,7 @@ async function judgeAnswer(q,userAnswer){
     required:["verdict","score","feedback"],additionalProperties:false
   };
   return generateStructured({
+    provider:providerChoice,
     name:"grade",
     schema,
     system:`Grade the learner's answer semantically.
@@ -787,7 +836,8 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   if(!sessionRow) return res.status(404).json({error:"测试已过期或不存在。"});
   const q=sessionRow.questions.find(x=>x.id===questionId);
   if(!q) return res.status(404).json({error:"题目不存在。"});
-  const grade=await judgeAnswer(q,String(answer));
+  const gradeProvider=await featureProvider(userId(req),"ai_grade_provider","gemini");
+  const grade=await judgeAnswer(q,String(answer),gradeProvider);
   const rating=grade.verdict==="correct"?"Good":grade.verdict==="partial"?"Hard":"Again";
   const updatedCard=await applyReview(userId(req),q.cardId,rating,"quiz",grade.verdict);
   const answers=[...(sessionRow.answers||[]),{
@@ -908,9 +958,7 @@ app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
   `,[sessionId]);
   const history=prior.rows.reverse().map(x=>({role:x.role,text:x.content}));
 
-  const aiProvider=String(process.env.AI_PROVIDER||"gemini").toLowerCase();
-  const analysisModel=process.env.FEYNMAN_DEEP_MODEL ||
-    (aiProvider==="gemini" ? "gemini-3.8-flash" : process.env.OPENAI_MODEL);
+  const aiProvider=await featureProvider(uid,"ai_feynman_provider","gemini");
 
   const analysisRequest={
     name:"feynman_analysis",
@@ -934,30 +982,7 @@ Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   };
 
-  let data;
-  let usedModel=analysisModel;
-  try{
-    data=await generateStructured({...analysisRequest,model:analysisModel});
-  }catch(err){
-    const fallbackModel=aiProvider==="gemini"
-      ? (process.env.GEMINI_MODEL||"gemini-3.5-flash-lite")
-      : process.env.OPENAI_MODEL;
-
-    const message=String(err?.message||"").toLowerCase();
-    const retryable=
-      err?.statusCode===429 ||
-      err?.statusCode===502 ||
-      err?.statusCode===503 ||
-      message.includes("high demand") ||
-      message.includes("temporar") ||
-      message.includes("overload");
-
-    if(!retryable || !fallbackModel || fallbackModel===analysisModel) throw err;
-
-    console.warn("Feynman deep model unavailable; falling back:",analysisModel,"->",fallbackModel,err.message);
-    data=await generateStructured({...analysisRequest,model:fallbackModel});
-    usedModel=fallbackModel;
-  }
+  const data=await generateStructured({...analysisRequest,provider:aiProvider});
 
   const aiContent=[data.studentReply,data.followUpQuestion].filter(Boolean).join(" ");
 
@@ -979,8 +1004,7 @@ Return schema-valid JSON only.`,
       status:data.status,
       clarityScore:data.clarityScore,
       studentReply:data.studentReply,
-      model:usedModel,
-      requestedModel:analysisModel,
+      provider:aiProvider,
       mode:"turn_analysis"
     })
   ]);
