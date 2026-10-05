@@ -84,6 +84,14 @@ async function init(){
     console.error("Initial modules failed:",failed,results);
     $("syncText").textContent="部分模块加载失败："+failed.join("、");
   }
+
+  // Warm the highest-priority walkman item after normal startup work is done.
+  // This runs in the background so opening Walkman usually has audio ready.
+  if(ttsInfoState.enabled){
+    loadWalkmanQueue()
+      .then(queue=>queue?.[0]?prefetchWalkmanCard(queue[0]):null)
+      .catch(()=>{});
+  }
 }
 async function loadCards(){const d=await api("/cards");cards=d.cards||[];$("homeCards").textContent=cards.length;renderLibrary();renderCategories();$("syncText").textContent=cards.length+" 个知识点已同步"}
 async function loadDue(){const d=await api("/due");due=d.cards||[];dueIndex=Math.min(dueIndex,Math.max(0,due.length-1));$("homeDue").textContent=due.length;renderDue()}
@@ -1748,6 +1756,14 @@ function showWalkmanSubtitle(text){
   renderWalkmanLyrics([String(text||"")],0);
 }
 
+function decodeBase64UrlText(value=""){
+  if(!value)return "";
+  const normalized=String(value).replace(/-/g,"+").replace(/_/g,"/");
+  const padded=normalized+"=".repeat((4-normalized.length%4)%4);
+  const bytes=Uint8Array.from(atob(padded),c=>c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 async function requestWalkmanCardBlob(card){
   const lines=walkmanSegments(card);
   if(!lines.length)return null;
@@ -1773,17 +1789,18 @@ async function requestWalkmanCardBlob(card){
   });
   if(!res.ok)throw new Error("Timed Walkman TTS HTTP "+res.status);
 
-  const data=await res.json();
-  if(!data.audioBase64)return null;
-
-  const raw=atob(data.audioBase64);
-  const bytes=new Uint8Array(raw.length);
-  for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+  let timings=[];
+  try{
+    const raw=res.headers.get("X-MemoryCast-Timings")||"";
+    timings=raw?JSON.parse(decodeBase64UrlText(raw)):[];
+  }catch(err){
+    console.warn("Timed TTS header parse failed:",err?.message||err);
+  }
 
   return {
-    blob:new Blob([bytes],{type:"audio/mpeg"}),
-    timings:Array.isArray(data.timings)?data.timings:[],
-    cacheHit:data.cacheHit===true
+    blob:await res.blob(),
+    timings:Array.isArray(timings)?timings:[],
+    cacheHit:(res.headers.get("X-MemoryCast-TTS-Cache")||"").toUpperCase()==="HIT"
   };
 }
 function prefetchWalkmanCard(card){
