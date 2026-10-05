@@ -86,3 +86,9 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .feynman-turn.ai{background:#f8fbff;border:1px solid #e2e8f0;margin-right:10%}
 @media(max-width:900px){.feynman-layout{grid-template-columns:1fr}}
 @media(max-width:560px){.feynman-columns{grid-template-columns:1fr}.feynman-question h3{font-size:20px}.feynman-mic{width:52px;height:52px}}
+
+
+.capture-tools{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 6px}
+.capture-btn{min-height:44px}
+.capture-status{margin-bottom:10px;line-height:1.5}
+#voiceNotePreview{width:100%;margin:6px 0 10px}
