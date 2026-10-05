@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
-let ttsVoices=[],voiceCursor={zh:0,en:0};
+let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null;
 
 async function api(path,opts={}){
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
@@ -32,7 +32,7 @@ async function init(){
   $("generateQuizBtn").disabled=!aiEnabled;
 
   const tasks=[
-    ["卡片",loadCards],["今日复习",loadDue],["设置",loadSettings],["统计",loadStats],["笔记",loadNotes]
+    ["卡片",loadCards],["今日复习",loadDue],["设置",loadSettings],["TTS",loadTtsInfo],["统计",loadStats],["笔记",loadNotes]
   ];
   const results=await Promise.allSettled(tasks.map(([,fn])=>fn()));
   const failed=results.map((r,i)=>r.status==="rejected"?tasks[i][0]:null).filter(Boolean);
@@ -144,50 +144,99 @@ function pickVoice(locale){
   voiceCursor[key]=(voiceCursor[key]+1)%natural.length;
   return natural[idx];
 }
-function voiceStyleProfile(locale){
+function voiceStyleName(locale){
   const isZh=locale.startsWith("zh");
   const id=isZh?"chineseVoiceStyle":"englishVoiceStyle";
-  const style=$(id)?.value||localStorage.getItem("memorycast_"+(isZh?"zh":"en")+"_voice_style")||"natural";
-
+  return $(id)?.value||localStorage.getItem("memorycast_"+(isZh?"zh":"en")+"_voice_style")||"natural";
+}
+function voiceStyleProfile(locale){
+  const style=voiceStyleName(locale);
   if(style==="host"){
-    return isZh
+    return locale.startsWith("zh")
       ? {rate:0.94,pitch:0.92}
       : {rate:0.95,pitch:0.94};
   }
   if(style==="lazy"){
-    return isZh
+    return locale.startsWith("zh")
       ? {rate:0.88,pitch:1.08}
       : {rate:0.90,pitch:1.05};
   }
   return {rate:1,pitch:1};
 }
+async function loadTtsInfo(){
+  try{ttsInfoState=await api("/tts/info")}catch{ttsInfoState={enabled:false,provider:"browser"}}
+  if($("ttsEngineStatus")){
+    $("ttsEngineStatus").textContent=ttsInfoState.enabled
+      ? "Azure Neural TTS 已启用 · "+(ttsInfoState.region||"")
+      : "浏览器 TTS · Azure 未配置";
+  }
+}
+function stopAllTts(){
+  speechSynthesis.cancel();
+  if(currentAudio){
+    currentAudio.pause();
+    currentAudio.src="";
+    currentAudio=null;
+  }
+}
+function browserSpeakPart(part,cb){
+  const u=new SpeechSynthesisUtterance(part.text);
+  u.lang=part.lang;
+  const profile=voiceStyleProfile(part.lang);
+  u.pitch=profile.pitch;
+  u.volume=1;
+  const baseRate=part.lang==="zh-CN"
+    ? Number(settings.chinese_rate||1.0)
+    : Number(settings.english_rate||1.0);
+  u.rate=Math.max(0.6,Math.min(1.6,baseRate*profile.rate));
+  const voice=pickVoice(part.lang);
+  if(voice)u.voice=voice;
+  u.onend=()=>cb&&cb();
+  u.onerror=()=>cb&&cb();
+  speechSynthesis.speak(u);
+}
+async function neuralSpeakPart(part,cb){
+  const rate=part.lang==="zh-CN"
+    ? Number(settings.chinese_rate||1.0)
+    : Number(settings.english_rate||1.0);
+  const style=voiceStyleName(part.lang);
+  try{
+    const res=await fetch("/api/tts",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:part.text,language:part.lang,style,rate})
+    });
+    if(!res.ok)throw new Error("Neural TTS HTTP "+res.status);
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    const audio=new Audio(url);
+    currentAudio=audio;
+    const finish=()=>{
+      URL.revokeObjectURL(url);
+      if(currentAudio===audio)currentAudio=null;
+      cb&&cb();
+    };
+    audio.onended=finish;
+    audio.onerror=()=>{
+      URL.revokeObjectURL(url);
+      if(currentAudio===audio)currentAudio=null;
+      browserSpeakPart(part,cb);
+    };
+    await audio.play();
+  }catch(err){
+    console.warn("Azure TTS unavailable; using browser fallback:",err.message);
+    browserSpeakPart(part,cb);
+  }
+}
 function speakOne(text,cb){
   if(!text){if(cb)cb();return}
   const parts=splitByLanguage(text);
   if(!parts.length){if(cb)cb();return}
-
-  const fixedVoices={
-    "zh-CN":pickVoice("zh-CN"),
-    "en-US":pickVoice("en-US")
-  };
-
   const run=i=>{
     if(i>=parts.length){if(cb)cb();return}
     const part=parts[i];
-    const u=new SpeechSynthesisUtterance(part.text);
-    u.lang=part.lang;
-    const profile=voiceStyleProfile(part.lang);
-    u.pitch=profile.pitch;
-    u.volume=1;
-    const baseRate=part.lang==="zh-CN"
-      ? Number(settings.chinese_rate||1.0)
-      : Number(settings.english_rate||$("ttsRate").value||1.0);
-    u.rate=Math.max(0.6,Math.min(1.6,baseRate*profile.rate));
-    const voice=fixedVoices[part.lang];
-    if(voice)u.voice=voice;
-    u.onend=()=>run(i+1);
-    u.onerror=()=>run(i+1);
-    speechSynthesis.speak(u);
+    if(ttsInfoState.enabled)neuralSpeakPart(part,()=>run(i+1));
+    else browserSpeakPart(part,()=>run(i+1));
   };
   run(0);
 }
@@ -195,7 +244,7 @@ function speakCurrent(){
   const c=due[dueIndex];if(!c)return;
   autoPlay=true;
   isSpeaking=true;
-  speechSynthesis.cancel();
+  stopAllTts();
   $("speakBtn").textContent="⏸ 停止";
   const arr=[c.front,c.back,c.example].filter(Boolean);
   const run=i=>{
@@ -215,7 +264,7 @@ function speakCurrent(){
 }
 function toggleSpeak(){
   if(isSpeaking||autoPlay){
-    autoPlay=false;isSpeaking=false;speechSynthesis.cancel();
+    autoPlay=false;isSpeaking=false;stopAllTts();
     $("speakBtn").textContent="🔊 朗读";
   }else{
     speakCurrent();
@@ -475,7 +524,7 @@ document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go)
 $("mobileMenuBtn").onclick=toggleMobileNav;
 $("sidebarBackdrop").onclick=closeMobileNav;
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=()=>document.body.classList.toggle("watch");
-$("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;speechSynthesis.cancel();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
+$("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=generateQuiz;$("submitQuizBtn").onclick=submitQuiz;$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
