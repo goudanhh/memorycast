@@ -18,6 +18,28 @@ const execFileAsync=promisify(execFile);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
+const timedTtsMedia=new Map();
+const TIMED_TTS_MEDIA_TTL_MS=30*60*1000;
+const TIMED_TTS_MEDIA_MAX=48;
+
+function storeTimedTtsMedia(result){
+  const now=Date.now();
+  for(const [id,item] of timedTtsMedia){
+    if(now-item.createdAt>TIMED_TTS_MEDIA_TTL_MS)timedTtsMedia.delete(id);
+  }
+  while(timedTtsMedia.size>=TIMED_TTS_MEDIA_MAX){
+    const first=timedTtsMedia.keys().next().value;
+    timedTtsMedia.delete(first);
+  }
+  const id=crypto.randomUUID();
+  timedTtsMedia.set(id,{
+    audio:result.audio,
+    mimeType:result.mimeType||"audio/mp4",
+    createdAt:now
+  });
+  return id;
+}
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
@@ -252,9 +274,20 @@ app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
   }));
 
   const format=String(req.body?.format||"aac").toLowerCase()==="mp3"?"mp3":"aac";
+  const delivery=String(req.body?.delivery||"binary").toLowerCase();
   const result=await synthesizeTimedTts(lines,{format});
-  const timingHeader=Buffer.from(JSON.stringify(result.timings||[]),"utf8").toString("base64url");
 
+  if(delivery==="url"){
+    const mediaId=storeTimedTtsMedia(result);
+    return res.json({
+      audioUrl:"/api/tts/media/"+mediaId,
+      timings:Array.isArray(result.timings)?result.timings:[],
+      cacheHit:result.cacheHit===true,
+      voice:result.voice||"mixed"
+    });
+  }
+
+  const timingHeader=Buffer.from(JSON.stringify(result.timings||[]),"utf8").toString("base64url");
   res.setHeader("Content-Type",result.mimeType||"audio/mpeg");
   res.setHeader("Content-Length",String(result.audio.length));
   res.setHeader("Cache-Control","private, max-age=31536000, immutable");
@@ -262,6 +295,37 @@ app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
   res.setHeader("X-MemoryCast-TTS-Cache",result.cacheHit?"HIT":"MISS");
   res.setHeader("X-MemoryCast-TTS-Voice",result.voice||"mixed");
   res.send(result.audio);
+}));
+
+app.get("/tts/media/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const item=timedTtsMedia.get(String(req.params.id||""));
+  if(!item)return res.status(404).end();
+
+  const total=item.audio.length;
+  const range=String(req.headers.range||"");
+  res.setHeader("Content-Type",item.mimeType||"audio/mp4");
+  res.setHeader("Accept-Ranges","bytes");
+  res.setHeader("Cache-Control","private, max-age=1800");
+
+  if(range){
+    const match=/bytes=(\d*)-(\d*)/.exec(range);
+    if(match){
+      let start=match[1]?Number(match[1]):0;
+      let end=match[2]?Number(match[2]):total-1;
+      if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<start||start>=total){
+        res.status(416).setHeader("Content-Range","bytes */"+total);
+        return res.end();
+      }
+      end=Math.min(end,total-1);
+      res.status(206);
+      res.setHeader("Content-Range",`bytes ${start}-${end}/${total}`);
+      res.setHeader("Content-Length",String(end-start+1));
+      return res.end(item.audio.subarray(start,end+1));
+    }
+  }
+
+  res.setHeader("Content-Length",String(total));
+  res.end(item.audio);
 }));
 
 app.post("/tts", requireAuth, asyncRoute(async(req,res)=>{
@@ -1218,6 +1282,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const count=Math.min(20,Math.max(3,Number(req.body?.count||10)));
   const mode=["mixed","weak","due"].includes(req.body?.mode)?req.body.mode:"mixed";
+  const watchMode=req.body?.watchMode===true;
   const requestedIds=Array.isArray(req.body?.cardIds)
     ? req.body.cardIds.map(String).filter(Boolean).slice(0,30)
     : [];
@@ -1358,6 +1423,7 @@ The visible prompt must be Simplified Chinese by default, while English target t
 Good visual questions may ask about a labeled structure, arrow, sequence, table cell, chart trend, diagram relation, or visible annotation.
 Do NOT ask a question that could be answered from the text context alone.
 For MCQ, provide exactly 4 plausible choices. Otherwise choices=[].
+${watchMode?"This is Apple Watch mode: the question type MUST be mcq, with exactly 4 choices. Do not generate fill, short-answer, or listening questions.":""}
 Return schema-valid JSON only.`,
         user:JSON.stringify({
           card:{
@@ -1375,6 +1441,7 @@ Return schema-valid JSON only.`,
           }
         })
       });
+      if(watchMode && (v.type!=="mcq" || !Array.isArray(v.choices) || v.choices.length!==4))continue;
       visualQuestions.push({
         ...v,
         id:crypto.randomUUID(),
@@ -1396,8 +1463,7 @@ Return schema-valid JSON only.`,
       name:"memorycast_quiz",
       schema:quizSchema,
       system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
-Mix MCQ, fill, short-answer and listening items when appropriate.
-For MCQ provide exactly 4 plausible choices; otherwise choices must be [].
+${watchMode?"Generate ONLY MCQ items. Every question type MUST be mcq and must have exactly 4 plausible choices.":"Mix MCQ, fill, short-answer and listening items when appropriate.\nFor MCQ provide exactly 4 plausible choices; otherwise choices must be []."}
 For listening, audioText is what TTS reads and the prompt must not reveal it.
 Always set visualAttachmentId to an empty string for these normal text/listening questions.
 Use Simplified Chinese for the quiz prompt and all learner-facing instructions by default.
@@ -1422,6 +1488,7 @@ Return only schema-valid JSON.`,
     const allowed=new Set(source.map(x=>x.id));
     regularQuestions=(data.questions||[])
       .filter(q=>allowed.has(q.cardId))
+      .filter(q=>!watchMode || (q.type==="mcq" && Array.isArray(q.choices) && q.choices.length===4))
       .slice(0,remaining)
       .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
   }
@@ -1468,7 +1535,7 @@ Return schema-valid JSON.`,
     user:JSON.stringify({type:q.type,prompt:q.prompt,expected:q.answer,acceptable:q.acceptableAnswers,userAnswer})
   });
 }
-async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence}){
+async function makeAdaptiveQuizQuestion({uid,card,q,verdict,confidence,watchMode=false}){
   const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const strongCorrect=verdict==="correct" && confidence==="sure";
   const target=strongCorrect?"challenge":(verdict==="wrong"?"foundation":"standard");
@@ -1487,7 +1554,7 @@ Use Simplified Chinese for the follow-up prompt and learner-facing instructions 
 Keep English target words, phrases, example sentences, and answer choices in English where appropriate.
 If the learner must answer in English, explicitly say "请用英文回答".
 For MCQ give exactly 4 plausible choices; otherwise choices=[].
-For listening, keep the visible prompt in Chinese; audioText is what TTS reads and the prompt must not reveal it.
+${watchMode?"This is Apple Watch mode: the follow-up type MUST be mcq with exactly 4 choices. Do not generate fill, short-answer, or listening questions.":"For listening, keep the visible prompt in Chinese; audioText is what TTS reads and the prompt must not reveal it."}
 Do not make the whole follow-up question English just because the source material is English.
 Always set visualAttachmentId to an empty string for adaptive follow-up questions.
 Return schema-valid JSON only.`,
@@ -1504,6 +1571,7 @@ Return schema-valid JSON only.`,
 
 app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   const {sessionId,questionId,answer=""}=req.body||{};
+  const watchMode=req.body?.watchMode===true;
   const confidence=["sure","unsure","guess"].includes(req.body?.confidence)
     ? req.body.confidence
     : "unsure";
@@ -1559,8 +1627,11 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
       const card=cardResult.rows[0];
       if(card){
         adaptiveQuestion=await makeAdaptiveQuizQuestion({
-          uid,card,q,verdict:grade.verdict,confidence
+          uid,card,q,verdict:grade.verdict,confidence,watchMode
         });
+        if(watchMode && (adaptiveQuestion.type!=="mcq" || !Array.isArray(adaptiveQuestion.choices) || adaptiveQuestion.choices.length!==4)){
+          adaptiveQuestion=null;
+        }
         const allQuestions=[...(sessionRow.questions||[]),adaptiveQuestion];
         await query(`
           UPDATE quiz_sessions SET answers=$3::jsonb,questions=$4::jsonb
