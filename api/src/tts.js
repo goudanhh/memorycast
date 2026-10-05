@@ -16,9 +16,26 @@ function escapeXml(value=""){
     .replaceAll("'","&apos;");
 }
 
-function configFor(language,style){
+function smartStyle(text,language){
+  const s=String(text||"").trim();
+  const isZh=language==="zh-CN";
+  const conversational=isZh
+    ? /[？！!?]|“[^”]+”|‘[^’]+’|\b(哈哈|好的|其实|感觉|可以|怎么|为什么)\b/.test(s)
+    : /[!?]|["“][^"”]+["”]|\b(hey|yeah|okay|actually|really|gonna|wanna|how|why)\b/i.test(s);
+
+  const explanatory=s.length>(isZh?55:90) ||
+    /[:：；;]|\b(because|therefore|means|defined|refers to|principle|mechanism)\b/i.test(s) ||
+    /(定义|原理|机制|原因|因此|意味着|指的是|包括|主要)/.test(s);
+
+  if(conversational && !explanatory) return "lazy";
+  if(explanatory) return "host";
+  return "natural";
+}
+
+function configFor(language,style,text=""){
   const lang=language==="zh-CN"?"zh-CN":"en-US";
-  const mode=["natural","host","lazy"].includes(style)?style:"natural";
+  const requested=["smart","natural","host","lazy"].includes(style)?style:"smart";
+  const mode=requested==="smart"?smartStyle(text,lang):requested;
 
   if(lang==="zh-CN"){
     if(mode==="host"){
@@ -46,7 +63,7 @@ function ratePercent(baseRate,multiplier){
 }
 
 function buildSsml(text,language,style,baseRate){
-  const cfg=configFor(language,style);
+  const cfg=configFor(language,style,text);
   const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${escapeXml(text)}</prosody>`;
   const body=cfg.express
     ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
@@ -68,11 +85,11 @@ export function ttsInfo(){
     provider:hasAzureTts()?"azure":"browser",
     region:hasAzureTts()?REGION:null,
     cache:true,
-    styles:["natural","host","lazy"]
+    styles:["smart","natural","host","lazy"]
   };
 }
 
-export async function synthesizeTts({text,language="en-US",style="natural",rate=1}){
+export async function synthesizeTts({text,language="en-US",style="smart",rate=1}){
   if(!hasAzureTts()){
     const err=new Error("Azure TTS is not configured");
     err.statusCode=503;
