@@ -12,7 +12,7 @@ import pdfParse from "pdf-parse";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
 import { hasAI, generateStructured, generateVisualStructured, aiInfo, extractTextFromImage } from "./ai.js";
-import { synthesizeTts, synthesizeMixedTts, ttsInfo } from "./tts.js";
+import { synthesizeTts, synthesizeMixedTts, synthesizeTimedTts, ttsInfo } from "./tts.js";
 
 const execFileAsync=promisify(execFile);
 
@@ -240,6 +240,27 @@ await query(`
 
 app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), tts:ttsInfo(), mode:"single-user" }));
 app.get("/tts/info", requireAuth, (req,res) => res.json(ttsInfo()));
+app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
+  const rawLines=Array.isArray(req.body?.lines)?req.body.lines.slice(0,80):[];
+  const lines=rawLines.map(line=>({
+    parts:(Array.isArray(line?.parts)?line.parts:[]).slice(0,40).map(p=>({
+      text:String(p?.text||""),
+      language:p?.language==="zh-CN"?"zh-CN":"en-US",
+      style:["smart","natural","host","lazy","conversation"].includes(p?.style)?p.style:"smart",
+      rate:Math.min(2,Math.max(.5,Number(p?.rate||1)))
+    }))
+  }));
+
+  const result=await synthesizeTimedTts(lines);
+  res.setHeader("Cache-Control","private, max-age=31536000, immutable");
+  res.json({
+    audioBase64:result.audio.toString("base64"),
+    timings:result.timings,
+    cacheHit:result.cacheHit,
+    voice:result.voice
+  });
+}));
+
 app.post("/tts", requireAuth, asyncRoute(async(req,res)=>{
   let result;
   if(Array.isArray(req.body?.parts)&&req.body.parts.length){
