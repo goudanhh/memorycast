@@ -78,10 +78,13 @@ function ssmlTextWithPauses(value=""){
 
 function configFor(language,style,text=""){
   const lang=language==="zh-CN"?"zh-CN":"en-US";
-  const requested=["smart","natural","host","lazy"].includes(style)?style:"smart";
+  const requested=["smart","natural","host","lazy","conversation"].includes(style)?style:"smart";
   const mode=requested==="smart"?smartStyle(text,lang):requested;
 
   if(lang==="zh-CN"){
+    if(mode==="conversation"){
+      return {locale:"zh-CN",voice:"zh-CN-YunxiNeural",express:"chat",rateMultiplier:1.03,pitch:"0%"};
+    }
     if(mode==="host"){
       return {locale:"zh-CN",voice:"zh-CN-YunyangNeural",express:"narration-professional",rateMultiplier:0.96,pitch:"-2%"};
     }
@@ -91,6 +94,9 @@ function configFor(language,style,text=""){
     return {locale:"zh-CN",voice:"zh-CN-XiaoxiaoNeural",express:null,rateMultiplier:1,pitch:"0%"};
   }
 
+  if(mode==="conversation"){
+    return {locale:"en-US",voice:"en-US-AriaNeural",express:"chat",rateMultiplier:1.02,pitch:"0%"};
+  }
   if(mode==="host"){
     return {locale:"en-US",voice:"en-US-AriaNeural",express:"narration-professional",rateMultiplier:0.96,pitch:"-2%"};
   }
@@ -143,7 +149,7 @@ function buildMixedSsml(parts){
   const source=parts.map(p=>({
     text:String(p.text||""),
     language:p.language==="zh-CN"?"zh-CN":"en-US",
-    style:["smart","natural","host","lazy"].includes(p.style)?p.style:"smart",
+    style:["smart","natural","host","lazy","conversation"].includes(p.style)?p.style:"smart",
     rate:Math.min(2,Math.max(.5,Number(p.rate||1)))
   })).filter(p=>p.text.trim());
 
@@ -260,7 +266,7 @@ export function ttsInfo(){
     provider:hasAzureTts()?"azure":"browser",
     region:hasAzureTts()?REGION:null,
     cache:true,
-    styles:["smart","natural","host","lazy"]
+    styles:["smart","natural","host","lazy","conversation"]
   };
 }
 
