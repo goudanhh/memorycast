@@ -1045,7 +1045,7 @@ async function generateQuiz(options={}){
   try{
     const d=await api("/quiz/generate",{
       method:"POST",
-      body:JSON.stringify({mode,count,...(cardIds?{cardIds}:{})})
+      body:JSON.stringify({mode,count,watchMode:isAppleWatchLike(),...(cardIds?{cardIds}:{})})
     });
 
     quizSessionId=d.sessionId;
@@ -1175,7 +1175,8 @@ async function submitQuiz(){
         sessionId:quizSessionId,
         questionId:q.id,
         answer,
-        confidence:quizConfidence
+        confidence:quizConfidence,
+        watchMode:isAppleWatchLike()
       })
     });
 
