@@ -714,9 +714,8 @@ app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
   const analysisModel=process.env.FEYNMAN_DEEP_MODEL ||
     (aiProvider==="gemini" ? "gemini-3.8-flash" : process.env.OPENAI_MODEL);
 
-  const data=await generateStructured({
+  const analysisRequest={
     name:"feynman_analysis",
-    model:analysisModel,
     schema:feynmanSchema,
     system:`You are an expert Feynman-method tutor.
 The user has FINISHED one complete explanation. Do not decide whether to stay silent; always analyze the explanation now.
@@ -735,7 +734,32 @@ Your job:
 
 Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
-  });
+  };
+
+  let data;
+  let usedModel=analysisModel;
+  try{
+    data=await generateStructured({...analysisRequest,model:analysisModel});
+  }catch(err){
+    const fallbackModel=aiProvider==="gemini"
+      ? (process.env.GEMINI_MODEL||"gemini-3.5-flash-lite")
+      : process.env.OPENAI_MODEL;
+
+    const message=String(err?.message||"").toLowerCase();
+    const retryable=
+      err?.statusCode===429 ||
+      err?.statusCode===502 ||
+      err?.statusCode===503 ||
+      message.includes("high demand") ||
+      message.includes("temporar") ||
+      message.includes("overload");
+
+    if(!retryable || !fallbackModel || fallbackModel===analysisModel) throw err;
+
+    console.warn("Feynman deep model unavailable; falling back:",analysisModel,"->",fallbackModel,err.message);
+    data=await generateStructured({...analysisRequest,model:fallbackModel});
+    usedModel=fallbackModel;
+  }
 
   const aiContent=[data.studentReply,data.followUpQuestion].filter(Boolean).join(" ");
 
@@ -757,7 +781,8 @@ Return schema-valid JSON only.`,
       status:data.status,
       clarityScore:data.clarityScore,
       studentReply:data.studentReply,
-      model:analysisModel,
+      model:usedModel,
+      requestedModel:analysisModel,
       mode:"turn_analysis"
     })
   ]);
