@@ -421,6 +421,7 @@ async function requestAzureTimed(ssml){
   return await new Promise((resolve,reject)=>{
     const synthesizer=new speechsdk.SpeechSynthesizer(speechConfig,null);
     const marks=[];
+    const words=[];
 
     synthesizer.bookmarkReached=(sender,e)=>{
       const match=String(e.text||"").match(/^line-(\d+)$/);
@@ -428,6 +429,15 @@ async function requestAzureTimed(ssml){
       marks.push({
         index:Number(match[1]),
         offsetMs:Number(e.audioOffset||0)/10000
+      });
+    };
+
+    synthesizer.wordBoundary=(sender,e)=>{
+      words.push({
+        offsetMs:Number(e.audioOffset||0)/10000,
+        text:String(e.text||""),
+        textOffset:Number(e.textOffset||0),
+        wordLength:Number(e.wordLength||0)
       });
     };
 
@@ -441,9 +451,26 @@ async function requestAzureTimed(ssml){
             reject(err);
             return;
           }
+
           const audio=Buffer.from(result.audioData);
           marks.sort((a,b)=>a.index-b.index);
-          resolve({audio,marks});
+          words.sort((a,b)=>a.offsetMs-b.offsetMs);
+
+          const firstWords=marks.map((mark,i)=>{
+            const nextMark=marks[i+1];
+            const first=words.find(w=>
+              w.offsetMs>=mark.offsetMs &&
+              (!nextMark || w.offsetMs<nextMark.offsetMs)
+            );
+            return {
+              index:mark.index,
+              bookmarkOffsetMs:mark.offsetMs,
+              firstWordOffsetMs:first?first.offsetMs:mark.offsetMs,
+              firstWord:first?.text||""
+            };
+          });
+
+          resolve({audio,marks,words,firstWords});
         }finally{
           synthesizer.close();
         }
@@ -460,7 +487,6 @@ async function requestAzureTimed(ssml){
     );
   });
 }
-
 export async function synthesizeTimedTts(lines){
   if(!hasAzureTts()){
     const err=new Error("Azure TTS is not configured");
@@ -498,7 +524,7 @@ export async function synthesizeTimedTts(lines){
     }))
   }));
   const cacheKey=crypto.createHash("sha256")
-    .update("timed-bookmarks-v1|"+JSON.stringify(keyPayload))
+    .update("timed-first-word-v2|"+JSON.stringify(keyPayload))
     .digest("hex");
   const audioFile=path.join(CACHE_DIR,`${cacheKey}.mp3`);
   const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
@@ -515,8 +541,13 @@ export async function synthesizeTimedTts(lines){
 
   const result=await requestAzureTimed(ssml);
   const timings=Array.from({length:lineCount},(_,i)=>{
-    const found=result.marks.find(x=>x.index===i);
-    return {index:i,offsetMs:found?found.offsetMs:null};
+    const found=result.firstWords.find(x=>x.index===i);
+    return {
+      index:i,
+      offsetMs:found?found.firstWordOffsetMs:null,
+      bookmarkOffsetMs:found?found.bookmarkOffsetMs:null,
+      firstWord:found?found.firstWord:""
+    };
   });
 
   // Fill any missing marker conservatively from neighboring known markers.
