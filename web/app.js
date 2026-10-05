@@ -1905,17 +1905,23 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
     .filter(x=>Number.isFinite(x.offsetMs))
     .sort((x,y)=>x.offsetMs-y.offsetMs);
 
-  let localActive=0;
-  setWalkmanLyricIndex(allLines,globalStartIndex);
+  // Keep the previous chunk's final lyric highlighted while the next audio
+  // is loading. Do not jump to this chunk until its first real spoken-word
+  // boundary has actually been reached.
+  let localActive=-1;
 
   const syncLyrics=()=>{
     const nowMs=audio.currentTime*1000;
-    let idx=0;
+    let idx=-1;
+
     for(const item of exactTimings){
       if(item.offsetMs<=nowMs)idx=item.index;
       else break;
     }
+
+    if(idx<0)return;
     idx=Math.max(0,Math.min(lines.length-1,idx));
+
     if(idx!==localActive){
       localActive=idx;
       setWalkmanLyricIndex(allLines,globalStartIndex+idx);
