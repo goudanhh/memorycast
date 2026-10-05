@@ -763,6 +763,9 @@ async function submitFeynman(){
     $("feynmanMicTitle").textContent="点击讲下一段";
     $("feynmanMicStatus").textContent="分析完成。你可以继续讲下一段。";
 
+    if(d.feynmanFsrsRating){
+      Promise.all([loadCards(),loadDue(),loadStats()]).catch(()=>{});
+    }
     const spoken=[d.studentReply,d.followUpQuestion].filter(Boolean).join(" ");
     if(spoken)speakOne(spoken,null,"conversation");
   }catch(e){
