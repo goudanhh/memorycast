@@ -640,10 +640,11 @@ const feynmanSchema={
     strengths:{type:"array",items:{type:"string"},maxItems:4},
     gaps:{type:"array",items:{type:"string"},maxItems:4},
     followUpQuestion:{type:"string"},
+    action:{type:"string",enum:["listen","intervene"]},
     status:{type:"string",enum:["continue","mastered"]},
     clarityScore:{type:"integer",minimum:0,maximum:100}
   },
-  required:["studentReply","understood","strengths","gaps","followUpQuestion","status","clarityScore"],
+  required:["studentReply","understood","strengths","gaps","followUpQuestion","action","status","clarityScore"],
   additionalProperties:false
 };
 
@@ -720,8 +721,11 @@ Rules:
 - First state briefly what you think you understood from the user's explanation.
 - Identify only meaningful strengths and gaps. Do not nitpick wording, accent, transcription mistakes, or harmless omissions.
 - Look especially for undefined concepts, hidden assumptions, skipped causal steps, circular reasoning, contradictions, and claims that are asserted without explaining why.
-- Ask exactly ONE most useful follow-up question at a time.
-- The follow-up should sound like a real student question.
+- Decide whether to stay silent or intervene.
+- action="listen" when the user is still coherently developing an idea, even if the explanation is incomplete. In this case followUpQuestion must be an empty string.
+- action="intervene" only for a high-value interruption: a contradiction, undefined key concept, circular reasoning, major hidden assumption, unsupported causal jump, or when the user has clearly finished a thought and one question would deepen understanding.
+- When action="intervene", ask exactly ONE concise, natural follow-up question.
+- Prefer listening over interrupting. Do not interrupt merely because more detail could be added.
 - Do not dump the correct answer unless the user explicitly asks for it.
 - If the explanation is already coherent, ask for a simple analogy, concrete example, boundary case, or causal explanation before marking mastery.
 - Mark status="mastered" only when the user has explained the core idea clearly enough that a beginner could follow it.
@@ -731,7 +735,9 @@ Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   });
 
-  const aiContent=[data.studentReply,data.followUpQuestion].filter(Boolean).join(" ");
+  const aiContent=data.action==="intervene"
+    ? [data.studentReply,data.followUpQuestion].filter(Boolean).join(" ")
+    : (data.studentReply||"");
   await query(`
     INSERT INTO feynman_turns(session_id,role,content,metadata)
     VALUES
@@ -747,6 +753,7 @@ Return schema-valid JSON only.`,
       strengths:data.strengths||[],
       gaps:data.gaps||[],
       followUpQuestion:data.followUpQuestion||"",
+      action:data.action,
       status:data.status,
       clarityScore:data.clarityScore,
       studentReply:data.studentReply
