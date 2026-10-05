@@ -118,6 +118,23 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS note_attachments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL DEFAULT 0,
+  data BYTEA NOT NULL,
+  extracted_text TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_attachments_note
+  ON note_attachments(note_id, sort_order, created_at);
+
+
 ALTER TABLE cards ADD COLUMN IF NOT EXISTS source_note_id UUID REFERENCES notes(id) ON DELETE CASCADE;
 
 
