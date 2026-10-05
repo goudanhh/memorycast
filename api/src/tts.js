@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import * as speechsdk from "microsoft-cognitiveservices-speech-sdk";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 const PROVIDER=(process.env.TTS_PROVIDER||"browser").toLowerCase();
 const REGION=(process.env.AZURE_SPEECH_REGION||"").trim();
@@ -520,6 +521,43 @@ function silencePcm(ms,sampleRate=24000){
   return Buffer.alloc(samples*2);
 }
 
+async function encodeWavToAacM4a(wavBuffer){
+  return await new Promise((resolve,reject)=>{
+    const ff=spawn("ffmpeg",[
+      "-hide_banner","-loglevel","error",
+      "-f","wav","-i","pipe:0",
+      "-vn",
+      "-c:a","aac",
+      "-profile:a","aac_low",
+      "-b:a","64k",
+      "-ar","24000",
+      "-ac","1",
+      "-movflags","frag_keyframe+empty_moov+default_base_moof",
+      "-f","mp4",
+      "pipe:1"
+    ],{stdio:["pipe","pipe","pipe"]});
+
+    const out=[];
+    const err=[];
+
+    ff.stdout.on("data",chunk=>out.push(chunk));
+    ff.stderr.on("data",chunk=>err.push(chunk));
+    ff.on("error",reject);
+    ff.on("close",code=>{
+      if(code!==0){
+        const e=new Error("AAC encode failed"+(err.length?": "+Buffer.concat(err).toString("utf8").slice(0,500):""));
+        e.statusCode=500;
+        reject(e);
+        return;
+      }
+      resolve(Buffer.concat(out));
+    });
+
+    ff.stdin.on("error",reject);
+    ff.stdin.end(wavBuffer);
+  });
+}
+
 async function synthesizeNativePcmPart(part){
   const language=part.language==="zh-CN"?"zh-CN":"en-US";
   const voice=language==="zh-CN"
@@ -624,9 +662,9 @@ export async function synthesizeTimedTts(lines){
     }))
   }));
   const cacheKey=crypto.createHash("sha256")
-    .update("timed-separated-native-v5|"+JSON.stringify(keyPayload))
+    .update("timed-separated-native-aac-v6|"+JSON.stringify(keyPayload))
     .digest("hex");
-  const audioFile=path.join(CACHE_DIR,`${cacheKey}.wav`);
+  const audioFile=path.join(CACHE_DIR,`${cacheKey}.m4a`);
   const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
 
   await fs.mkdir(CACHE_DIR,{recursive:true});
@@ -636,7 +674,7 @@ export async function synthesizeTimedTts(lines){
       fs.readFile(timingFile,"utf8")
     ]);
     const timings=JSON.parse(timingRaw);
-    return {audio,timings,cacheHit:true,voice:"separate-native",lineCount:cleanLines.length,mimeType:"audio/wav"};
+    return {audio,timings,cacheHit:true,voice:"separate-native-aac",lineCount:cleanLines.length,mimeType:"audio/mp4"};
   }catch{}
 
   const flat=[];
@@ -684,7 +722,8 @@ export async function synthesizeTimedTts(lines){
     cursorMs+=seg.durationMs;
   }
 
-  const audio=pcmWavBuffer(Buffer.concat(pcmParts));
+  const wav=pcmWavBuffer(Buffer.concat(pcmParts));
+  const audio=await encodeWavToAacM4a(wav);
 
   await Promise.all([
     fs.writeFile(audioFile,audio),
@@ -695,9 +734,9 @@ export async function synthesizeTimedTts(lines){
     audio,
     timings,
     cacheHit:false,
-    voice:"separate-native",
+    voice:"separate-native-aac",
     lineCount:cleanLines.length,
-    mimeType:"audio/wav"
+    mimeType:"audio/mp4"
   };
 }
 async function requestAzure(ssml){
