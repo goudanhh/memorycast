@@ -558,6 +558,41 @@ async function encodeWavToAacM4a(wavBuffer){
   });
 }
 
+async function encodeWavToMp3(wavBuffer){
+  return await new Promise((resolve,reject)=>{
+    const ff=spawn("ffmpeg",[
+      "-hide_banner","-loglevel","error",
+      "-f","wav","-i","pipe:0",
+      "-vn",
+      "-c:a","libmp3lame",
+      "-b:a","64k",
+      "-ar","24000",
+      "-ac","1",
+      "-f","mp3",
+      "pipe:1"
+    ],{stdio:["pipe","pipe","pipe"]});
+
+    const out=[];
+    const err=[];
+
+    ff.stdout.on("data",chunk=>out.push(chunk));
+    ff.stderr.on("data",chunk=>err.push(chunk));
+    ff.on("error",reject);
+    ff.on("close",code=>{
+      if(code!==0){
+        const e=new Error("MP3 encode failed"+(err.length?": "+Buffer.concat(err).toString("utf8").slice(0,500):""));
+        e.statusCode=500;
+        reject(e);
+        return;
+      }
+      resolve(Buffer.concat(out));
+    });
+
+    ff.stdin.on("error",reject);
+    ff.stdin.end(wavBuffer);
+  });
+}
+
 async function synthesizeNativePcmPart(part){
   const language=part.language==="zh-CN"?"zh-CN":"en-US";
   const voice=language==="zh-CN"
@@ -618,7 +653,9 @@ async function synthesizeNativePcmPart(part){
   });
 }
 
-export async function synthesizeTimedTts(lines){
+export async function synthesizeTimedTts(lines,{format="aac"}={}){
+  format=String(format||"aac").toLowerCase()==="mp3"?"mp3":"aac";
+
   if(!hasAzureTts()){
     const err=new Error("Azure TTS is not configured");
     err.statusCode=503;
@@ -662,9 +699,9 @@ export async function synthesizeTimedTts(lines){
     }))
   }));
   const cacheKey=crypto.createHash("sha256")
-    .update("timed-separated-native-aac-v6|"+JSON.stringify(keyPayload))
+    .update("timed-separated-native-v7|"+format+"|"+JSON.stringify(keyPayload))
     .digest("hex");
-  const audioFile=path.join(CACHE_DIR,`${cacheKey}.m4a`);
+  const audioFile=path.join(CACHE_DIR,`${cacheKey}.${format==="mp3"?"mp3":"m4a"}`);
   const timingFile=path.join(CACHE_DIR,`${cacheKey}.json`);
 
   await fs.mkdir(CACHE_DIR,{recursive:true});
@@ -674,7 +711,7 @@ export async function synthesizeTimedTts(lines){
       fs.readFile(timingFile,"utf8")
     ]);
     const timings=JSON.parse(timingRaw);
-    return {audio,timings,cacheHit:true,voice:"separate-native-aac",lineCount:cleanLines.length,mimeType:"audio/mp4"};
+    return {audio,timings,cacheHit:true,voice:"separate-native-"+format,lineCount:cleanLines.length,mimeType:format==="mp3"?"audio/mpeg":"audio/mp4"};
   }catch{}
 
   const flat=[];
@@ -723,7 +760,9 @@ export async function synthesizeTimedTts(lines){
   }
 
   const wav=pcmWavBuffer(Buffer.concat(pcmParts));
-  const audio=await encodeWavToAacM4a(wav);
+  const audio=format==="mp3"
+    ? await encodeWavToMp3(wav)
+    : await encodeWavToAacM4a(wav);
 
   await Promise.all([
     fs.writeFile(audioFile,audio),
@@ -734,9 +773,9 @@ export async function synthesizeTimedTts(lines){
     audio,
     timings,
     cacheHit:false,
-    voice:"separate-native-aac",
+    voice:"separate-native-"+format,
     lineCount:cleanLines.length,
-    mimeType:"audio/mp4"
+    mimeType:format==="mp3"?"audio/mpeg":"audio/mp4"
   };
 }
 async function requestAzure(ssml){
