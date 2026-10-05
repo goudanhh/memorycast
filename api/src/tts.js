@@ -32,6 +32,50 @@ function smartStyle(text,language){
   return "natural";
 }
 
+function ssmlTextWithPauses(value=""){
+  const text=String(value);
+  const pauseMap={
+    "，":"180ms", ",":"160ms",
+    "；":"280ms", ";":"260ms",
+    "：":"240ms", ":":"220ms",
+    "。":"460ms", ".":"420ms",
+    "！":"500ms", "!":"460ms",
+    "？":"520ms", "?":"480ms",
+    "、":"120ms"
+  };
+
+  let out="";
+  let buf="";
+  const flush=()=>{
+    if(!buf)return;
+    out+=escapeXml(buf);
+    buf="";
+  };
+
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(ch==="\n"){
+      flush();
+      const next=text[i+1];
+      if(next==="\n"){
+        out+='<break time="700ms"/>';
+        i++;
+      }else{
+        out+='<break time="360ms"/>';
+      }
+      continue;
+    }
+    if(pauseMap[ch]){
+      flush();
+      out+=escapeXml(ch)+`<break time="${pauseMap[ch]}"/>`;
+      continue;
+    }
+    buf+=ch;
+  }
+  flush();
+  return out;
+}
+
 function configFor(language,style,text=""){
   const lang=language==="zh-CN"?"zh-CN":"en-US";
   const requested=["smart","natural","host","lazy"].includes(style)?style:"smart";
@@ -64,7 +108,7 @@ function ratePercent(baseRate,multiplier){
 
 function buildSsml(text,language,style,baseRate){
   const cfg=configFor(language,style,text);
-  const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${escapeXml(text)}</prosody>`;
+  const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${ssmlTextWithPauses(text)}</prosody>`;
   const body=cfg.express
     ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
     : prosody;
@@ -81,7 +125,7 @@ function buildMixedSsml(parts){
     const style=["smart","natural","host","lazy"].includes(p.style)?p.style:"smart";
     const rate=Math.min(2,Math.max(.5,Number(p.rate||1)));
     const cfg=configFor(language,style,text);
-    const prosody=`<prosody rate="${ratePercent(rate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${escapeXml(text)}</prosody>`;
+    const prosody=`<prosody rate="${ratePercent(rate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${ssmlTextWithPauses(text)}</prosody>`;
     const body=cfg.express
       ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
       : prosody;
