@@ -600,6 +600,38 @@ app.post("/quiz/grade", requireAuth, asyncRoute(async(req,res)=>{
   res.json({verdict:grade.verdict,score:grade.score,feedback:grade.feedback,correctAnswer:q.answer,explanation:q.explanation,fsrsRating:rating,updatedCard});
 }));
 
+
+await query(`
+  CREATE TABLE IF NOT EXISTS feynman_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    clarity_score INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_turn_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+await query(`
+  CREATE INDEX IF NOT EXISTS idx_feynman_sessions_user_updated
+  ON feynman_sessions(user_id,last_turn_at DESC)
+`);
+await query(`
+  CREATE TABLE IF NOT EXISTS feynman_turns (
+    id BIGSERIAL PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES feynman_sessions(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('user','ai')),
+    content TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+await query(`
+  CREATE INDEX IF NOT EXISTS idx_feynman_turns_session_time
+  ON feynman_turns(session_id,created_at ASC,id ASC)
+`);
+
 const feynmanSchema={
   type:"object",
   properties:{
@@ -615,17 +647,68 @@ const feynmanSchema={
   additionalProperties:false
 };
 
+app.get("/feynman/sessions", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`
+    SELECT id,topic,status,clarity_score,created_at,updated_at,last_turn_at
+    FROM feynman_sessions
+    WHERE user_id=$1
+    ORDER BY last_turn_at DESC
+    LIMIT 50
+  `,[userId(req)]);
+  res.json({sessions:rows});
+}));
+
+app.get("/feynman/sessions/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const {rows}=await query(`
+    SELECT id,topic,status,clarity_score,created_at,updated_at,last_turn_at
+    FROM feynman_sessions
+    WHERE id=$2 AND user_id=$1
+  `,[userId(req),req.params.id]);
+  const session=rows[0];
+  if(!session) return res.status(404).json({error:"费曼会话不存在。"});
+  const turns=await query(`
+    SELECT id,role,content,metadata,created_at
+    FROM feynman_turns
+    WHERE session_id=$1
+    ORDER BY created_at ASC,id ASC
+  `,[session.id]);
+  res.json({session,turns:turns.rows});
+}));
+
 app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
   if(!hasAI()) return res.status(503).json({error:"AI 未配置，暂时无法使用费曼模式。"});
+  const uid=userId(req);
   const topic=String(req.body?.topic||"").trim().slice(0,300);
   const explanation=String(req.body?.explanation||"").trim().slice(0,8000);
-  const history=Array.isArray(req.body?.history)?req.body.history.slice(-12).map(x=>({
-    role:x?.role==="ai"?"ai":"user",
-    text:String(x?.text||"").slice(0,3000)
-  })):[];
+  let sessionId=String(req.body?.sessionId||"").trim();
 
   if(!topic) return res.status(400).json({error:"请先填写要讲解的主题。"});
   if(!explanation) return res.status(400).json({error:"请先讲一段你的理解。"});
+
+  let session;
+  if(sessionId){
+    const existing=await query(`
+      SELECT * FROM feynman_sessions WHERE id=$2 AND user_id=$1
+    `,[uid,sessionId]);
+    session=existing.rows[0];
+    if(!session) return res.status(404).json({error:"费曼会话不存在。"});
+  }else{
+    const created=await query(`
+      INSERT INTO feynman_sessions(user_id,topic)
+      VALUES($1,$2) RETURNING *
+    `,[uid,topic]);
+    session=created.rows[0];
+    sessionId=session.id;
+  }
+
+  const prior=await query(`
+    SELECT role,content
+    FROM feynman_turns
+    WHERE session_id=$1
+    ORDER BY created_at DESC,id DESC
+    LIMIT 16
+  `,[sessionId]);
+  const history=prior.rows.reverse().map(x=>({role:x.role,text:x.content}));
 
   const data=await generateStructured({
     name:"feynman_student",
@@ -638,18 +721,47 @@ Rules:
 - Identify only meaningful strengths and gaps. Do not nitpick wording, accent, transcription mistakes, or harmless omissions.
 - Look especially for undefined concepts, hidden assumptions, skipped causal steps, circular reasoning, contradictions, and claims that are asserted without explaining why.
 - Ask exactly ONE most useful follow-up question at a time.
-- The follow-up should sound like a real student question, e.g. "为什么这里会导致……？" or "你说的 X 具体是什么意思？"
-- Do not dump the correct answer unless the user explicitly asks for it. The purpose is retrieval and explanation by the user.
+- The follow-up should sound like a real student question.
+- Do not dump the correct answer unless the user explicitly asks for it.
 - If the explanation is already coherent, ask for a simple analogy, concrete example, boundary case, or causal explanation before marking mastery.
 - Mark status="mastered" only when the user has explained the core idea clearly enough that a beginner could follow it.
 - clarityScore measures clarity of explanation, not the user's intelligence or worth.
 - Reply in the language mainly used by the user; preserve English technical terms when useful.
 Return schema-valid JSON only.`,
-    user:JSON.stringify({topic,history,currentExplanation:explanation})
+    user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   });
 
-  res.json(data);
+  const aiContent=[data.studentReply,data.followUpQuestion].filter(Boolean).join(" ");
+  await query(`
+    INSERT INTO feynman_turns(session_id,role,content,metadata)
+    VALUES
+      ($1,'user',$2,$3::jsonb),
+      ($1,'ai',$4,$5::jsonb)
+  `,[
+    sessionId,
+    explanation,
+    JSON.stringify({topic:session.topic}),
+    aiContent,
+    JSON.stringify({
+      understood:data.understood,
+      strengths:data.strengths||[],
+      gaps:data.gaps||[],
+      followUpQuestion:data.followUpQuestion||"",
+      status:data.status,
+      clarityScore:data.clarityScore,
+      studentReply:data.studentReply
+    })
+  ]);
+
+  await query(`
+    UPDATE feynman_sessions
+    SET topic=$3,status=$4,clarity_score=$5,updated_at=NOW(),last_turn_at=NOW()
+    WHERE id=$2 AND user_id=$1
+  `,[uid,sessionId,topic,data.status,data.clarityScore]);
+
+  res.json({...data,sessionId,topic});
 }));
+
 
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
