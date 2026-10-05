@@ -1858,10 +1858,10 @@ async function playWalkmanContinuousCard(card){
     const nowMs=audio.currentTime*1000;
     let idx=0;
 
-    // Bookmark offsets are actual Azure synthesis timestamps. Pick the latest
-    // subtitle whose bookmark has already been reached.
+    // Timings now come from the first real WordBoundary after each line marker,
+    // so the subtitle changes only when that line actually begins speaking.
     for(const item of exactTimings){
-      if(item.offsetMs<=nowMs+25)idx=item.index;
+      if(item.offsetMs<=nowMs)idx=item.index;
       else break;
     }
 
