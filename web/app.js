@@ -5,6 +5,9 @@ let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let watchAudioPrimed=false;
 let watchDiagEl=null;
+let watchPreparedFirstMedia=null;
+let watchPreparedFirstKey="";
+let watchInitialVideoStarted=false;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -95,7 +98,15 @@ async function init(){
         const card=queue?.[0];
         if(!card)return null;
         const groups=walkmanChunkGroups(walkmanSegments(card));
-        return groups[0]?prefetchWalkmanChunk(card,0,groups[0]):null;
+        if(!groups[0])return null;
+        const key=walkmanChunkKey(card,0,groups[0]);
+        return prefetchWalkmanChunk(card,0,groups[0]).then(media=>{
+          if(isAppleWatchLike()&&media?.url){
+            watchPreparedFirstMedia=media;
+            watchPreparedFirstKey=key;
+          }
+          return media;
+        });
       })
       .catch(()=>{});
   }
@@ -2193,7 +2204,7 @@ function getWatchVideoElement(){
   video.controls=false;
   video.muted=false;
   video.volume=1;
-  video.style.cssText="position:fixed;width:1px;height:1px;left:-10px;top:-10px;opacity:.01;pointer-events:none;";
+  video.style.cssText="position:fixed;width:2px;height:2px;left:1px;top:1px;opacity:.02;pointer-events:none;z-index:1;";
   document.body.appendChild(video);
   return video;
 }
@@ -2212,13 +2223,26 @@ async function playWalkmanWatchVideo(card){
   for(let i=0;i<groups.length;i++){
     if(!walkmanPlaying||generation!==ttsPlaybackGeneration)return false;
 
-    const media=await getWalkmanChunk(card,i,groups[i]);
+    const key=walkmanChunkKey(card,i,groups[i]);
+    let media=null;
+    const usingInitial=i===0 &&
+      watchInitialVideoStarted &&
+      watchPreparedFirstMedia?.url &&
+      watchPreparedFirstKey===key;
+
+    if(usingInitial){
+      media=watchPreparedFirstMedia;
+    }else{
+      media=await getWalkmanChunk(card,i,groups[i]);
+    }
     if(!media?.url)return false;
 
     const video=getWatchVideoElement();
-    video.pause();
-    video.src=media.url;
-    video.load();
+    if(!usingInitial){
+      video.pause();
+      video.src=media.url;
+      video.load();
+    }
 
     const exactTimings=(media.timings||[])
       .map(x=>{
@@ -2251,8 +2275,17 @@ async function playWalkmanWatchVideo(card){
       video.onerror=()=>resolve(false);
 
       try{
-        const p=video.play();
-        if(p&&typeof p.catch==="function")p.catch(()=>resolve(false));
+        if(usingInitial){
+          if(!video.paused){
+            resolve(true);
+          }else{
+            const p=video.play();
+            if(p&&typeof p.catch==="function")p.catch(()=>resolve(false));
+          }
+        }else{
+          const p=video.play();
+          if(p&&typeof p.catch==="function")p.catch(()=>resolve(false));
+        }
       }catch{
         resolve(false);
       }
@@ -2606,8 +2639,26 @@ async function enterWalkmanMode(){
 
   const watch=isAppleWatchLike();
 
-  // Apple Watch uses native browser speechSynthesis in Walkman mode.
-  // Do not touch the HTML audio element here.
+  // Important for watchOS: if the first natural-voice MP4 was prepared in the
+  // background, start it synchronously inside the user's "随身听" tap before
+  // any await/fetch can consume the user activation.
+  watchInitialVideoStarted=false;
+  if(watch && watchPreparedFirstMedia?.url){
+    try{
+      const video=getWatchVideoElement();
+      video.src=watchPreparedFirstMedia.url;
+      video.load();
+      const p=video.play();
+      watchInitialVideoStarted=true;
+      if(p&&typeof p.catch==="function"){
+        p.catch(()=>{
+          watchInitialVideoStarted=false;
+        });
+      }
+    }catch{
+      watchInitialVideoStarted=false;
+    }
+  }
 
   walkmanPlaying=false;
   walkmanIndex=0;
@@ -2669,6 +2720,7 @@ function exitWalkmanMode(){
   if(playBtn)playBtn.classList.remove("hidden");
   const direct=document.getElementById("watchDirectAudioLink");
   if(direct)direct.remove();
+  watchInitialVideoStarted=false;
   const video=document.getElementById("watchWalkmanVideo");
   if(video){
     try{video.pause();video.removeAttribute("src");video.load()}catch{}
