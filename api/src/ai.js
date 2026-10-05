@@ -379,6 +379,7 @@ async function visualJsonWithGemini({base64,mimeType,system,user,schema}){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const response=await fetch(url,{
     method:"POST",
+    signal:AbortSignal.timeout(20000),
     headers:{"Content-Type":"application/json","x-goog-api-key":key},
     body:JSON.stringify({
       contents:[{
@@ -412,6 +413,7 @@ async function visualJsonWithOpenRouter({base64,mimeType,system,user,schema}){
   const model=process.env.OPENROUTER_VISION_MODEL||"openrouter/free";
   const response=await fetch("https://openrouter.ai/api/v1/chat/completions",{
     method:"POST",
+    signal:AbortSignal.timeout(20000),
     headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json","X-Title":"MemoryCast"},
     body:JSON.stringify({
       model,
@@ -448,6 +450,7 @@ async function visualJsonWithCloudflare({base64,mimeType,system,user,schema}){
   const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`;
   const response=await fetch(url,{
     method:"POST",
+    signal:AbortSignal.timeout(20000),
     headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json"},
     body:JSON.stringify({
       task:"query",
@@ -481,7 +484,7 @@ export async function generateVisualStructured({base64,mimeType="image/jpeg",sys
   const selected=String(providerChoice||"auto").toLowerCase();
   const order=selected==="auto"
     ? ["gemini","openrouter","cloudflare"]
-    : [selected,...["gemini","openrouter","cloudflare"].filter(x=>x!==selected)];
+    : [selected];
   const failures=[];
   for(const name of order){
     const fn=map[name];
