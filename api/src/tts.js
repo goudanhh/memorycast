@@ -118,19 +118,66 @@ function buildSsml(text,language,style,baseRate){
     ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${cfg.locale}"><voice name="${cfg.voice}">${body}</voice></speak>`
   };
 }
+function isShortInlineEnglish(text=""){
+  const s=String(text).trim();
+  if(!s)return false;
+  if(/^[A-Za-z]$/.test(s))return true;
+  if(/^[-–—]?(?:ed|ing|s|es|er|est|ly)$/i.test(s))return true;
+  if(/^[A-Z]{2,4}$/.test(s))return true;
+  if(/^(?:pH|CO2|CO₂|NOx|NOₓ|PM2\.5|PM10)$/i.test(s))return true;
+  return false;
+}
+
+function inlineEnglishXml(text){
+  const s=String(text).trim();
+  if(/^[A-Za-z]$/.test(s)){
+    return `<say-as interpret-as="characters">${escapeXml(s)}</say-as>`;
+  }
+  if(/^[A-Z]{2,4}$/.test(s)){
+    return `<say-as interpret-as="characters">${escapeXml(s)}</say-as>`;
+  }
+  return escapeXml(s);
+}
+
 function buildMixedSsml(parts){
-  const normalized=parts.map(p=>{
-    const text=String(p.text||"").trim();
-    const language=p.language==="zh-CN"?"zh-CN":"en-US";
-    const style=["smart","natural","host","lazy"].includes(p.style)?p.style:"smart";
-    const rate=Math.min(2,Math.max(.5,Number(p.rate||1)));
-    const cfg=configFor(language,style,text);
-    const prosody=`<prosody rate="${ratePercent(rate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${ssmlTextWithPauses(text)}</prosody>`;
+  const source=parts.map(p=>({
+    text:String(p.text||""),
+    language:p.language==="zh-CN"?"zh-CN":"en-US",
+    style:["smart","natural","host","lazy"].includes(p.style)?p.style:"smart",
+    rate:Math.min(2,Math.max(.5,Number(p.rate||1)))
+  })).filter(p=>p.text.trim());
+
+  const normalized=[];
+  for(let i=0;i<source.length;i++){
+    const p=source[i];
+    if(p.language==="en-US" && isShortInlineEnglish(p.text)){
+      const prev=normalized[normalized.length-1];
+      const next=source[i+1];
+      const hostLang=prev?.language==="zh-CN" || next?.language==="zh-CN" ? "zh-CN" : "en-US";
+      if(hostLang==="zh-CN"){
+        const cfg=configFor("zh-CN",prev?.style||next?.style||"smart",p.text);
+        const prosody=`<prosody rate="${ratePercent(prev?.rate||next?.rate||1,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${inlineEnglishXml(p.text)}</prosody>`;
+        normalized.push({
+          text:p.text,
+          language:"zh-CN",
+          sourceLanguage:"en-US",
+          inline:true,
+          style:prev?.style||next?.style||"smart",
+          rate:prev?.rate||next?.rate||1,
+          cfg,
+          xml:`<voice name="${cfg.voice}">${prosody}</voice>`
+        });
+        continue;
+      }
+    }
+
+    const cfg=configFor(p.language,p.style,p.text);
+    const prosody=`<prosody rate="${ratePercent(p.rate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${ssmlTextWithPauses(p.text)}</prosody>`;
     const body=cfg.express
       ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
       : prosody;
-    return {text,language,style,rate,cfg,xml:`<voice name="${cfg.voice}">${body}</voice>`};
-  }).filter(p=>p.text);
+    normalized.push({...p,inline:false,cfg,xml:`<voice name="${cfg.voice}">${body}</voice>`});
+  }
 
   return {
     normalized,
@@ -187,7 +234,7 @@ export async function synthesizeMixedTts(parts){
 
   const cacheKey=crypto.createHash("sha256")
     .update(JSON.stringify(normalized.map(p=>({
-      text:p.text,language:p.language,style:p.style,rate:p.rate,voice:p.cfg.voice
+      text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
   const file=path.join(CACHE_DIR,`${cacheKey}.mp3`);
