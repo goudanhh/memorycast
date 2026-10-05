@@ -251,7 +251,8 @@ app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
     }))
   }));
 
-  const result=await synthesizeTimedTts(lines);
+  const format=String(req.body?.format||"aac").toLowerCase()==="mp3"?"mp3":"aac";
+  const result=await synthesizeTimedTts(lines,{format});
   const timingHeader=Buffer.from(JSON.stringify(result.timings||[]),"utf8").toString("base64url");
 
   res.setHeader("Content-Type",result.mimeType||"audio/mpeg");
