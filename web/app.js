@@ -215,15 +215,14 @@ function stopAllTts(){
 }
 function browserSpeakPart(part,cb){
   const u=new SpeechSynthesisUtterance(part.text);
-  u.lang=part.lang;
-  const profile=voiceStyleProfile(part.lang);
+  // Keep one English voice in browser fallback too, so mixed text never swaps speakers.
+  u.lang="en-US";
+  const profile=voiceStyleProfile("en-US");
   u.pitch=profile.pitch;
   u.volume=1;
-  const baseRate=part.lang==="zh-CN"
-    ? Number(settings.chinese_rate||1.0)
-    : Number(settings.english_rate||1.0);
+  const baseRate=Number(settings.english_rate||1.0);
   u.rate=Math.max(0.6,Math.min(1.6,baseRate*profile.rate));
-  const voice=pickVoice(part.lang);
+  const voice=pickVoice("en-US");
   if(voice)u.voice=voice;
   u.onend=()=>cb&&cb();
   u.onerror=()=>cb&&cb();
