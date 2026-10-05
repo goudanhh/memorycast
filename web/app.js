@@ -1478,6 +1478,30 @@ async function loadSettings(){
   $("aiFeynmanProvider").value=settings.ai_feynman_provider||"gemini";
   $("sttProvider").value=settings.stt_provider||"cloudflare";
   $("ocrProvider").value=settings.ocr_provider||"gemini";
+
+  const serverOrder=Array.isArray(settings.nav_order)?settings.nav_order:[];
+  let localOrder=[];
+  try{localOrder=JSON.parse(localStorage.getItem(NAV_ORDER_KEY)||"[]")}catch{}
+
+  if(serverOrder.length){
+    const serverIsDefault=JSON.stringify(serverOrder)===JSON.stringify(DEFAULT_NAV_ORDER);
+    const localIsCustom=Array.isArray(localOrder)&&localOrder.length&&JSON.stringify(localOrder)!==JSON.stringify(DEFAULT_NAV_ORDER);
+
+    if(serverIsDefault&&localIsCustom){
+      applyNavOrder(localOrder);
+      try{
+        const migrated=await api("/settings/nav-order",{
+          method:"PUT",
+          body:JSON.stringify({nav_order:localOrder})
+        });
+        if(Array.isArray(migrated.nav_order))applyNavOrder(migrated.nav_order);
+      }catch{}
+    }else{
+      applyNavOrder(serverOrder);
+      try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(serverOrder))}catch{}
+    }
+  }
+
   refreshVoices();
   $("englishVoiceStyle").value=localStorage.getItem("memorycast_en_voice_style")||"smart";
   $("chineseVoiceStyle").value=localStorage.getItem("memorycast_zh_voice_style")||"smart";
@@ -1588,8 +1612,26 @@ function currentNavOrder(){
   return [...document.querySelectorAll(".nav [data-page]")].map(x=>x.dataset.page);
 }
 
+let navSaveTimer=null;
 function saveNavOrder(){
-  try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(currentNavOrder()))}catch{}
+  const order=currentNavOrder();
+  try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(order))}catch{}
+
+  clearTimeout(navSaveTimer);
+  navSaveTimer=setTimeout(async()=>{
+    try{
+      const d=await api("/settings/nav-order",{
+        method:"PUT",
+        body:JSON.stringify({nav_order:order})
+      });
+      if(Array.isArray(d.nav_order)){
+        applyNavOrder(d.nav_order);
+        try{localStorage.setItem(NAV_ORDER_KEY,JSON.stringify(d.nav_order))}catch{}
+      }
+    }catch(err){
+      console.warn("菜单顺序服务端同步失败，已保留本地缓存：",err?.message||err);
+    }
+  },250);
 }
 
 function applyNavOrder(order){
