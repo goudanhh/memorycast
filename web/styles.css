@@ -9,7 +9,7 @@
 .review-card{min-height:300px;border:1px solid var(--line);border-radius:22px;padding:28px;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center;background:#fcfcfd;margin:12px 0}.front{font-size:38px;font-weight:900;letter-spacing:-.04em;margin:12px 0 7px}.back{font-size:23px}.example{color:var(--muted);line-height:1.7;margin:12px auto}.ratings{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}.ratings button{border:1px solid var(--line);background:#fff;border-radius:13px;padding:12px;font-weight:800;cursor:pointer}.ratings button:first-child{background:var(--bad)}.ratings button:last-child{background:var(--good)}
 label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,textarea,select{width:100%;border:1px solid var(--line);border-radius:13px;padding:11px;background:#fff}.large-input{min-height:330px}textarea{min-height:100px;resize:vertical}.card-list{display:flex;flex-direction:column}.card-item{display:grid;grid-template-columns:1fr auto;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}.chip{font-size:11px;background:#f1f5f9;padding:6px 8px;border-radius:999px;height:max-content}.card-actions{display:flex;gap:5px}.preview-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.mini-card{border:1px solid var(--line);border-radius:14px;padding:12px}.quiz-empty{padding:30px;border:1px dashed var(--line);border-radius:18px;text-align:center;color:var(--muted);margin-top:14px}.quiz-card{border:1px solid var(--line);border-radius:20px;padding:22px;background:#fcfcfd;margin-top:10px}.quiz-card h3{font-size:23px}.quiz-choices{display:grid;gap:8px;margin:10px 0}.quiz-choice{text-align:left;border:1px solid var(--line);background:#fff;border-radius:13px;padding:12px;cursor:pointer}.quiz-choice.selected{outline:2px solid #111827}.feedback{padding:14px;border-radius:14px;margin-top:12px;line-height:1.6}.feedback.correct{background:var(--good)}.feedback.partial{background:var(--warn)}.feedback.wrong{background:var(--bad)}
 .library-tools{margin:10px 0}.library-tools input{flex:1}.setting{display:grid;grid-template-columns:1fr 240px;gap:20px;padding:15px 0;border-bottom:1px solid var(--line)}.modal{position:fixed;inset:0;background:rgba(15,23,42,.5);display:grid;place-items:center;padding:18px;z-index:100}.modal-card{width:min(560px,100%);background:#fff;border-radius:22px;padding:20px}
-.watch .sidebar{display:none}.watch .app{grid-template-columns:1fr}.watch .content{max-width:430px;margin:auto}.watch .topbar{padding:0 10px}.watch main{padding:10px}.watch .page:not(#todayPage){display:none!important}.watch #todayPage{display:block!important}.watch .watch-hide{display:none}.watch .grid2{grid-template-columns:1fr}.watch .front{font-size:31px}.watch .back{font-size:19px}.watch .ratings{grid-template-columns:1fr 1fr}
+
 @media(max-width:900px){
   .app{grid-template-columns:1fr}
   .mobile-menu-btn{display:inline-flex;white-space:nowrap}
@@ -137,3 +137,46 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .quiz-visual{margin:14px 0;padding:10px;border:1px solid var(--line);border-radius:16px;background:#fff;text-align:center}
 .quiz-visual img{display:block;max-width:100%;max-height:520px;margin:auto;border-radius:10px;object-fit:contain}
 @media(max-width:560px){.quiz-visual img{max-height:360px}}
+
+.walkman-mode{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:22px;
+  background:#0f172a;
+  padding:24px;
+}
+.walkman-play{
+  width:112px;
+  height:112px;
+  border:0;
+  border-radius:999px;
+  background:#fff;
+  color:#0f172a;
+  font-size:42px;
+  font-weight:900;
+  cursor:pointer;
+  box-shadow:0 18px 60px rgba(0,0,0,.28);
+}
+.walkman-rate{
+  width:110px;
+  min-width:110px;
+  background:#fff;
+  color:#0f172a;
+  font-size:20px;
+  font-weight:800;
+  padding:14px 12px;
+  border-radius:16px;
+}
+body.walkman{overflow:hidden;background:#0f172a}
+body.walkman #app,
+body.walkman #loginScreen{visibility:hidden}
+body.walkman .walkman-mode{visibility:visible}
+@media(max-width:560px){
+  .walkman-mode{flex-direction:column;gap:18px}
+  .walkman-play{width:132px;height:132px;font-size:48px}
+  .walkman-rate{width:132px;min-width:132px;text-align:center}
+}
