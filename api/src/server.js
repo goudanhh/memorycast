@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
 import { hasAI, generateStructured, aiInfo } from "./ai.js";
+import { synthesizeTts, ttsInfo } from "./tts.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -202,7 +203,20 @@ await query(`
   FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE
 `);
 
-app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), mode:"single-user" }));
+app.get("/health", (req,res) => res.json({ ok:true, ai:aiInfo(), tts:ttsInfo(), mode:"single-user" }));
+app.get("/tts/info", requireAuth, (req,res) => res.json(ttsInfo()));
+app.post("/tts", requireAuth, asyncRoute(async(req,res)=>{
+  const text=String(req.body?.text||"");
+  const language=req.body?.language==="zh-CN"?"zh-CN":"en-US";
+  const style=["natural","host","lazy"].includes(req.body?.style)?req.body.style:"natural";
+  const rate=Math.min(2,Math.max(.5,Number(req.body?.rate||1)));
+  const result=await synthesizeTts({text,language,style,rate});
+  res.setHeader("Content-Type","audio/mpeg");
+  res.setHeader("Cache-Control","private, max-age=31536000, immutable");
+  res.setHeader("X-MemoryCast-TTS-Cache",result.cacheHit?"HIT":"MISS");
+  res.setHeader("X-MemoryCast-TTS-Voice",result.voice);
+  res.send(result.audio);
+}));
 app.get("/auth/me", asyncRoute(async (req,res) => {
   const id = await getLocalUserId();
   res.json({
