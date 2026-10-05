@@ -347,16 +347,129 @@ app.get("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
   if(!rows[0]) return res.status(404).json({error:"Note not found"});
   res.json({note:normalizeNoteRow(rows[0])});
 }));
+async function syncCardsFromEditedNote(uid,noteRow){
+  const linked=await query(`
+    SELECT * FROM cards
+    WHERE user_id=$1 AND source_note_id=$2
+    ORDER BY created_at ASC,id ASC
+  `,[uid,noteRow.id]);
+
+  const existing=linked.rows||[];
+  if(!existing.length){
+    return {status:"none",linked:0,updated:0,message:"这篇笔记没有关联卡片。"};
+  }
+
+  const targetCount=Math.min(30,existing.length);
+  let generated=[];
+
+  if(targetCount===1){
+    // One linked card is safest to keep as the same learning object: update its
+    // text directly from the edited note without changing FSRS/history.
+    const semanticTags=await autoSemanticTags(noteRow.title,noteRow.content,"");
+    generated=[{
+      front:noteRow.title,
+      back:noteRow.content,
+      example:"",
+      tags:semanticTags
+    }];
+  }else{
+    const organizeProvider=await featureProvider(uid,"ai_organize_provider","gemini");
+    const data=await generateStructured({
+      provider:organizeProvider,
+      name:"sync_study_cards",
+      schema:organizeSchema,
+      system:`Synchronize existing spaced-repetition cards from an edited source note.
+Use ONLY the edited note. Do not add unsupported facts.
+Return exactly ${targetCount} cards.
+Keep the output array aligned with the supplied existingCards order whenever the same concept still exists:
+output card 1 should update existingCards[0], card 2 updates existingCards[1], etc.
+Preserve the original learning intent where possible, but rewrite stale wording to match the edited note.
+Front = concise recall prompt or term.
+Back = essential answer.
+Example = short useful example when appropriate, otherwise empty.
+For English study content, preserve useful English expressions and natural examples.
+Generate 2 to 4 concise semantic tags for each card.
+Do not include dates or timestamps in tags.
+Return schema-valid JSON only.`,
+      user:JSON.stringify({
+        editedNote:{title:noteRow.title,content:noteRow.content},
+        targetCount,
+        existingCards:existing.slice(0,targetCount).map(c=>({
+          front:c.front,back:c.back,example:c.example,tags:c.tags||[]
+        }))
+      })
+    });
+    generated=Array.isArray(data.cards)?data.cards.slice(0,targetCount):[];
+  }
+
+  let updated=0;
+  for(let i=0;i<Math.min(existing.length,generated.length);i++){
+    const old=existing[i];
+    const fresh=generated[i];
+    const front=String(fresh?.front||"").trim();
+    const back=String(fresh?.back||"").trim();
+    const example=String(fresh?.example||"").trim();
+    if(!front||!back)continue;
+
+    const semanticTags=Array.isArray(fresh.tags)&&fresh.tags.length
+      ? fresh.tags
+      : await autoSemanticTags(front,back,example);
+    const tags=normalizeTags(semanticTags,old.created_at);
+    const category=semanticTags[0]||old.category||"Other";
+
+    // Deliberately update only content metadata. ID, FSRS, due time,
+    // review_count and review history remain untouched.
+    await query(`
+      UPDATE cards
+      SET front=$3,back=$4,example=$5,category=$6,tags=$7,updated_at=NOW()
+      WHERE id=$2 AND user_id=$1
+    `,[uid,old.id,front,back,example,category,tags]);
+    updated++;
+  }
+
+  return {
+    status:updated===existing.length?"synced":"partial",
+    linked:existing.length,
+    updated,
+    message:updated===existing.length
+      ? `已同步 ${updated} 张关联卡片，并保留原 FSRS 学习进度。`
+      : `已同步 ${updated}/${existing.length} 张关联卡片；未成功匹配的卡片保持原样。`
+  };
+}
+
 app.put("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
   const title=String(req.body?.title||"").trim();
   const content=String(req.body?.content??"");
   if(!content.trim()) return res.status(400).json({error:"Note content is required"});
+
   const {rows}=await query(`
     UPDATE notes SET title=$3,content=$4,updated_at=NOW()
     WHERE id=$2 AND user_id=$1 RETURNING *
-  `,[userId(req),req.params.id,title||noteTitle(content),content]);
+  `,[uid,req.params.id,title||noteTitle(content),content]);
+
   if(!rows[0]) return res.status(404).json({error:"Note not found"});
-  res.json({note:normalizeNoteRow(rows[0])});
+
+  const note=normalizeNoteRow(rows[0]);
+  let cardSync={status:"none",linked:0,updated:0,message:"这篇笔记没有关联卡片。"};
+
+  try{
+    cardSync=await syncCardsFromEditedNote(uid,rows[0]);
+  }catch(err){
+    console.warn("Note saved but card sync failed:",err?.message||err);
+    const linked=await query(`
+      SELECT COUNT(*)::int AS n FROM cards
+      WHERE user_id=$1 AND source_note_id=$2
+    `,[uid,rows[0].id]);
+    cardSync={
+      status:"failed",
+      linked:linked.rows[0]?.n||0,
+      updated:0,
+      message:"笔记已保存，但关联卡片自动同步失败；原卡片和学习进度均未被删除。"
+    };
+  }
+
+  res.json({note,cardSync});
 }));
 app.delete("/notes/:id", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
