@@ -8,9 +8,20 @@ let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanList
 
 async function api(path,opts={}){
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
-  const text=await res.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={error:text}}
+  const text=await res.text();
+  let data={};
+  try{data=text?JSON.parse(text):{}}
+  catch{
+    const looksHtml=/^\s*</.test(text||"");
+    data={error:looksHtml?"":text};
+  }
   if(res.status===401){showLogin();throw new Error("请先登录")}
-  if(!res.ok)throw new Error(data.error||("HTTP "+res.status));return data;
+  if(!res.ok){
+    if(res.status===504)throw new Error("AI 响应超时了，但本轮讲解没有丢失。请再次提交。");
+    if(res.status===502||res.status===503)throw new Error("AI 服务暂时不可用，请稍后重试或切换 API。");
+    throw new Error(data.error||("HTTP "+res.status));
+  }
+  return data;
 }
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
 function showLogin(){$("loginScreen").classList.remove("hidden");$("app").classList.add("hidden")}
