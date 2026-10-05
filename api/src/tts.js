@@ -32,7 +32,101 @@ function smartStyle(text,language){
   return "natural";
 }
 
-function ssmlEscapeWithNumbers(value=""){
+function spokenAlias(symbol,language="en-US"){
+  const zh=language==="zh-CN";
+  const aliases={
+    "%":zh?"百分之":"percent",
+    "+":zh?"加":"plus",
+    "=":zh?"等于":"equals",
+    "×":zh?"乘":"times",
+    "÷":zh?"除以":"divided by",
+    "±":zh?"正负":"plus or minus",
+    "≤":zh?"小于等于":"less than or equal to",
+    "≥":zh?"大于等于":"greater than or equal to",
+    "<":zh?"小于":"less than",
+    ">":zh?"大于":"greater than",
+    "@":zh?"艾特":"at",
+    "&":zh?"和":"and"
+  };
+  return aliases[symbol]||symbol;
+}
+
+function ssmlSymbol(symbol,language="en-US"){
+  return `<sub alias="${escapeXml(spokenAlias(symbol,language))}">${escapeXml(symbol)}</sub>`;
+}
+
+function decimalSsml(token,language="en-US"){
+  const m=String(token).match(/^(\d+)\.(\d+)$/);
+  if(!m)return escapeXml(token);
+  const point=language==="zh-CN"?"点":"point";
+  return `<say-as interpret-as="cardinal">${escapeXml(m[1])}</say-as><sub alias="${point}">.</sub><say-as interpret-as="characters">${escapeXml(m[2])}</say-as>`;
+}
+
+function ssmlEscapePlainSymbols(value="",language="en-US"){
+  const text=String(value||"");
+  let out="";
+  let buf="";
+  const flush=()=>{if(buf){out+=escapeXml(buf);buf="";}};
+
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+
+    // Temperature units.
+    if(ch==="°"){
+      flush();
+      const next=(text[i+1]||"").toUpperCase();
+      if(next==="C"){
+        out+=`<sub alias="${language==="zh-CN"?"摄氏度":"degrees Celsius"}">°C</sub>`;
+        i++;
+        continue;
+      }
+      if(next==="F"){
+        out+=`<sub alias="${language==="zh-CN"?"华氏度":"degrees Fahrenheit"}">°F</sub>`;
+        i++;
+        continue;
+      }
+      out+=`<sub alias="${language==="zh-CN"?"度":"degrees"}">°</sub>`;
+      continue;
+    }
+
+    if(["%","+","=","×","÷","±","≤","≥","<",">","@","&"].includes(ch)){
+      flush();
+      out+=ssmlSymbol(ch,language);
+      continue;
+    }
+
+    // Numeric ranges: 10-20 => ten to twenty / 十到二十.
+    if((ch==="-"||ch==="–"||ch==="—") && /\d/.test(text[i-1]||"") && /\d/.test(text[i+1]||"")){
+      flush();
+      const alias=language==="zh-CN"?"到":"to";
+      out+=`<sub alias="${alias}">${escapeXml(ch)}</sub>`;
+      continue;
+    }
+
+    // Leading negative number: -3.5 => minus 3.5.
+    if(ch==="-" && /\d/.test(text[i+1]||"") && (i===0||/[\s(=,:;]/.test(text[i-1]||""))){
+      flush();
+      const alias=language==="zh-CN"?"负":"minus";
+      out+=`<sub alias="${alias}">-</sub>`;
+      continue;
+    }
+
+    // Ratios: 1:1 => one to one / 一比一. Times such as 10:30 are handled
+    // outside this helper by the punctuation parser and are not forced here.
+    if(ch===":" && /\d/.test(text[i-1]||"") && /\d/.test(text[i+1]||"")){
+      flush();
+      const alias=language==="zh-CN"?"比":"to";
+      out+=`<sub alias="${alias}">:</sub>`;
+      continue;
+    }
+
+    buf+=ch;
+  }
+  flush();
+  return out;
+}
+
+function ssmlEscapeWithNumbers(value="",language="en-US"){
   const text=String(value||"");
   const tokenRe=/(\b\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\b|\b\d+\.\d+\b|\b\d+\b)/g;
   let out="";
@@ -40,22 +134,24 @@ function ssmlEscapeWithNumbers(value=""){
 
   for(const match of text.matchAll(tokenRe)){
     const idx=match.index??0;
-    out+=escapeXml(text.slice(last,idx));
+    out+=ssmlEscapePlainSymbols(text.slice(last,idx),language);
     const token=match[0];
 
     if(/^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/.test(token)){
       out+=`<say-as interpret-as="date" format="ymd">${escapeXml(token)}</say-as>`;
+    }else if(/^\d+\.\d+$/.test(token)){
+      out+=decimalSsml(token,language);
     }else{
       out+=`<say-as interpret-as="cardinal">${escapeXml(token)}</say-as>`;
     }
     last=idx+token.length;
   }
 
-  out+=escapeXml(text.slice(last));
+  out+=ssmlEscapePlainSymbols(text.slice(last),language);
   return out;
 }
 
-function ssmlTextWithPauses(value=""){
+function ssmlTextWithPauses(value="",language="en-US"){
   const text=String(value);
   const pauseMap={
     "，":"180ms", ",":"160ms",
@@ -71,7 +167,7 @@ function ssmlTextWithPauses(value=""){
   let buf="";
   const flush=()=>{
     if(!buf)return;
-    out+=ssmlEscapeWithNumbers(buf);
+    out+=ssmlEscapeWithNumbers(buf,language);
     buf="";
   };
 
@@ -89,6 +185,18 @@ function ssmlTextWithPauses(value=""){
       continue;
     }
     if(pauseMap[ch]){
+      // Decimal point: keep it inside the token so it is spoken as 点 / point.
+      if(ch==="." && /\d/.test(text[i-1]||"") && /\d/.test(text[i+1]||"")){
+        buf+=ch;
+        continue;
+      }
+
+      // Numeric ratio such as 1:1. Keep it in the token so ':' becomes 比 / to.
+      if(ch===":" && /\d/.test(text[i-1]||"") && /\d/.test(text[i+1]||"")){
+        buf+=ch;
+        continue;
+      }
+
       // A period immediately after a digit is often a numbered-list marker (1. 2. 3.),
       // not a sentence-ending full stop.
       if(ch==="." && /\d/.test(text[i-1]||"") && /\s/.test(text[i+1]||"")){
@@ -144,7 +252,7 @@ function ratePercent(baseRate,multiplier){
 
 function buildSsml(text,language,style,baseRate){
   const cfg=configFor(language,style,text);
-  const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${clearIsolatedFragment(text,lang)}</prosody>`;
+  const prosody=`<prosody rate="${ratePercent(baseRate,cfg.rateMultiplier)}" pitch="${cfg.pitch}">${clearIsolatedFragment(text,cfg.locale)}</prosody>`;
   const body=cfg.express
     ? `<mstts:express-as style="${cfg.express}">${prosody}</mstts:express-as>`
     : prosody;
@@ -178,7 +286,7 @@ function inlineEnglishXml(text){
 function clearIsolatedFragment(text="",language="en-US"){
   const raw=String(text||"");
   const trimmed=raw.trim();
-  if(!trimmed)return ssmlTextWithPauses(raw);
+  if(!trimmed)return ssmlTextWithPauses(raw,language);
 
   if(language==="en-US"){
     // A single letter must be spoken as its letter name, never swallowed as a
@@ -198,8 +306,15 @@ function clearIsolatedFragment(text="",language="en-US"){
       return `<break time="25ms"/><prosody rate="-7%">${escapeXml(trimmed)}</prosody><break time="30ms"/>`;
     }
 
-    // Technical tokens such as CO2, NOx, PM2.5: articulate character groups.
-    if(/^(?:[A-Za-z]{1,5}\d+(?:\.\d+)?|[A-Za-z]{2,5}[A-Za-z]?\d*)$/.test(trimmed) && /\d/.test(trimmed)){
+    // Technical decimals such as PM2.5: spell the prefix and explicitly
+    // pronounce the decimal point instead of letting TTS swallow it.
+    const techDecimal=trimmed.match(/^([A-Za-z]{1,6})(\d+\.\d+)$/);
+    if(techDecimal){
+      return `<break time="25ms"/><prosody rate="-7%"><say-as interpret-as="characters">${escapeXml(techDecimal[1])}</say-as>${decimalSsml(techDecimal[2],language)}</prosody><break time="30ms"/>`;
+    }
+
+    // Other technical tokens such as CO2 / PM10.
+    if(/^(?:[A-Za-z]{1,5}\d+|[A-Za-z]{2,5}[A-Za-z]?\d*)$/.test(trimmed) && /\d/.test(trimmed)){
       return `<break time="25ms"/><prosody rate="-7%"><say-as interpret-as="characters">${escapeXml(trimmed)}</say-as></prosody><break time="30ms"/>`;
     }
   }
@@ -208,7 +323,7 @@ function clearIsolatedFragment(text="",language="en-US"){
     return `<break time="20ms"/><prosody rate="-6%">${escapeXml(trimmed)}</prosody><break time="25ms"/>`;
   }
 
-  return ssmlTextWithPauses(raw);
+  return ssmlTextWithPauses(raw,language);
 }
 
 function dominantLocaleForParts(source){
@@ -308,7 +423,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update("mixed-clear-isolated-v5|"+JSON.stringify(normalized.map(p=>({
+    .update("mixed-symbols-v6|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
@@ -362,7 +477,7 @@ export async function synthesizeTts({text,language="en-US",style="smart",rate=1}
 
   const {cfg,ssml}=buildSsml(clean,language,style,rate);
   const cacheKey=crypto.createHash("sha256")
-    .update("single-clear-isolated-v2|"+JSON.stringify({text:clean,language:cfg.locale,voice:cfg.voice,style,rate}))
+    .update("single-symbols-v3|"+JSON.stringify({text:clean,language:cfg.locale,voice:cfg.voice,style,rate}))
     .digest("hex");
   const file=path.join(CACHE_DIR,`${cacheKey}.mp3`);
 
