@@ -1615,6 +1615,7 @@ function stopWalkman(){
   walkmanPlaying=false;
   stopAllTts();
   if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
+  if($("walkmanSubtitle"))$("walkmanSubtitle").textContent="已暂停";
 }
 
 function playWalkmanCurrent(){
@@ -1641,6 +1642,7 @@ function playWalkmanCurrent(){
       },350);
       return;
     }
+    if($("walkmanSubtitle"))$("walkmanSubtitle").textContent=segments[i];
     speakOne(segments[i],()=>{
       if(!walkmanPlaying)return;
       setTimeout(()=>run(i+1),180);
@@ -1685,6 +1687,9 @@ async function enterWalkmanMode(){
   document.body.classList.add("walkman");
   $("walkmanMode").classList.remove("hidden");
   $("walkmanPlayBtn").textContent="▶";
+  $("walkmanSubtitle").textContent=walkmanQueue.length
+    ? (walkmanSegments(walkmanQueue[0])[0]||"准备播放")
+    : "暂无可播放内容";
 
   // Browser Back exits the minimalist mode without needing another visible button.
   try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
