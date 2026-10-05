@@ -118,3 +118,8 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
 .review-flashcard .back{margin-top:18px;padding-top:18px;border-top:1px solid var(--line,#e5e7eb)}
 .review-flashcard .example{margin-top:10px}
 .ratings button:disabled{opacity:.4;cursor:not-allowed}
+
+.listening-review{cursor:default}
+.listening-review .front{font-weight:700}
+.listening-review .back{margin-top:14px;padding-top:14px;border-top:1px solid var(--line,#e5e7eb)}
+.listening-review .example{margin-top:10px;opacity:.82}
