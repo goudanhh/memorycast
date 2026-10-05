@@ -71,6 +71,11 @@ function renderDue(){
     $("cardBack").textContent=c.back;
     $("cardExample").textContent=c.example||"";
     $("cardProgress").textContent=(dueIndex+1)+" / "+due.length;
+    renderCardAttachments(c);
+  }
+  if(!c){
+    const media=$("cardMedia");
+    if(media){media.innerHTML="";media.classList.add("hidden");}
   }
 
   $("queueList").innerHTML=due.map((x,i)=>
@@ -454,6 +459,7 @@ async function openNoteReview(id){
   $("manualNoteTitle").textContent=n.title;
   $("manualNoteMeta").textContent='自主复习 '+(n.manualReviewCount||0)+' 次'+(n.lastReviewedAt?' · 上次 '+new Date(n.lastReviewedAt).toLocaleString():'');
   $("manualNoteContent").textContent=n.content;
+  renderAttachmentGallery("manualNoteAttachments",n.attachments||[]);
   $("speakNoteBtn").disabled=false;
   $("markNoteReviewedBtn").disabled=false;
   $("editNoteBtn").disabled=false;
@@ -717,6 +723,7 @@ async function deleteCurrentNote(){
   $("manualNoteTitle").textContent="自主复习";
   $("manualNoteMeta").textContent="选择左侧一篇笔记";
   $("manualNoteContent").textContent="这里会显示完整原始笔记。";
+  renderAttachmentGallery("manualNoteAttachments",[]);
   $("speakNoteBtn").disabled=true;
   $("markNoteReviewedBtn").disabled=true;
   $("editNoteBtn").disabled=true;
@@ -744,6 +751,45 @@ function appendImportedText(text,note){
   if(note?.id)currentImportedNoteId=note.id;
   loadNotes().catch(()=>{});
 }
+
+function attachmentGalleryHtml(attachments=[]){
+  return attachments.map(a=>{
+    const name=esc(a.name||"附件");
+    const url=esc(a.url||("#"));
+    if(String(a.mimeType||"").startsWith("image/")){
+      return '<a class="attachment-thumb" href="'+url+'" target="_blank" rel="noopener">'+
+        '<img src="'+url+'" alt="'+name+'" loading="lazy">'+
+        '<span>'+name+'</span>'+
+      '</a>';
+    }
+    if(a.mimeType==="application/pdf"){
+      return '<a class="attachment-file" href="'+url+'" target="_blank" rel="noopener">📄 '+name+'</a>';
+    }
+    return '<a class="attachment-file" href="'+url+'" target="_blank" rel="noopener">📎 '+name+'</a>';
+  }).join("");
+}
+
+function renderAttachmentGallery(id,attachments=[]){
+  const box=$(id);
+  if(!box)return;
+  box.innerHTML=attachmentGalleryHtml(attachments);
+  box.classList.toggle("hidden",!attachments.length);
+}
+
+async function renderCardAttachments(card){
+  const box=$("cardMedia");
+  if(!box)return;
+  box.innerHTML="";
+  box.classList.add("hidden");
+  if(!card?.sourceNoteId)return;
+  const expectedId=card.id;
+  try{
+    const d=await api("/notes/"+card.sourceNoteId+"/attachments");
+    if(due[dueIndex]?.id!==expectedId)return;
+    renderAttachmentGallery("cardMedia",d.attachments||[]);
+  }catch{}
+}
+
 
 async function startVoiceNote(){
   if(!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==="undefined"){
@@ -840,29 +886,76 @@ function compressImage(file,maxSide=1600,quality=.82){
   });
 }
 
-async function handlePhotoOcr(file){
-  if(!file)return;
+async function prepareMediaFile(file){
+  const mime=String(file.type||"").toLowerCase();
+  if(mime==="application/pdf"){
+    if(file.size>12_000_000) throw new Error(file.name+" 超过 12MB，请先压缩 PDF。");
+    return {
+      name:file.name,
+      mimeType:"application/pdf",
+      dataBase64:await blobToBase64(file)
+    };
+  }
+
+  if(!["image/jpeg","image/png","image/webp"].includes(mime)){
+    throw new Error("不支持 "+file.name+" 的文件类型");
+  }
+
+  let blob=await compressImage(file);
+  if(blob.size>2_700_000) blob=await compressImage(file,1200,.70);
+  if(blob.size>2_700_000) throw new Error(file.name+" 图片仍然太大，请裁剪后重试。");
+
+  return {
+    name:file.name.replace(/\.[^.]+$/,"")+".jpg",
+    mimeType:"image/jpeg",
+    dataBase64:await blobToBase64(blob)
+  };
+}
+
+async function handleMediaFiles(fileList){
+  const files=[...(fileList||[])].slice(0,12);
+  if(!files.length)return;
+
   $("photoOcrBtn").disabled=true;
-  $("captureStatus").textContent="正在压缩图片并识别文字…";
+  let noteId=currentImportedNoteId||"";
+  const extractedPieces=[];
+  let totalAttachments=0;
+
   try{
-    let blob=await compressImage(file);
-    if(blob.size>2700000) blob=await compressImage(file,1200,.70);
-    if(blob.size>2700000) throw new Error("图片仍然太大，请裁剪后重试。");
-    const imageBase64=await blobToBase64(blob);
-    const d=await api("/ai/ocr",{method:"POST",body:JSON.stringify({
-      imageBase64,
-      mimeType:"image/jpeg"
-    })});
-    appendImportedText(d.text,d.note);
-    const ocrNames={gemini:"Gemini OCR",cloudflare:"Cloudflare Moondream OCR"}; $("captureStatus").textContent="✓ "+(ocrNames[d.provider]||"OCR")+" 已识别并保存到笔记库，可直接整理成卡片。";
+    for(let i=0;i<files.length;i++){
+      $("captureStatus").textContent="正在处理 "+(i+1)+" / "+files.length+"："+files[i].name;
+      const prepared=await prepareMediaFile(files[i]);
+
+      // Upload one at a time so multi-image notes do not create one huge request.
+      const d=await api("/ai/import-media",{
+        method:"POST",
+        body:JSON.stringify({
+          noteId:noteId||undefined,
+          files:[prepared]
+        })
+      });
+
+      noteId=d.note?.id||noteId;
+      currentImportedNoteId=noteId;
+      totalAttachments+=(d.attachments||[]).length;
+      if(String(d.text||"").trim())extractedPieces.push(String(d.text).trim());
+    }
+
+    if(extractedPieces.length){
+      const clean=extractedPieces.join("\n\n---\n\n");
+      const box=$("noteInput");
+      box.value=box.value.trim()?box.value.trim()+"\n\n"+clean:clean;
+    }
+
+    await loadNotes();
+    $("captureStatus").textContent="✓ 已保存 "+totalAttachments+" 个原始附件，并提取可识别文字。可直接整理成卡片。";
   }catch(e){
-    $("captureStatus").textContent="OCR 失败："+e.message;
+    $("captureStatus").textContent="附件处理失败："+e.message;
   }finally{
     $("photoOcrBtn").disabled=false;
     $("photoOcrInput").value="";
   }
 }
-
 async function organize(){
   const text=$("noteInput").value.trim();if(!text)return alert("请先粘贴笔记");const b=$("organizeBtn");b.disabled=true;b.textContent="AI 整理中…";
   try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text,splitMode:$("cardSplitMode").value,noteId:currentImportedNoteId})});currentGeneratedNoteId=d.note?.id||null;currentImportedNoteId=d.note?.id||currentImportedNoteId;generated=d.cards||[];loadNotes();$("generatedCards").innerHTML='<div class="muted" style="margin-bottom:10px">✓ 原始笔记已保存到笔记库，不会因生成卡片而删除。</div>'+generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+(c.tags||[]).map(esc).join(" · ")+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
@@ -1447,5 +1540,5 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handlePhotoOcr(e.target.files?.[0]);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q&&q.audioText)speakOne(q.audioText)};$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
