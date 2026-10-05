@@ -145,34 +145,14 @@ function inlineEnglishXml(text){
   return escapeXml(s);
 }
 
-function splitMixedIntoSentences(parts){
-  const joined=parts.map(p=>String(p.text||"")).join("");
-  const chunks=joined.match(/[^。！？!?；;\n]+[。！？!?；;\n]?/g)||[joined];
-  return chunks.map(x=>x.trim()).filter(Boolean);
-}
+function dominantLocaleForParts(source){
+  const all=source.map(p=>p.text).join("");
+  const zh=(all.match(/[\u3400-\u9fff]/g)||[]).length;
+  const en=(all.match(/[A-Za-z]/g)||[]).length;
 
-function dominantLocale(text=""){
-  const s=String(text||"");
-  const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
-  const en=(s.match(/[A-Za-z]/g)||[]).length;
-
-  // Chinese needs fewer characters to be semantically dense, so don't require
-  // a 50/50 raw character split.
-  if(zh>=4 && zh*1.7>=en) return "zh-CN";
-  return "en-US";
-}
-
-function mixedSentenceXml(text,locale,rate){
-  const voice=locale==="zh-CN"
-    ? (process.env.AZURE_ZH_MULTILINGUAL_VOICE||"zh-CN-YunxiaoMultilingualNeural")
-    : (process.env.AZURE_EN_MULTILINGUAL_VOICE||process.env.AZURE_MULTILINGUAL_VOICE||"en-US-AvaMultilingualNeural");
-
-  const prosodyRate=ratePercent(rate,1);
-  return {
-    voice,
-    locale,
-    xml:`<voice name="${voice}"><prosody rate="${prosodyRate}">${ssmlTextWithPauses(text)}</prosody></voice>`
-  };
+  // Chinese text is information-dense; if Chinese is substantial, prefer the
+  // Chinese-primary multilingual voice for the whole note.
+  return zh>=8 && zh*1.45>=en ? "zh-CN" : "en-US";
 }
 
 function buildMixedSsml(parts){
@@ -187,27 +167,30 @@ function buildMixedSsml(parts){
     return {normalized:[],ssml:""};
   }
 
-  const avgRate=source.reduce((sum,p)=>sum+p.rate,0)/source.length;
-  const sentences=splitMixedIntoSentences(source);
-  const rendered=sentences.map(text=>{
-    const locale=dominantLocale(text);
-    return {text,...mixedSentenceXml(text,locale,avgRate)};
-  });
+  // Use ONE multilingual voice for the entire note. Switching <voice> nodes
+  // mid-stream can cause audible gaps or truncated synthesis. We keep language
+  // hints with <lang> so English and Chinese still get their own pronunciation.
+  const dominant=dominantLocaleForParts(source);
+  const voice=dominant==="zh-CN"
+    ? (process.env.AZURE_ZH_MULTILINGUAL_VOICE||"zh-CN-YunxiaoMultilingualNeural")
+    : (process.env.AZURE_EN_MULTILINGUAL_VOICE||process.env.AZURE_MULTILINGUAL_VOICE||"en-US-AvaMultilingualNeural");
 
-  const normalized=rendered.map(x=>({
-    text:x.text,
-    language:x.locale,
-    sourceLanguage:x.locale,
+  const avgRate=source.reduce((sum,p)=>sum+p.rate,0)/source.length;
+  const body=source.map(p=>
+    `<lang xml:lang="${p.language}">${ssmlTextWithPauses(p.text)}</lang>`
+  ).join("");
+
+  const normalized=source.map(p=>({
+    ...p,
+    sourceLanguage:p.language,
     inline:false,
-    style:"multilingual-adaptive",
-    rate:avgRate,
-    cfg:{voice:x.voice,locale:x.locale},
-    xml:x.xml
+    cfg:{voice,locale:dominant},
+    xml:""
   }));
 
   return {
     normalized,
-    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">${rendered.map(x=>x.xml).join("")}</speak>`
+    ssml:`<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${dominant}"><voice name="${voice}"><prosody rate="${ratePercent(avgRate,1)}">${body}</prosody></voice></speak>`
   };
 }
 
@@ -259,7 +242,7 @@ export async function synthesizeMixedTts(parts){
   }
 
   const cacheKey=crypto.createHash("sha256")
-    .update("mixed-adaptive-multilingual-v2|"+JSON.stringify(normalized.map(p=>({
+    .update("mixed-single-multilingual-v3|"+JSON.stringify(normalized.map(p=>({
       text:p.text,language:p.language,sourceLanguage:p.sourceLanguage||p.language,inline:p.inline===true,style:p.style,rate:p.rate,voice:p.cfg.voice
     }))))
     .digest("hex");
