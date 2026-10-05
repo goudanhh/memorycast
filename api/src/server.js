@@ -447,37 +447,162 @@ async function saveCapturedNote(uid,text,tag){
   return normalizeNoteRow(rows[0]);
 }
 
+async function transcribeWithCloudflare(audio,mimeType){
+  const key=String(process.env.CLOUDFLARE_API_KEY||"").trim();
+  const accountId=String(process.env.CLOUDFLARE_ACCOUNT_ID||"").trim();
+  if(!key||!accountId) throw Object.assign(new Error("Cloudflare STT 未配置"),{skipProvider:true});
+
+  const model=process.env.CLOUDFLARE_STT_MODEL||"@cf/openai/whisper-large-v3-turbo";
+  const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`;
+  const response=await fetch(url,{
+    method:"POST",
+    headers:{
+      Authorization:`Bearer ${key}`,
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify({
+      audio:audio.toString("base64"),
+      task:"transcribe",
+      vad_filter:true,
+      condition_on_previous_text:true
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok || data?.success===false){
+    const msg=data?.errors?.[0]?.message||data?.error?.message||`Cloudflare STT error (${response.status})`;
+    const e=new Error(msg);e.statusCode=response.status;throw e;
+  }
+  const text=String(data?.result?.text||data?.text||"").trim();
+  if(!text) throw new Error("Cloudflare 没有返回有效转写。");
+  return {text,provider:"cloudflare",model};
+}
+
+function extractGeminiInteractionText(data){
+  const stepText=(data?.steps||[]).flatMap(step=>step?.content||[])
+    .filter(x=>x?.type==="text"&&x?.text)
+    .map(x=>x.text).join("\n").trim();
+  if(stepText)return stepText;
+  const outputText=(data?.outputs||[]).filter(x=>x?.text).map(x=>x.text).join("\n").trim();
+  return outputText;
+}
+
+async function transcribeWithGemini(audio,mimeType){
+  const key=String(process.env.GEMINI_API_KEY||"").trim();
+  if(!key) throw Object.assign(new Error("Gemini STT 未配置"),{skipProvider:true});
+
+  const model=process.env.GEMINI_TRANSCRIBE_MODEL||"gemini-3.5-transcribe";
+  const response=await fetch("https://generativelanguage.googleapis.com/v1beta/interactions",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "x-goog-api-key":key
+    },
+    body:JSON.stringify({
+      model,
+      input:[{
+        type:"audio",
+        data:audio.toString("base64"),
+        mime_type:mimeType
+      }],
+      generation_config:{
+        transcription_config:{
+          language_codes:[],
+          mode:"smart"
+        }
+      }
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const msg=data?.error?.message||`Gemini transcription error (${response.status})`;
+    const e=new Error(msg);e.statusCode=response.status;throw e;
+  }
+  const text=extractGeminiInteractionText(data);
+  if(!text) throw new Error("Gemini 没有返回有效转写。");
+  return {text,provider:"gemini",model};
+}
+
+async function transcribeWithOpenRouter(audio,mimeType){
+  const key=String(process.env.OPENROUTER_API_KEY||"").trim();
+  if(!key) throw Object.assign(new Error("OpenRouter STT 未配置"),{skipProvider:true});
+
+  const model=process.env.OPENROUTER_STT_MODEL||"openai/whisper-large-v3";
+  const format=mimeType.includes("webm")?"webm":
+    mimeType.includes("ogg")?"ogg":
+    mimeType.includes("wav")?"wav":
+    mimeType.includes("mpeg")||mimeType.includes("mp3")?"mp3":"webm";
+
+  const response=await fetch("https://openrouter.ai/api/v1/audio/transcriptions",{
+    method:"POST",
+    headers:{
+      Authorization:`Bearer ${key}`,
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify({
+      model,
+      input_audio:{
+        data:audio.toString("base64"),
+        format
+      }
+    })
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    const msg=data?.error?.message||`OpenRouter transcription error (${response.status})`;
+    const e=new Error(msg);e.statusCode=response.status;throw e;
+  }
+  const text=String(data?.text||data?.result?.text||"").trim();
+  if(!text) throw new Error("OpenRouter 没有返回有效转写。");
+  return {text,provider:"openrouter",model};
+}
+
+async function transcribeAudio(audio,mimeType){
+  const providers=[
+    transcribeWithCloudflare,
+    transcribeWithGemini,
+    transcribeWithOpenRouter
+  ];
+  const failures=[];
+  let configured=0;
+
+  for(const fn of providers){
+    try{
+      const result=await fn(audio,mimeType);
+      configured++;
+      return {...result,failures};
+    }catch(err){
+      if(err?.skipProvider)continue;
+      configured++;
+      failures.push(err?.message||String(err));
+      console.warn("STT provider failed:",fn.name,err?.message||err);
+    }
+  }
+
+  if(!configured){
+    const e=new Error("尚未配置语音转写服务。请配置 Cloudflare、Gemini 或 OpenRouter 中至少一个。");
+    e.statusCode=503;throw e;
+  }
+  const e=new Error("所有语音转写服务暂时都失败了，请稍后重试。");
+  e.statusCode=502;
+  throw e;
+}
+
 app.post("/ai/transcribe", requireAuth, asyncRoute(async(req,res)=>{
-  const key=String(process.env.GROQ_API_KEY||"").trim();
-  if(!key) return res.status(503).json({error:"服务器尚未配置 GROQ_API_KEY。"});
   const mimeType=String(req.body?.mimeType||"audio/webm").split(";")[0];
-  const filename=String(req.body?.filename||"voice-note.webm").replace(/[^a-zA-Z0-9._-]/g,"_");
   const audio=decodeBase64Payload(req.body?.audioBase64);
   if(!audio.length) return res.status(400).json({error:"没有收到录音数据。"});
   if(audio.length>2_700_000) return res.status(413).json({error:"录音太大，请分段录制后再转写。"});
 
-  const form=new FormData();
-  form.append("file",new Blob([audio],{type:mimeType}),filename);
-  form.append("model",process.env.GROQ_WHISPER_MODEL||"whisper-large-v3-turbo");
-  form.append("response_format","json");
-  form.append("temperature","0");
-
-  const response=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",{
-    method:"POST",
-    headers:{Authorization:`Bearer ${key}`},
-    body:form
+  const result=await transcribeAudio(audio,mimeType);
+  const note=await saveCapturedNote(userId(req),result.text,"语音笔记");
+  res.json({
+    text:result.text,
+    note,
+    provider:result.provider,
+    model:result.model
   });
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok){
-    const e=new Error(data?.error?.message||`Groq transcription error (${response.status})`);
-    e.statusCode=response.status===429?429:502;
-    throw e;
-  }
-  const text=String(data?.text||"").trim();
-  if(!text) return res.status(422).json({error:"没有识别到有效语音内容。"});
-  const note=await saveCapturedNote(userId(req),text,"语音笔记");
-  res.json({text,note,model:process.env.GROQ_WHISPER_MODEL||"whisper-large-v3-turbo"});
 }));
+
 
 app.post("/ai/ocr", requireAuth, asyncRoute(async(req,res)=>{
   const mimeType=String(req.body?.mimeType||"image/jpeg").split(";")[0];
