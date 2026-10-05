@@ -252,13 +252,15 @@ app.post("/tts/timed", requireAuth, asyncRoute(async(req,res)=>{
   }));
 
   const result=await synthesizeTimedTts(lines);
+  const timingHeader=Buffer.from(JSON.stringify(result.timings||[]),"utf8").toString("base64url");
+
+  res.setHeader("Content-Type","audio/mpeg");
+  res.setHeader("Content-Length",String(result.audio.length));
   res.setHeader("Cache-Control","private, max-age=31536000, immutable");
-  res.json({
-    audioBase64:result.audio.toString("base64"),
-    timings:result.timings,
-    cacheHit:result.cacheHit,
-    voice:result.voice
-  });
+  res.setHeader("X-MemoryCast-Timings",timingHeader);
+  res.setHeader("X-MemoryCast-TTS-Cache",result.cacheHit?"HIT":"MISS");
+  res.setHeader("X-MemoryCast-TTS-Voice",result.voice||"mixed");
+  res.send(result.audio);
 }));
 
 app.post("/tts", requireAuth, asyncRoute(async(req,res)=>{
