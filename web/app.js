@@ -1694,6 +1694,7 @@ function setupCustomNavOrder(){
       dragged=btn;
       startY=e.clientY;
       moved=false;
+      btn.classList.add("nav-touch-ready");
       try{btn.setPointerCapture(e.pointerId)}catch{}
     });
 
@@ -1704,11 +1705,21 @@ function setupCustomNavOrder(){
       btn.classList.add("nav-dragging");
       e.preventDefault();
 
-      const target=document.elementFromPoint(e.clientX,e.clientY)?.closest(".nav [data-page]");
-      if(!target||target===btn)return;
-      const rect=target.getBoundingClientRect();
-      const before=e.clientY < rect.top+rect.height/2;
-      nav.insertBefore(btn,before?target:target.nextSibling);
+      // iOS Safari + pointer capture can make elementFromPoint() keep returning
+      // the dragged button itself. Instead, place by comparing the finger Y
+      // position with every other menu item's vertical midpoint.
+      const siblings=[...nav.querySelectorAll("[data-page]")].filter(x=>x!==btn);
+      let inserted=false;
+      for(const target of siblings){
+        const rect=target.getBoundingClientRect();
+        const mid=rect.top+rect.height/2;
+        if(e.clientY<mid){
+          nav.insertBefore(btn,target);
+          inserted=true;
+          break;
+        }
+      }
+      if(!inserted)nav.appendChild(btn);
     });
 
     const finishPointer=e=>{
@@ -1720,7 +1731,7 @@ function setupCustomNavOrder(){
         btn.dataset.skipNextClick="1";
         setTimeout(()=>delete btn.dataset.skipNextClick,350);
       }
-      btn.classList.remove("nav-dragging");
+      btn.classList.remove("nav-dragging","nav-touch-ready");
       dragged=null;
       moved=false;
     };
