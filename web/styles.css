@@ -143,11 +143,32 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
   inset:0;
   z-index:9999;
   display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:28px;
+  background:#0f172a;
+  padding:28px;
+}
+.walkman-subtitle{
+  width:min(900px,90vw);
+  min-height:120px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  color:#fff;
+  font-size:clamp(24px,4vw,52px);
+  line-height:1.45;
+  font-weight:700;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+.walkman-controls{
+  display:flex;
   align-items:center;
   justify-content:center;
   gap:22px;
-  background:#0f172a;
-  padding:24px;
 }
 .walkman-play{
   width:112px;
@@ -176,7 +197,9 @@ body.walkman #app,
 body.walkman #loginScreen{visibility:hidden}
 body.walkman .walkman-mode{visibility:visible}
 @media(max-width:560px){
-  .walkman-mode{flex-direction:column;gap:18px}
-  .walkman-play{width:132px;height:132px;font-size:48px}
-  .walkman-rate{width:132px;min-width:132px;text-align:center}
+  .walkman-mode{gap:22px;padding:22px}
+  .walkman-subtitle{width:92vw;min-height:160px;font-size:30px}
+  .walkman-controls{gap:16px}
+  .walkman-play{width:120px;height:120px;font-size:46px}
+  .walkman-rate{width:120px;min-width:120px;text-align:center}
 }
