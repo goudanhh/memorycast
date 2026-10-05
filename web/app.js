@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="";
-let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null;
+let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -186,6 +186,7 @@ async function loadTtsInfo(){
   }
 }
 function stopAllTts(){
+  ttsPlaybackGeneration++;
   speechSynthesis.cancel();
   if(currentAudio){
     currentAudio.pause();
@@ -209,7 +210,7 @@ function browserSpeakPart(part,cb){
   u.onerror=()=>cb&&cb();
   speechSynthesis.speak(u);
 }
-async function neuralSpeakMixed(parts,cb,styleOverride=null){
+async function neuralSpeakMixed(parts,cb,styleOverride=null,playbackGeneration=ttsPlaybackGeneration){
   const payloadParts=parts.map(part=>({
     text:part.text,
     language:part.lang,
@@ -225,9 +226,15 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null){
       body:JSON.stringify({parts:payloadParts})
     });
     if(!res.ok)throw new Error("Neural TTS HTTP "+res.status);
+    if(playbackGeneration!==ttsPlaybackGeneration)return;
     const blob=await res.blob();
+    if(playbackGeneration!==ttsPlaybackGeneration)return;
     const url=URL.createObjectURL(blob);
     const audio=new Audio(url);
+    if(playbackGeneration!==ttsPlaybackGeneration){
+      URL.revokeObjectURL(url);
+      return;
+    }
     currentAudio=audio;
     const finish=()=>{
       URL.revokeObjectURL(url);
@@ -240,8 +247,15 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null){
       if(currentAudio===audio)currentAudio=null;
       let i=0;
       const fallback=()=>{
+        if(playbackGeneration!==ttsPlaybackGeneration)return;
         if(i>=parts.length){cb&&cb();return}
-        browserSpeakPart(parts[i++],fallback);
+        const current=parts[i++];
+        const next=parts[i];
+        browserSpeakPart(current,()=>{
+          if(playbackGeneration!==ttsPlaybackGeneration)return;
+          const delay=next&&next.lang!==current.lang?140:45;
+          setTimeout(fallback,delay);
+        });
       };
       fallback();
     };
@@ -250,8 +264,15 @@ async function neuralSpeakMixed(parts,cb,styleOverride=null){
     console.warn("Azure mixed TTS unavailable; using browser fallback:",err.message);
     let i=0;
     const fallback=()=>{
+      if(playbackGeneration!==ttsPlaybackGeneration)return;
       if(i>=parts.length){cb&&cb();return}
-      browserSpeakPart(parts[i++],fallback);
+      const current=parts[i++];
+      const next=parts[i];
+      browserSpeakPart(current,()=>{
+        if(playbackGeneration!==ttsPlaybackGeneration)return;
+        const delay=next&&next.lang!==current.lang?140:45;
+        setTimeout(fallback,delay);
+      });
     };
     fallback();
   }
@@ -260,14 +281,22 @@ function speakOne(text,cb,styleOverride=null){
   if(!text){if(cb)cb();return}
   const parts=splitByLanguage(text);
   if(!parts.length){if(cb)cb();return}
+  const playbackGeneration=ttsPlaybackGeneration;
   if(ttsInfoState.enabled){
-    neuralSpeakMixed(parts,cb,styleOverride);
+    neuralSpeakMixed(parts,cb,styleOverride,playbackGeneration);
     return;
   }
   let i=0;
   const run=()=>{
+    if(playbackGeneration!==ttsPlaybackGeneration)return;
     if(i>=parts.length){if(cb)cb();return}
-    browserSpeakPart(parts[i++],run);
+    const current=parts[i++];
+    const next=parts[i];
+    browserSpeakPart(current,()=>{
+      if(playbackGeneration!==ttsPlaybackGeneration)return;
+      const delay=next&&next.lang!==current.lang?140:45;
+      setTimeout(run,delay);
+    });
   };
   run();
 }
@@ -715,6 +744,9 @@ function toggleFeynmanMic(){
     try{feynmanRecognition.stop()}catch{}
     return;
   }
+
+  // The learner is taking the turn: stop current and pending AI speech first.
+  stopAllTts();
   feynmanRecognitionBase=$("feynmanInput").value.trim();
   try{feynmanRecognition.start()}catch{}
 }
