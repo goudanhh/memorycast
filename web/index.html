@@ -199,18 +199,18 @@
           <div class="eyebrow">FEYNMAN MODE</div>
           <h2>把它讲给 AI 学生听</h2>
         </div>
-        <button id="resetFeynmanBtn" class="ghost">重新开始</button>
+        <button id="resetFeynmanBtn" class="ghost">↻ 换知识点</button>
       </div>
       <p class="muted">目标不是背答案，而是把一个概念讲到“初学者也能跟上”。AI 每轮只追问一个最关键的逻辑缺口。</p>
 
-      <label>历史会话</label>
-      <select id="feynmanSessionSelect">
-        <option value="">新会话</option>
-      </select>
-
-      <label>你要讲什么？</label>
-      <input id="feynmanTopic" list="feynmanTopicList" placeholder="例如：为什么动词过去式 -ed 有三种发音？">
-      <datalist id="feynmanTopicList"></datalist>
+      <label>随机知识点</label>
+      <div class="feynman-topic-picker">
+        <div class="feynman-topic-main">
+          <input id="feynmanTopic" readonly placeholder="正在从记忆曲线中选择知识点…">
+          <div id="feynmanTopicMeta" class="muted">优先抽取到期、答错和 FSRS 难度较高的知识点。</div>
+        </div>
+        <button id="randomFeynmanTopicBtn" class="ghost" type="button">↻ 换一个</button>
+      </div>
 
       <div class="feynman-mic-box">
         <button id="feynmanMicBtn" class="feynman-mic" type="button">🎙️</button>
@@ -377,6 +377,6 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=per-feature-ai-router-2"></script>
+<script type="module" src="/app.js?v=feynman-fsrs-random-1"></script>
 </body>
 </html>
