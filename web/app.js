@@ -2191,10 +2191,90 @@ function watchLineLanguage(text=""){
 
 function watchPickVoice(lang){
   const voices=speechSynthesis.getVoices?.()||[];
-  const exact=voices.find(v=>String(v.lang||"").toLowerCase()===lang.toLowerCase());
-  if(exact)return exact;
-  const base=lang.split("-")[0].toLowerCase();
-  return voices.find(v=>String(v.lang||"").toLowerCase().startsWith(base))||null;
+  const target=lang.toLowerCase();
+  const base=target.split("-")[0];
+
+  const score=voice=>{
+    const vlang=String(voice.lang||"").toLowerCase();
+    let s=0;
+    if(vlang===target)s+=100;
+    else if(vlang.startsWith(base+"-")||vlang===base)s+=60;
+    if(voice.localService)s+=20;
+    if(/enhanced|premium|natural/i.test(String(voice.name||"")))s+=10;
+    if(/compact|espeak/i.test(String(voice.name||"")))s-=15;
+    return s;
+  };
+
+  return voices
+    .map(v=>({v,s:score(v)}))
+    .filter(x=>x.s>0)
+    .sort((a,b)=>b.s-a.s)[0]?.v||null;
+}
+
+function watchSplitMixedSpeech(text=""){
+  const s=String(text||"").trim();
+  if(!s)return [];
+
+  const out=[];
+  let buf="";
+  let lang=null;
+
+  const push=()=>{
+    const t=buf.trim();
+    if(t)out.push({text:t,lang:lang||watchLineLanguage(t)});
+    buf="";
+  };
+
+  for(const ch of s){
+    let nextLang=lang;
+    if(/[\u3400-\u9fff]/.test(ch))nextLang="zh-CN";
+    else if(/[A-Za-z0-9]/.test(ch))nextLang="en-US";
+
+    // Spaces and punctuation stay attached to the active run so transitions
+    // remain smooth instead of producing tiny isolated utterances.
+    if(lang && nextLang && nextLang!==lang){
+      push();
+    }
+    if(nextLang)lang=nextLang;
+    buf+=ch;
+  }
+  push();
+
+  // Merge tiny punctuation-only artifacts into neighbors.
+  return out.filter(x=>x.text);
+}
+
+function watchSpeakPart(part){
+  return new Promise(resolve=>{
+    const utterance=new SpeechSynthesisUtterance(part.text);
+    utterance.lang=part.lang;
+
+    const voice=watchPickVoice(part.lang);
+    if(voice)utterance.voice=voice;
+
+    const baseRate=part.lang==="zh-CN"
+      ? Number(settings.chinese_rate||1.0)
+      : Number(settings.english_rate||1.0);
+
+    // Slightly relax the Watch browser TTS pace. It sounds less robotic than
+    // driving the system voice at the same aggressive rate as server TTS.
+    const naturalFactor=part.lang==="zh-CN"?0.92:0.96;
+    utterance.rate=Math.max(0.72,Math.min(1.45,baseRate*walkmanRate*naturalFactor));
+    utterance.pitch=part.lang==="zh-CN"?1.0:0.98;
+    utterance.volume=1;
+
+    utterance.onstart=()=>{
+      if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="⏸";
+    };
+    utterance.onend=()=>resolve(true);
+    utterance.onerror=()=>resolve(false);
+
+    try{
+      speechSynthesis.speak(utterance);
+    }catch{
+      resolve(false);
+    }
+  });
 }
 
 async function playWalkmanWatchBrowserTts(card){
@@ -2214,36 +2294,20 @@ async function playWalkmanWatchBrowserTts(card){
 
     setWalkmanLyricIndex(lines,i);
 
-    const ok=await new Promise(resolve=>{
-      const utterance=new SpeechSynthesisUtterance(text);
-      const lang=watchLineLanguage(text);
-      utterance.lang=lang;
-      const voice=watchPickVoice(lang);
-      if(voice)utterance.voice=voice;
+    const parts=watchSplitMixedSpeech(text);
+    for(let p=0;p<parts.length;p++){
+      if(!walkmanPlaying||generation!==ttsPlaybackGeneration)return false;
+      const ok=await watchSpeakPart(parts[p]);
+      if(!ok)return false;
 
-      const baseRate=lang==="zh-CN"
-        ? Number(settings.chinese_rate||1.0)
-        : Number(settings.english_rate||1.0);
-      utterance.rate=Math.max(0.6,Math.min(1.8,baseRate*walkmanRate));
-      utterance.pitch=1;
-      utterance.volume=1;
-
-      utterance.onstart=()=>{
-        if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="⏸";
-      };
-      utterance.onend=()=>resolve(true);
-      utterance.onerror=()=>resolve(false);
-
-      try{
-        speechSynthesis.speak(utterance);
-      }catch{
-        resolve(false);
+      // Keep language handoffs tight, but not abrupt.
+      if(p<parts.length-1){
+        await new Promise(r=>setTimeout(r,25));
       }
-    });
+    }
 
-    if(!ok)return false;
     if(i<lines.length-1){
-      await new Promise(r=>setTimeout(r,40));
+      await new Promise(r=>setTimeout(r,55));
     }
   }
 
