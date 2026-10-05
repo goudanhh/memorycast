@@ -1613,26 +1613,23 @@ function splitWalkmanSubtitle(text=""){
     .trim();
   if(!clean)return [];
 
-  const natural=(clean.match(/[^。！？!?；;，,\n]+[。！？!?；;，,]?/g)||[clean])
-    .map(x=>x.trim())
-    .filter(Boolean);
+  const splitLongClause=clause=>{
+    const s=String(clause||"").trim();
+    if(!s)return [];
 
-  const out=[];
-  for(const unit of natural){
-    const zh=(unit.match(/[\u3400-\u9fff]/g)||[]).length;
-    const en=(unit.match(/[A-Za-z]/g)||[]).length;
-    const maxChars=zh>=en?28:64;
+    const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
+    const en=(s.match(/[A-Za-z]/g)||[]).length;
+    const maxChars=zh>=en?34:76;
+    if(s.length<=maxChars)return [s];
 
-    if(unit.length<=maxChars){
-      out.push(unit);
-      continue;
-    }
-
-    if(en>zh && /\s/.test(unit)){
-      const words=unit.split(/\s+/);
+    // English/mixed text: split only at whitespace boundaries so a word is
+    // never cut in half. Technical tokens such as PM2.5 remain intact.
+    if(/\s/.test(s)){
+      const words=s.split(/\s+/).filter(Boolean);
+      const out=[];
       let buf="";
       for(const word of words){
-        const next=(buf?buf+" ":"")+word;
+        const next=buf?buf+" "+word:word;
         if(next.length>maxChars && buf){
           out.push(buf);
           buf=word;
@@ -1641,18 +1638,67 @@ function splitWalkmanSubtitle(text=""){
         }
       }
       if(buf)out.push(buf);
-      continue;
+      return out;
     }
 
-    for(let i=0;i<unit.length;i+=maxChars){
-      const part=unit.slice(i,i+maxChars).trim();
+    // Chinese text without spaces: only use fixed-width chunks as a final
+    // fallback when there is no natural punctuation boundary at all.
+    const out=[];
+    for(let i=0;i<s.length;i+=maxChars){
+      const part=s.slice(i,i+maxChars).trim();
       if(part)out.push(part);
     }
+    return out;
+  };
+
+  const splitSentenceFurther=sentence=>{
+    const s=String(sentence||"").trim();
+    if(!s)return [];
+
+    const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
+    const en=(s.match(/[A-Za-z]/g)||[]).length;
+    const maxSentence=zh>=en?44:96;
+    if(s.length<=maxSentence)return [s];
+
+    // Prefer clause boundaries before any length fallback.
+    const clauses=(s.match(/[^，,；;：:\n]+[，,；;：:]?/g)||[s])
+      .map(x=>x.trim())
+      .filter(Boolean);
+
+    const packed=[];
+    let buf="";
+    for(const clause of clauses){
+      const next=buf?buf+" "+clause:clause;
+      if(next.length>maxSentence && buf){
+        packed.push(buf);
+        buf=clause;
+      }else{
+        buf=next;
+      }
+    }
+    if(buf)packed.push(buf);
+
+    return packed.flatMap(splitLongClause);
+  };
+
+  let sentences=[];
+  try{
+    if(typeof Intl!=="undefined" && Intl.Segmenter){
+      const seg=new Intl.Segmenter("zh-CN",{granularity:"sentence"});
+      sentences=[...seg.segment(clean)]
+        .map(x=>String(x.segment||"").trim())
+        .filter(Boolean);
+    }
+  }catch{}
+
+  if(!sentences.length){
+    sentences=(clean.match(/[^。！？!?\n]+[。！？!?]?/g)||[clean])
+      .map(x=>x.trim())
+      .filter(Boolean);
   }
 
-  return out;
+  return sentences.flatMap(splitSentenceFurther).filter(Boolean);
 }
-
 function walkmanSegments(card){
   if(!card)return [];
   return [card.front,card.back,card.example]
