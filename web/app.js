@@ -1714,14 +1714,156 @@ function walkmanSegments(card){
     .filter(Boolean);
 }
 
+function renderWalkmanLyrics(lines=[],activeIndex=0){
+  const track=$("walkmanSubtitle");
+  if(!track)return;
+
+  if(!lines.length){
+    track.innerHTML='<div class="walkman-lyric active">准备播放</div>';
+    return;
+  }
+
+  track.innerHTML=lines.map((line,i)=>
+    '<div class="walkman-lyric'+(i===activeIndex?' active':'')+'" data-lyric-index="'+i+'">'+esc(line)+'</div>'
+  ).join("");
+
+  const active=track.querySelector('[data-lyric-index="'+activeIndex+'"]');
+  if(active){
+    requestAnimationFrame(()=>{
+      active.scrollIntoView({block:"center",behavior:"smooth"});
+    });
+  }
+}
+
+function setWalkmanLyricIndex(lines,index){
+  const track=$("walkmanSubtitle");
+  if(!track)return;
+  const items=[...track.querySelectorAll(".walkman-lyric")];
+  items.forEach((el,i)=>el.classList.toggle("active",i===index));
+  const active=items[index];
+  if(active)active.scrollIntoView({block:"center",behavior:"smooth"});
+}
+
 function showWalkmanSubtitle(text){
-  const el=$("walkmanSubtitle");
-  if(!el)return;
-  el.classList.remove("walkman-subtitle-active");
-  el.textContent=String(text||"");
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    el.classList.add("walkman-subtitle-active");
+  renderWalkmanLyrics([String(text||"")],0);
+}
+
+function walkmanLineWeight(text=""){
+  const s=String(text||"");
+  const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
+  const words=(s.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g)||[]).length;
+  const nums=(s.match(/\d+(?:\.\d+)?/g)||[]).length;
+  return Math.max(1,zh+words*1.8+nums*1.3+s.length*0.08);
+}
+
+async function fetchWalkmanCardAudio(card,generation){
+  const fullText=[card?.front,card?.back,card?.example]
+    .map(x=>String(x||"").trim())
+    .filter(Boolean)
+    .join("\n\n");
+
+  if(!fullText || fullText.length>2900)return null;
+
+  const parts=splitByLanguage(fullText).map(part=>({
+    text:part.text,
+    language:part.lang,
+    style:voiceStyleName(part.lang),
+    rate:(part.lang==="zh-CN"
+      ? Number(settings.chinese_rate||1.0)
+      : Number(settings.english_rate||1.0))*walkmanRate
   }));
+
+  if(!parts.length)return null;
+
+  const controller=new AbortController();
+  activeTtsRequests.add(controller);
+  try{
+    const res=await fetch("/api/tts",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({parts}),
+      signal:controller.signal
+    });
+    activeTtsRequests.delete(controller);
+    if(!res.ok)throw new Error("Walkman TTS HTTP "+res.status);
+    if(generation!==ttsPlaybackGeneration)return null;
+    const blob=await res.blob();
+    if(generation!==ttsPlaybackGeneration)return null;
+    return URL.createObjectURL(blob);
+  }catch(err){
+    activeTtsRequests.delete(controller);
+    if(err?.name==="AbortError"||generation!==ttsPlaybackGeneration)return null;
+    console.warn("Walkman continuous TTS unavailable:",err?.message||err);
+    return null;
+  }
+}
+
+async function playWalkmanContinuousCard(card){
+  const lines=walkmanSegments(card);
+  if(!lines.length)return false;
+
+  const generation=ttsPlaybackGeneration;
+  renderWalkmanLyrics(lines,0);
+
+  if(!ttsInfoState.enabled)return false;
+
+  const url=await fetchWalkmanCardAudio(card,generation);
+  if(!url||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
+
+  const audio=$("globalTtsAudio");
+  if(!audio)return false;
+
+  if(currentTtsObjectUrl){
+    try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
+  }
+  currentTtsObjectUrl=url;
+  currentAudio=audio;
+  audio.pause();
+  audio.currentTime=0;
+  audio.src=url;
+
+  const weights=lines.map(walkmanLineWeight);
+  const total=weights.reduce((x,y)=>x+y,0)||1;
+  const cumulative=[];
+  let acc=0;
+  for(const weight of weights){
+    acc+=weight/total;
+    cumulative.push(acc);
+  }
+
+  let activeIndex=0;
+  const syncLyrics=()=>{
+    if(!audio.duration||!Number.isFinite(audio.duration))return;
+    const ratio=Math.max(0,Math.min(0.9999,audio.currentTime/audio.duration));
+    let idx=cumulative.findIndex(x=>ratio<x);
+    if(idx<0)idx=lines.length-1;
+    if(idx!==activeIndex){
+      activeIndex=idx;
+      setWalkmanLyricIndex(lines,activeIndex);
+    }
+  };
+
+  await new Promise((resolve,reject)=>{
+    audio.ontimeupdate=syncLyrics;
+    audio.onended=resolve;
+    audio.onerror=()=>reject(new Error("随身听音频播放失败"));
+    const p=audio.play();
+    if(p&&typeof p.catch==="function")p.catch(reject);
+  }).catch(err=>console.warn(err.message));
+
+  audio.ontimeupdate=null;
+  audio.onended=null;
+  audio.onerror=null;
+
+  if(currentTtsObjectUrl===url){
+    try{URL.revokeObjectURL(url)}catch{}
+    currentTtsObjectUrl=null;
+  }
+  audio.removeAttribute("src");
+  audio.load();
+  currentAudio=null;
+
+  return generation===ttsPlaybackGeneration&&walkmanPlaying;
 }
 
 function stopWalkman(){
@@ -1731,7 +1873,7 @@ function stopWalkman(){
   showWalkmanSubtitle("已暂停");
 }
 
-function playWalkmanCurrent(){
+async function playWalkmanCurrent(){
   if(!walkmanPlaying)return;
   const card=walkmanQueue[walkmanIndex];
   if(!card){
@@ -1746,25 +1888,34 @@ function playWalkmanCurrent(){
     return;
   }
 
+  // Preferred path: one continuous MP3 for the whole card. Lyrics scroll
+  // independently, so sentence boundaries no longer cause audible TTS gaps.
+  const continuous=await playWalkmanContinuousCard(card);
+  if(continuous){
+    walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
+    setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},250);
+    return;
+  }
+
+  if(!walkmanPlaying)return;
+
+  // Browser-TTS / oversized-card fallback: still preserve lyric scrolling.
+  renderWalkmanLyrics(segments,0);
   const run=i=>{
     if(!walkmanPlaying)return;
     if(i>=segments.length){
       walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
-      setTimeout(()=>{
-        if(walkmanPlaying)playWalkmanCurrent();
-      },350);
+      setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},300);
       return;
     }
-    showWalkmanSubtitle(segments[i]);
+    setWalkmanLyricIndex(segments,i);
     speakOne(segments[i],()=>{
       if(!walkmanPlaying)return;
-      setTimeout(()=>run(i+1),180);
+      setTimeout(()=>run(i+1),100);
     });
   };
-
   run(0);
 }
-
 async function toggleWalkmanPlayback(){
   if(walkmanPlaying){
     stopWalkman();
@@ -1800,9 +1951,8 @@ async function enterWalkmanMode(){
   document.body.classList.add("walkman");
   $("walkmanMode").classList.remove("hidden");
   $("walkmanPlayBtn").textContent="▶";
-  showWalkmanSubtitle(walkmanQueue.length
-    ? (walkmanSegments(walkmanQueue[0])[0]||"准备播放")
-    : "暂无可播放内容");
+  const initialLines=walkmanQueue.length?walkmanSegments(walkmanQueue[0]):[];
+  renderWalkmanLyrics(initialLines.length?initialLines:["暂无可播放内容"],0);
 
   // Browser Back exits the minimalist mode without needing another visible button.
   try{history.pushState({memorycastWalkman:true},"",location.href)}catch{}
