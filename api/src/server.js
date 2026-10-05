@@ -640,11 +640,10 @@ const feynmanSchema={
     strengths:{type:"array",items:{type:"string"},maxItems:4},
     gaps:{type:"array",items:{type:"string"},maxItems:4},
     followUpQuestion:{type:"string"},
-    action:{type:"string",enum:["listen","intervene"]},
     status:{type:"string",enum:["continue","mastered"]},
     clarityScore:{type:"integer",minimum:0,maximum:100}
   },
-  required:["studentReply","understood","strengths","gaps","followUpQuestion","action","status","clarityScore"],
+  required:["studentReply","understood","strengths","gaps","followUpQuestion","status","clarityScore"],
   additionalProperties:false
 };
 
@@ -680,7 +679,7 @@ app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
   if(!hasAI()) return res.status(503).json({error:"AI 未配置，暂时无法使用费曼模式。"});
   const uid=userId(req);
   const topic=String(req.body?.topic||"").trim().slice(0,300);
-  const explanation=String(req.body?.explanation||"").trim().slice(0,8000);
+  const explanation=String(req.body?.explanation||"").trim().slice(0,10000);
   let sessionId=String(req.body?.sessionId||"").trim();
 
   if(!topic) return res.status(400).json({error:"请先填写要讲解的主题。"});
@@ -711,33 +710,35 @@ app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
   `,[sessionId]);
   const history=prior.rows.reverse().map(x=>({role:x.role,text:x.content}));
 
-  const data=await generateStructured({
-    name:"feynman_student",
-    schema:feynmanSchema,
-    system:`You are the learner in a Feynman-technique study session, not a lecturer.
-The user is teaching you a topic aloud. Your job is to expose unclear reasoning by behaving like an intelligent but genuinely curious student.
+  const aiProvider=String(process.env.AI_PROVIDER||"gemini").toLowerCase();
+  const analysisModel=process.env.FEYNMAN_DEEP_MODEL ||
+    (aiProvider==="gemini" ? "gemini-3.8-flash" : process.env.OPENAI_MODEL);
 
-Rules:
-- First state briefly what you think you understood from the user's explanation.
-- Identify only meaningful strengths and gaps. Do not nitpick wording, accent, transcription mistakes, or harmless omissions.
-- Look especially for undefined concepts, hidden assumptions, skipped causal steps, circular reasoning, contradictions, and claims that are asserted without explaining why.
-- Decide whether to stay silent or intervene.
-- action="listen" when the user is still coherently developing an idea, even if the explanation is incomplete. In this case followUpQuestion must be an empty string.
-- action="intervene" only for a high-value interruption: a contradiction, undefined key concept, circular reasoning, major hidden assumption, unsupported causal jump, or when the user has clearly finished a thought and one question would deepen understanding.
-- When action="intervene", ask exactly ONE concise, natural follow-up question.
-- Prefer listening over interrupting. Do not interrupt merely because more detail could be added.
-- Do not dump the correct answer unless the user explicitly asks for it.
-- If the explanation is already coherent, ask for a simple analogy, concrete example, boundary case, or causal explanation before marking mastery.
-- Mark status="mastered" only when the user has explained the core idea clearly enough that a beginner could follow it.
-- clarityScore measures clarity of explanation, not the user's intelligence or worth.
-- Reply in the language mainly used by the user; preserve English technical terms when useful.
+  const data=await generateStructured({
+    name:"feynman_analysis",
+    model:analysisModel,
+    schema:feynmanSchema,
+    system:`You are an expert Feynman-method tutor.
+The user has FINISHED one complete explanation. Do not decide whether to stay silent; always analyze the explanation now.
+
+Your job:
+1. Briefly state what you understood the user to mean.
+2. Identify the strongest parts of the explanation.
+3. Identify only meaningful conceptual or logical gaps. Ignore harmless speech-to-text mistakes unless they change meaning.
+4. In studentReply, give concise, useful feedback and directly correct the most important factual or logical mistake if there is one.
+5. Ask exactly ONE highest-value follow-up question that makes the learner explain the weakest point in their own words.
+6. Do not overwhelm the learner with a lecture. Prioritize the 1–3 most important issues.
+7. Use the recent session history when judging contradictions or whether an earlier gap has now been resolved.
+8. status="mastered" only when the core idea is accurate, causally coherent, and understandable to a beginner.
+9. clarityScore measures the explanation's clarity and completeness, not the learner's intelligence.
+10. Reply mainly in the user's language while preserving useful English technical terms.
+
 Return schema-valid JSON only.`,
     user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
   });
 
-  const aiContent=data.action==="intervene"
-    ? [data.studentReply,data.followUpQuestion].filter(Boolean).join(" ")
-    : (data.studentReply||"");
+  const aiContent=[data.studentReply,data.followUpQuestion].filter(Boolean).join(" ");
+
   await query(`
     INSERT INTO feynman_turns(session_id,role,content,metadata)
     VALUES
@@ -746,17 +747,18 @@ Return schema-valid JSON only.`,
   `,[
     sessionId,
     explanation,
-    JSON.stringify({topic:session.topic}),
+    JSON.stringify({topic:session.topic,mode:"turn_analysis"}),
     aiContent,
     JSON.stringify({
       understood:data.understood,
       strengths:data.strengths||[],
       gaps:data.gaps||[],
       followUpQuestion:data.followUpQuestion||"",
-      action:data.action,
       status:data.status,
       clarityScore:data.clarityScore,
-      studentReply:data.studentReply
+      studentReply:data.studentReply,
+      model:analysisModel,
+      mode:"turn_analysis"
     })
   ]);
 
@@ -768,7 +770,6 @@ Return schema-valid JSON only.`,
 
   res.json({...data,sessionId,topic});
 }));
-
 
 
 const feynmanRealtimeSchema={
