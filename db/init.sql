@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
   reminder_time TIME NOT NULL DEFAULT '09:00',
   reminder_timezone TEXT NOT NULL DEFAULT 'UTC',
   last_reminder_date DATE,
+  ai_organize_provider TEXT NOT NULL DEFAULT 'gemini',
+  ai_quiz_provider TEXT NOT NULL DEFAULT 'gemini',
+  ai_grade_provider TEXT NOT NULL DEFAULT 'gemini',
+  ai_feynman_provider TEXT NOT NULL DEFAULT 'gemini',
+  stt_provider TEXT NOT NULL DEFAULT 'cloudflare',
+  ocr_provider TEXT NOT NULL DEFAULT 'gemini',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
