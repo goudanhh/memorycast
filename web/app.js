@@ -1852,9 +1852,8 @@ function walkmanChunkGroups(lines=[]){
 }
 
 function walkmanAudioFormat(){
-  // Final Apple Watch compatibility test:
-  // use plain MP3/audio-mpeg on Watch, keep AAC everywhere else.
-  return isAppleWatchLike()?"mp3":"aac";
+  // Use AAC/M4A for the Watch video-element path and existing non-Watch path.
+  return "aac";
 }
 
 function watchDiag(message){
@@ -2182,6 +2181,95 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   return generation===ttsPlaybackGeneration&&walkmanPlaying;
 }
 
+function getWatchVideoElement(){
+  let video=document.getElementById("watchWalkmanVideo");
+  if(video)return video;
+
+  video=document.createElement("video");
+  video.id="watchWalkmanVideo";
+  video.setAttribute("playsinline","");
+  video.setAttribute("webkit-playsinline","");
+  video.preload="auto";
+  video.controls=false;
+  video.muted=false;
+  video.volume=1;
+  video.style.cssText="position:fixed;width:1px;height:1px;left:-10px;top:-10px;opacity:.01;pointer-events:none;";
+  document.body.appendChild(video);
+  return video;
+}
+
+async function playWalkmanWatchVideo(card){
+  const lines=walkmanSegments(card);
+  if(!lines.length)return false;
+
+  renderWalkmanLyrics(lines,0);
+  const generation=ttsPlaybackGeneration;
+  const groups=walkmanChunkGroups(lines);
+  if(!groups.length)return false;
+
+  let globalStart=0;
+
+  for(let i=0;i<groups.length;i++){
+    if(!walkmanPlaying||generation!==ttsPlaybackGeneration)return false;
+
+    const media=await getWalkmanChunk(card,i,groups[i]);
+    if(!media?.url)return false;
+
+    const video=getWatchVideoElement();
+    video.pause();
+    video.src=media.url;
+    video.load();
+
+    const exactTimings=(media.timings||[])
+      .map(x=>{
+        const offset=Number.isFinite(Number(x.offsetMs))
+          ? Number(x.offsetMs)
+          : Number(x.bookmarkOffsetMs||0);
+        return {index:Number(x.index||0),offsetMs:offset};
+      })
+      .filter(x=>Number.isFinite(x.offsetMs))
+      .sort((a,b)=>a.offsetMs-b.offsetMs);
+
+    setWalkmanLyricIndex(lines,globalStart);
+
+    const ok=await new Promise(resolve=>{
+      const sync=()=>{
+        const ms=(video.currentTime||0)*1000;
+        let local=0;
+        for(const t of exactTimings){
+          if(ms>=t.offsetMs)local=t.index;
+          else break;
+        }
+        setWalkmanLyricIndex(lines,Math.min(lines.length-1,globalStart+local));
+      };
+
+      video.ontimeupdate=sync;
+      video.onplaying=()=>{
+        if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="⏸";
+      };
+      video.onended=()=>resolve(true);
+      video.onerror=()=>resolve(false);
+
+      try{
+        const p=video.play();
+        if(p&&typeof p.catch==="function")p.catch(()=>resolve(false));
+      }catch{
+        resolve(false);
+      }
+    });
+
+    video.ontimeupdate=null;
+    video.onplaying=null;
+    video.onended=null;
+    video.onerror=null;
+
+    if(!ok)return false;
+    globalStart+=groups[i].length;
+  }
+
+  return generation===ttsPlaybackGeneration&&walkmanPlaying;
+}
+
 function watchLineLanguage(text=""){
   const s=String(text||"");
   const zh=(s.match(/[\u3400-\u9fff]/g)||[]).length;
@@ -2395,9 +2483,17 @@ async function playWalkmanCurrent(){
     return;
   }
 
-  // Apple Watch web content can speak with the browser TTS engine even when
-  // HTMLAudioElement rejects MP3/AAC sources. Keep this path Watch-only.
+  // Apple Watch: try the server's natural AAC voice through a hidden
+  // HTMLVideoElement. This avoids the HTMLAudioElement path that watchOS
+  // rejected, while keeping browser speech as a fallback.
   if(isAppleWatchLike()){
+    const videoPlayed=await playWalkmanWatchVideo(card);
+    if(videoPlayed){
+      walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
+      setTimeout(()=>{if(walkmanPlaying)playWalkmanCurrent()},120);
+      return;
+    }
+
     const spoken=await playWalkmanWatchBrowserTts(card);
     if(spoken){
       walkmanIndex=(walkmanIndex+1)%walkmanQueue.length;
@@ -2573,6 +2669,11 @@ function exitWalkmanMode(){
   if(playBtn)playBtn.classList.remove("hidden");
   const direct=document.getElementById("watchDirectAudioLink");
   if(direct)direct.remove();
+  const video=document.getElementById("watchWalkmanVideo");
+  if(video){
+    try{video.pause();video.removeAttribute("src");video.load()}catch{}
+    video.remove();
+  }
   if(watchDiagEl){
     watchDiagEl.remove();
     watchDiagEl=null;
