@@ -3,6 +3,7 @@ let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=
 let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map(),walkmanChunkIndex=0,walkmanChunkTime=0,walkmanGlobalLineIndex=0,walkmanResumePending=false,walkmanPaused=false;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
+let watchAudioPrimed=false;
 let feynmanHistory=[],feynmanLastQuestion="",feynmanRecognition=null,feynmanListening=false,feynmanRecognitionBase="",feynmanSessionId=null,currentFeynmanCardId=null;
 
 
@@ -1856,6 +1857,37 @@ function walkmanAudioFormat(){
   return "aac";
 }
 
+function primeAppleWatchAudio(){
+  if(!isAppleWatchLike())return;
+  const audio=$("globalTtsAudio");
+  if(!audio||watchAudioPrimed)return;
+
+  try{
+    // Call play() immediately inside the user's tap handler, before any await/fetch.
+    // A real silent WAV (not muted audio) keeps the media element activated while
+    // the Watch waits for server-side TTS generation.
+    audio.pause();
+    audio.loop=true;
+    audio.src="data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+    audio.currentTime=0;
+    currentAudio=audio;
+
+    const p=audio.play();
+    if(p&&typeof p.then==="function"){
+      p.then(()=>{watchAudioPrimed=true;})
+       .catch(err=>{
+         watchAudioPrimed=false;
+         console.warn("Apple Watch audio prime failed:",err?.name||"",err?.message||err);
+       });
+    }else{
+      watchAudioPrimed=true;
+    }
+  }catch(err){
+    watchAudioPrimed=false;
+    console.warn("Apple Watch audio prime failed:",err?.name||"",err?.message||err);
+  }
+}
+
 function walkmanChunkKey(card,chunkIndex,lines){
   return [
     card?.id||"",
@@ -1988,8 +2020,10 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
     currentTtsObjectUrl=url;
   }
   currentAudio=audio;
+  audio.loop=false;
   audio.pause();
   audio.src=url;
+  audio.load();
 
   const resumeThisChunk=walkmanResumePending && chunkIndex===walkmanChunkIndex;
   const resumeAt=resumeThisChunk?Math.max(0,Number(walkmanChunkTime||0)):0;
@@ -2193,6 +2227,10 @@ async function playWalkmanCurrent(){
   run(0);
 }
 async function toggleWalkmanPlayback(){
+  // On watchOS/WebKit, media playback must be activated directly by the tap.
+  // Do this before any queue/TTS await so the gesture is not lost.
+  if(!walkmanPlaying && isAppleWatchLike())primeAppleWatchAudio();
+
   if(walkmanPlaying){
     pauseWalkman();
     return;
