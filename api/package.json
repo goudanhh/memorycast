@@ -17,6 +17,7 @@
     "pg": "^8.13.1",
     "ts-fsrs": "5.4.2",
     "web-push": "^3.6.7",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "microsoft-cognitiveservices-speech-sdk": "^1.46.0"
   }
 }
