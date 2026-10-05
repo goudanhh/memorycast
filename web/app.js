@@ -1021,7 +1021,7 @@ async function generateQuiz(options={}){
   try{
     const d=await api("/quiz/generate",{
       method:"POST",
-      body:JSON.stringify({mode,count,...(cardIds?{cardIds}:{})})
+      body:JSON.stringify({mode,count,watchMode:isAppleWatchLike(),...(cardIds?{cardIds}:{})})
     });
 
     quizSessionId=d.sessionId;
@@ -1151,7 +1151,8 @@ async function submitQuiz(){
         sessionId:quizSessionId,
         questionId:q.id,
         answer,
-        confidence:quizConfidence
+        confidence:quizConfidence,
+        watchMode:isAppleWatchLike()
       })
     });
 
@@ -1898,12 +1899,26 @@ async function requestWalkmanChunk(card,chunkIndex,lines){
     }))
   }));
 
+  const watch=isAppleWatchLike();
   const res=await fetch("/api/tts/timed",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({lines:payloadLines,format:walkmanAudioFormat()})
+    body:JSON.stringify({
+      lines:payloadLines,
+      format:walkmanAudioFormat(),
+      delivery:watch?"url":"binary"
+    })
   });
   if(!res.ok)throw new Error("Timed Walkman TTS HTTP "+res.status);
+
+  if(watch){
+    const data=await res.json();
+    return {
+      url:String(data.audioUrl||""),
+      timings:Array.isArray(data.timings)?data.timings:[],
+      cacheHit:data.cacheHit===true
+    };
+  }
 
   let timings=[];
   try{
@@ -1955,7 +1970,7 @@ async function getWalkmanChunk(card,chunkIndex,lines){
 async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines){
   const generation=ttsPlaybackGeneration;
   const media=await getWalkmanChunk(card,chunkIndex,lines);
-  if(!media?.blob||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
+  if((!media?.blob&&!media?.url)||generation!==ttsPlaybackGeneration||!walkmanPlaying)return false;
 
   const audio=$("globalTtsAudio");
   if(!audio)return false;
@@ -1964,8 +1979,14 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
     try{URL.revokeObjectURL(currentTtsObjectUrl)}catch{}
   }
 
-  const url=URL.createObjectURL(media.blob);
-  currentTtsObjectUrl=url;
+  let url="";
+  if(media.url){
+    url=media.url;
+    currentTtsObjectUrl=null;
+  }else{
+    url=URL.createObjectURL(media.blob);
+    currentTtsObjectUrl=url;
+  }
   currentAudio=audio;
   audio.pause();
   audio.src=url;
