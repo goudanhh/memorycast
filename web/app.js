@@ -1047,6 +1047,85 @@ async function handleMediaFiles(fileList){
     $("photoOcrInput").value="";
   }
 }
+function clipboardMediaFiles(event){
+  const items=[...(event.clipboardData?.items||[])];
+  const files=[];
+
+  for(const item of items){
+    if(item.kind!=="file")continue;
+    const file=item.getAsFile?.();
+    if(!file)continue;
+
+    const type=String(file.type||"").toLowerCase();
+    if(!type.startsWith("image/") && type!=="application/pdf")continue;
+
+    // Screenshots copied from the clipboard often have no useful filename.
+    if(file.name){
+      files.push(file);
+      continue;
+    }
+
+    const ext=type==="image/png"?"png"
+      : type==="image/webp"?"webp"
+      : type==="image/jpeg"?"jpg"
+      : type==="application/pdf"?"pdf"
+      : "bin";
+
+    files.push(new File([file],"clipboard-"+Date.now()+"."+ext,{type:file.type}));
+  }
+
+  return files;
+}
+
+function setupImportMediaDropPaste(){
+  const zone=$("importDropZone");
+  if(!zone)return;
+
+  let dragDepth=0;
+
+  zone.addEventListener("dragenter",event=>{
+    if(!event.dataTransfer?.types?.includes("Files"))return;
+    event.preventDefault();
+    dragDepth++;
+    zone.classList.add("drag-active");
+    $("captureStatus").textContent="松开即可导入图片 / PDF";
+  });
+
+  zone.addEventListener("dragover",event=>{
+    if(!event.dataTransfer?.types?.includes("Files"))return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect="copy";
+    zone.classList.add("drag-active");
+  });
+
+  zone.addEventListener("dragleave",event=>{
+    if(!event.dataTransfer?.types?.includes("Files"))return;
+    dragDepth=Math.max(0,dragDepth-1);
+    if(dragDepth===0)zone.classList.remove("drag-active");
+  });
+
+  zone.addEventListener("drop",event=>{
+    if(!event.dataTransfer?.files?.length)return;
+    event.preventDefault();
+    dragDepth=0;
+    zone.classList.remove("drag-active");
+    handleMediaFiles(event.dataTransfer.files);
+  });
+
+  document.addEventListener("paste",event=>{
+    // Only hijack paste when the AI import page is actually open and the
+    // clipboard contains media. Normal text paste stays untouched.
+    if(!$("importPage")?.classList.contains("active"))return;
+
+    const files=clipboardMediaFiles(event);
+    if(!files.length)return;
+
+    event.preventDefault();
+    $("captureStatus").textContent="检测到剪贴板图片，正在导入…";
+    handleMediaFiles(files);
+  });
+}
+
 async function organize(){
   const text=$("noteInput").value.trim();if(!text)return alert("请先粘贴笔记");const b=$("organizeBtn");b.disabled=true;b.textContent="AI 整理中…";
   try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text,splitMode:$("cardSplitMode").value,noteId:currentImportedNoteId})});currentGeneratedNoteId=d.note?.id||null;currentImportedNoteId=d.note?.id||currentImportedNoteId;generated=d.cards||[];loadNotes();$("generatedCards").innerHTML='<div class="muted" style="margin-bottom:10px">✓ 原始笔记已保存到笔记库，不会因生成卡片而删除。</div>'+generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+(c.tags||[]).map(esc).join(" · ")+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
@@ -3011,7 +3090,7 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);setupImportMediaDropPaste();$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{
   const wasPlaying=walkmanPlaying;
   const wasPaused=walkmanPaused;
