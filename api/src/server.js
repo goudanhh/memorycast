@@ -2300,6 +2300,57 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
           SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
         ))
         AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}
+      ORDER BY count DESC
+    `,[uid])
+  ]);
+  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
+  res.json({
+    cards:cards.rows[0].n,
+    reviews:reviews.rows[0].n,
+    last7:recent.rows[0].last7||0,
+    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
+    categories:categories.rows
+  });
+}));
+
+app.use((err,req,res,next)=>{
+  console.error(err);
+  const status=err.statusCode||500;
+  const safeMessage=status===500
+    ? "服务器处理失败，请稍后重试。若持续出现，请查看 API 日志。"
+    : (err.message||("HTTP "+status));
+  res.status(status).json({error:safeMessage});
+});
+app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+setTimeout(()=>runDailyReminders().catch(console.error),5000);
+setInterval(()=>runDailyReminders().catch(console.error),60*1000);
+
+      GROUP BY tag
+      ORDER BY count DESC
+    `,[uid])
+  ]);
+  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
+  res.json({
+    cards:cards.rows[0].n,
+    reviews:reviews.rows[0].n,
+    last7:recent.rows[0].last7||0,
+    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
+    categories:categories.rows
+  });
+}));
+
+app.use((err,req,res,next)=>{
+  console.error(err);
+  const status=err.statusCode||500;
+  const safeMessage=status===500
+    ? "服务器处理失败，请稍后重试。若持续出现，请查看 API 日志。"
+    : (err.message||("HTTP "+status));
+  res.status(status).json({error:safeMessage});
+});
+app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+setTimeout(()=>runDailyReminders().catch(console.error),5000);
+setInterval(()=>runDailyReminders().catch(console.error),60*1000);
+
       GROUP BY tag
       ORDER BY count DESC
     `,[uid])
