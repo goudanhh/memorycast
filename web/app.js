@@ -2350,7 +2350,11 @@ async function playWalkmanWatchWebAudio(card){
 
     const source=ctx.createBufferSource();
     source.buffer=prepared.decoded;
-    source.connect(ctx.destination);
+    // Apple Watch Walkman only: gently boost quiet TTS in AirPods.
+    const gain=ctx.createGain();
+    gain.gain.value=1.25;
+    source.connect(gain);
+    gain.connect(ctx.destination);
     watchAudioSource=source;
 
     const exactTimings=(prepared.timings||[])
