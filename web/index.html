@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=watch-lyrics-53">
+<link rel="stylesheet" href="/styles.css?v=media-drop-paste-56">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -110,14 +110,14 @@
 
 <section id="importPage" class="page">
   <div class="grid2">
-    <article class="panel">
+    <article id="importDropZone" class="panel import-drop-zone">
       <div class="eyebrow">AI IMPORT</div><h2>输入学习笔记</h2>
       <div class="capture-tools">
         <button id="voiceNoteBtn" class="ghost capture-btn" type="button">🎙️ 语音记笔记</button>
         <button id="photoOcrBtn" class="ghost capture-btn" type="button">🖼️ 图片 / PDF</button>
         <input id="photoOcrInput" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple class="hidden">
       </div>
-      <div id="captureStatus" class="muted capture-status">可以粘贴文字、录音，或上传多张图片 / PDF。原文件会与笔记一起保存。</div>
+      <div id="captureStatus" class="muted capture-status">可以点击上传、拖拽图片 / PDF 到这里，或直接 Ctrl+V / Cmd+V 粘贴截图。原文件会与笔记一起保存。</div>
       <audio id="voiceNotePreview" class="hidden" controls></audio>
       <textarea id="noteInput" class="large-input" placeholder="粘贴、录音或拍照导入今天学到的中文、英文或专业笔记…"></textarea>
       <div class="setting" style="margin:12px 0">
@@ -390,7 +390,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=math-speech-55"></script>
+<script type="module" src="/app.js?v=media-drop-paste-56"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
