@@ -1031,7 +1031,29 @@ async function organize(){
   try{const d=await api("/ai/organize",{method:"POST",body:JSON.stringify({text,splitMode:$("cardSplitMode").value,noteId:currentImportedNoteId})});currentGeneratedNoteId=d.note?.id||null;currentImportedNoteId=d.note?.id||currentImportedNoteId;generated=d.cards||[];loadNotes();$("generatedCards").innerHTML='<div class="muted" style="margin-bottom:10px">✓ 原始笔记已保存到笔记库，不会因生成卡片而删除。</div>'+generated.map(c=>'<div class="mini-card"><div class="eyebrow">'+(c.tags||[]).map(esc).join(" · ")+'</div><b>'+esc(c.front)+'</b><div>'+esc(c.back)+'</div><div class="muted">'+esc(c.example||"")+'</div></div>').join("");$("saveGeneratedBtn").classList.toggle("hidden",!generated.length)}
   catch(e){alert(e.message)}finally{b.disabled=!aiEnabled;b.textContent="✨ AI 整理为卡片"}
 }
-async function saveGenerated(){const d=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:generated,noteId:currentGeneratedNoteId})});generated=[];currentGeneratedNoteId=null;$("generatedCards").innerHTML='<div class="muted">已保存 '+d.cards.length+' 张卡片。</div>';$("saveGeneratedBtn").classList.add("hidden");await Promise.all([loadCards(),loadDue()])}
+async function saveGenerated(){
+  const d=await api("/ai/organize/save",{
+    method:"POST",
+    body:JSON.stringify({cards:generated,noteId:currentGeneratedNoteId})
+  });
+
+  generated=[];
+  currentGeneratedNoteId=null;
+  currentImportedNoteId=null;
+
+  // A completed save ends the current import/organize session.
+  // The next text the user enters must create a brand-new note instead of
+  // updating the note that produced the cards just saved.
+  const noteInput=$("noteInput");
+  if(noteInput)noteInput.value="";
+  const captureStatus=$("captureStatus");
+  if(captureStatus)captureStatus.textContent="";
+
+  $("generatedCards").innerHTML='<div class="muted">已保存 '+d.cards.length+' 张卡片。可以输入下一条笔记。</div>';
+  $("saveGeneratedBtn").classList.add("hidden");
+
+  await Promise.all([loadCards(),loadDue(),loadNotes()]);
+}
 
 async function generateQuiz(options={}){
   const b=$("generateQuizBtn");
