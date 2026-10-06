@@ -228,6 +228,19 @@ body.walkman .walkman-mode{visibility:visible}
 }
 
 @media(max-width:260px), (max-height:330px) and (max-width:340px){
+  body.walkman #app,
+  body.walkman #loginScreen{
+    display:none !important;
+    visibility:hidden !important;
+  }
+  body.walkman .walkman-mode{
+    display:flex !important;
+    visibility:visible !important;
+    position:fixed !important;
+    inset:0 !important;
+    z-index:999999 !important;
+    background:#0f172a !important;
+  }
   .walkman-mode{
     justify-content:flex-start;
     gap:8px;
