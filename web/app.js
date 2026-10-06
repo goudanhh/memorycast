@@ -535,7 +535,8 @@ function renderNotes(){
   $("notesList").innerHTML=arr.map(n=>{
     const lines=String(n.content||"").split(/\r?\n/);
     const preview=lines.slice(0,5).join("\n")+(lines.length>5?"\n…":"");
-    return '<div class="card-item"><div><b>'+esc(n.title)+'</b><pre class="note-preview muted">'+esc(preview)+'</pre><div class="muted">'+new Date(n.createdAt).toLocaleString()+' · 自主复习 '+(n.manualReviewCount||0)+' 次</div></div><div class="card-actions"><button class="ghost" data-note-review="'+n.id+'">复习</button></div></div>';
+    const paused=n.studyEnabled===false?' · <span class="chip">不参与学习</span>':'';
+    return '<div class="card-item"><div><b>'+esc(n.title)+'</b><pre class="note-preview muted">'+esc(preview)+'</pre><div class="muted">'+new Date(n.createdAt).toLocaleString()+' · 自主复习 '+(n.manualReviewCount||0)+' 次'+paused+'</div></div><div class="card-actions"><button class="ghost" data-note-review="'+n.id+'">复习</button></div></div>';
   }).join("")||'<div class="muted">还没有保存的原始笔记。</div>';
   document.querySelectorAll("[data-note-review]").forEach(b=>b.onclick=()=>openNoteReview(b.dataset.noteReview));
 }
@@ -551,6 +552,12 @@ async function openNoteReview(id){
   $("speakNoteBtn").disabled=false;
   $("markNoteReviewedBtn").disabled=false;
   $("editNoteBtn").disabled=false;
+  const studyBtn=$("toggleNoteStudyBtn");
+  if(studyBtn){
+    studyBtn.disabled=false;
+    studyBtn.dataset.enabled=n.studyEnabled===false?"false":"true";
+    studyBtn.textContent=n.studyEnabled===false?"↩ 恢复学习":"🚫 不参与学习";
+  }
   $("deleteNoteBtn").disabled=false;
 }
 function dominantTextLanguage(text=""){
@@ -802,6 +809,37 @@ async function saveNoteEdit(){
     if(saveBtn){saveBtn.disabled=false;saveBtn.textContent="保存";}
   }
 }
+async function toggleCurrentNoteStudy(){
+  if(!currentNoteId)return;
+
+  const note=notes.find(x=>x.id===currentNoteId);
+  const currentlyEnabled=note?.studyEnabled!==false;
+  const nextEnabled=!currentlyEnabled;
+
+  const d=await api("/notes/"+currentNoteId+"/study",{
+    method:"POST",
+    body:JSON.stringify({enabled:nextEnabled})
+  });
+
+  const i=notes.findIndex(x=>x.id===currentNoteId);
+  if(i>=0)notes[i]=d.note;
+
+  const studyBtn=$("toggleNoteStudyBtn");
+  if(studyBtn){
+    studyBtn.dataset.enabled=d.note.studyEnabled===false?"false":"true";
+    studyBtn.textContent=d.note.studyEnabled===false?"↩ 恢复学习":"🚫 不参与学习";
+  }
+
+  renderNotes();
+  await Promise.all([loadCards(),loadDue(),loadStats()]);
+
+  if(d.note.studyEnabled===false){
+    alert("已暂停学习。原始笔记和 "+(d.linkedCards||0)+" 张关联卡片仍然保留，但不会出现在知识库、今日复习、AI 测试和随身听中。");
+  }else{
+    alert("已恢复学习。关联卡片和原 FSRS 进度已重新加入学习系统。");
+  }
+}
+
 async function deleteCurrentNote(){
   if(!currentNoteId)return;
   if(!confirm("删除这篇原始笔记？这篇笔记生成的相关卡片也会一起删除，且无法恢复。"))return;
@@ -815,6 +853,7 @@ async function deleteCurrentNote(){
   $("speakNoteBtn").disabled=true;
   $("markNoteReviewedBtn").disabled=true;
   $("editNoteBtn").disabled=true;
+  if($("toggleNoteStudyBtn"))$("toggleNoteStudyBtn").disabled=true;
   $("deleteNoteBtn").disabled=true;
   $("manualReviewPanel").classList.add("hidden");
   renderNotes();
@@ -3090,7 +3129,7 @@ $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});locat
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);setupImportMediaDropPaste();$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);setupImportMediaDropPaste();$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("toggleNoteStudyBtn").onclick=toggleCurrentNoteStudy;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{
   const wasPlaying=walkmanPlaying;
   const wasPaused=walkmanPaused;
