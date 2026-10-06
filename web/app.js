@@ -155,8 +155,29 @@ function charLang(ch){
   if(/[A-Za-z]/.test(ch))return "en-US";
   return null;
 }
+function normalizeMathSymbolsForSpeech(text=""){
+  let s=String(text||"");
+
+  // Always-safe mathematical symbols.
+  s=s
+    .replace(/−/g," 减 ")
+    .replace(/\+/g," 加 ")
+    .replace(/[×✕]/g," 乘 ")
+    .replace(/÷/g," 除以 ")
+    .replace(/=/g," 等于 ");
+
+  // ASCII operators are ambiguous in normal prose/URLs, so only convert them
+  // when they clearly sit between numeric operands.
+  s=s
+    .replace(/(\d)\s*\*\s*(\d)/g,"$1 乘 $2")
+    .replace(/(\d)\s*\/\s*(\d)/g,"$1 除以 $2")
+    .replace(/(\d)\s*-\s*(\d)/g,"$1 减 $2");
+
+  return s.replace(/\s{2,}/g," ").trim();
+}
+
 function splitByLanguage(text){
-  const input=String(text||"");
+  const input=normalizeMathSymbolsForSpeech(text);
   const parts=[];
   let buf="",current=null,pending="";
   const flush=()=>{
