@@ -288,3 +288,15 @@ body.walkman .walkman-mode{visibility:visible}
     border-radius:10px;
   }
 }
+
+
+/* AI import: drag-and-drop target */
+.import-drop-zone{
+  transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;
+}
+.import-drop-zone.drag-active{
+  outline:2px dashed currentColor;
+  outline-offset:-8px;
+  background:rgba(15,23,42,.04);
+  box-shadow:0 0 0 4px rgba(15,23,42,.05) inset;
+}
