@@ -227,7 +227,11 @@ async function runDailyReminders() {
     const last = s.last_reminder_date ? new Date(s.last_reminder_date).toISOString().slice(0,10) : null;
     if (now.time < target || last === now.date) continue;
 
-    const dueResult = await query(`SELECT COUNT(*)::int AS n FROM cards WHERE user_id=$1 AND due<=NOW()`, [s.user_id]);
+    const dueResult = await query(`SELECT COUNT(*)::int AS n FROM cards c
+ WHERE c.user_id=$1 AND c.due<=NOW()
+   AND (c.source_note_id IS NULL OR EXISTS (
+     SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+   ))`, [s.user_id]);
     const dueCount = dueResult.rows[0]?.n || 0;
 
     if (dueCount > 0) {
@@ -267,6 +271,7 @@ await query(`
   )
 `);
 await query(`CREATE INDEX IF NOT EXISTS idx_notes_user_created ON notes(user_id,created_at DESC)`);
+await query(`ALTER TABLE notes ADD COLUMN IF NOT EXISTS study_enabled BOOLEAN NOT NULL DEFAULT TRUE`);
 await query(`
   CREATE TABLE IF NOT EXISTS note_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -504,6 +509,7 @@ function normalizeNoteRow(r){
     id:r.id,title:r.title,content:r.content,tags:r.tags||[],
     manualReviewCount:r.manual_review_count||0,
     lastReviewedAt:r.last_reviewed_at,
+    studyEnabled:r.study_enabled!==false,
     createdAt:r.created_at,updatedAt:r.updated_at
   };
 }
@@ -689,6 +695,19 @@ app.post("/notes/:id/review", requireAuth, asyncRoute(async(req,res)=>{
   if(!rows[0]) return res.status(404).json({error:"Note not found"});
   res.json({note:normalizeNoteRow(rows[0])});
 }));
+app.post("/notes/:id/study", requireAuth, asyncRoute(async(req,res)=>{
+  const enabled=req.body?.enabled!==false;
+  const {rows}=await query(`
+    UPDATE notes SET study_enabled=$3,updated_at=NOW()
+    WHERE id=$2 AND user_id=$1 RETURNING *
+  `,[userId(req),req.params.id,enabled]);
+  if(!rows[0]) return res.status(404).json({error:"Note not found"});
+  const linked=await query(`
+    SELECT COUNT(*)::int AS n FROM cards
+    WHERE user_id=$1 AND source_note_id=$2
+  `,[userId(req),req.params.id]);
+  res.json({note:normalizeNoteRow(rows[0]),linkedCards:linked.rows[0]?.n||0});
+}));
 
 function normalizeCardRow(r){
   return {
@@ -699,7 +718,14 @@ function normalizeCardRow(r){
   };
 }
 app.get("/cards", requireAuth, asyncRoute(async(req,res)=>{
-  const {rows}=await query(`SELECT * FROM cards WHERE user_id=$1 ORDER BY created_at DESC`,[userId(req)]);
+  const {rows}=await query(`
+    SELECT * FROM cards c
+    WHERE c.user_id=$1
+      AND (c.source_note_id IS NULL OR EXISTS (
+        SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+      ))
+    ORDER BY c.created_at DESC
+  `,[userId(req)]);
   res.json({cards:rows.map(normalizeCardRow)});
 }));
 app.post("/cards", requireAuth, asyncRoute(async(req,res)=>{
@@ -754,8 +780,12 @@ app.delete("/cards/:id", requireAuth, asyncRoute(async(req,res)=>{
 }));
 app.get("/due", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`
-    SELECT * FROM cards WHERE user_id=$1 AND due<=NOW()
-    ORDER BY due ASC LIMIT 500
+    SELECT * FROM cards c
+    WHERE c.user_id=$1 AND c.due<=NOW()
+      AND (c.source_note_id IS NULL OR EXISTS (
+        SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+      ))
+    ORDER BY c.due ASC LIMIT 500
   `,[userId(req)]);
   res.json({cards:rows.map(normalizeCardRow)});
 }));
@@ -790,6 +820,9 @@ app.get("/walkman", requireAuth, asyncRoute(async(req,res)=>{
       FROM cards c
       LEFT JOIN latest_review lr ON lr.card_id=c.id
       WHERE c.user_id=$1
+        AND (c.source_note_id IS NULL OR EXISTS (
+          SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+        ))
     )
     SELECT * FROM ranked
     ORDER BY
@@ -1368,6 +1401,9 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     FROM cards c
     LEFT JOIN review_stats rs ON rs.card_id=c.id
     WHERE c.user_id=$1
+      AND (c.source_note_id IS NULL OR EXISTS (
+        SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+      ))
       AND ($2::text[]='{}'::text[] OR c.id::text=ANY($2::text[]))
       AND ($3<>'due' OR c.due<=NOW())
     ORDER BY
@@ -1799,6 +1835,9 @@ app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
     FROM cards c
     LEFT JOIN review_stats rs ON rs.card_id=c.id
     WHERE c.user_id=$1
+      AND (c.source_note_id IS NULL OR EXISTS (
+        SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+      ))
       AND ($2='' OR c.id::text<>$2)
     ORDER BY weakness_score DESC, RANDOM()
     LIMIT 24
@@ -2237,7 +2276,13 @@ Return schema-valid JSON only.`,
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const [cards, reviews, recent, categories]=await Promise.all([
-    query(`SELECT COUNT(*)::int AS n FROM cards WHERE user_id=$1`,[uid]),
+    query(`
+      SELECT COUNT(*)::int AS n FROM cards c
+      WHERE c.user_id=$1
+        AND (c.source_note_id IS NULL OR EXISTS (
+          SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+        ))
+    `,[uid]),
     query(`SELECT COUNT(*)::int AS n FROM reviews WHERE user_id=$1`,[uid]),
     query(`
       SELECT
@@ -2249,9 +2294,38 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
     query(`
       SELECT tag AS category, COUNT(*)::int AS count,
         AVG(COALESCE((fsrs->>'difficulty')::float,0)) AS avg_difficulty
-      FROM cards, LATERAL unnest(tags) AS tag
-      WHERE user_id=$1
-        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      FROM cards c, LATERAL unnest(c.tags) AS tag
+      WHERE c.user_id=$1
+        AND (c.source_note_id IS NULL OR EXISTS (
+          SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+        ))
+        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}
+      GROUP BY tag
+      ORDER BY count DESC
+    `,[uid])
+  ]);
+  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
+  res.json({
+    cards:cards.rows[0].n,
+    reviews:reviews.rows[0].n,
+    last7:recent.rows[0].last7||0,
+    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
+    categories:categories.rows
+  });
+}));
+
+app.use((err,req,res,next)=>{
+  console.error(err);
+  const status=err.statusCode||500;
+  const safeMessage=status===500
+    ? "服务器处理失败，请稍后重试。若持续出现，请查看 API 日志。"
+    : (err.message||("HTTP "+status));
+  res.status(status).json({error:safeMessage});
+});
+app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+setTimeout(()=>runDailyReminders().catch(console.error),5000);
+setInterval(()=>runDailyReminders().catch(console.error),60*1000);
+
       GROUP BY tag
       ORDER BY count DESC
     `,[uid])
