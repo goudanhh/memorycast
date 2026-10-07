@@ -1440,69 +1440,104 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     }
   }
 
-  const source=[];
-  for(const r of selectedRows){
-    let attachmentContext=[];
-    if(r.source_note_id){
-      const ar=await query(`
-        SELECT id,original_name,mime_type,extracted_text
-        FROM note_attachments
-        WHERE user_id=$1 AND note_id=$2
-        ORDER BY sort_order ASC,created_at ASC
-        LIMIT 12
-      `,[uid,r.source_note_id]);
-      attachmentContext=ar.rows.map(a=>({
-        id:a.id,
-        name:a.original_name,
-        mimeType:a.mime_type,
-        extractedText:String(a.extracted_text||"").slice(0,5000)
-      }));
+  // Keep enough candidate cards for variety, but avoid sending 30 full cards
+  // (and all attachment text) to the model when the quiz only needs 5-10 items.
+  const sourceRows=selectedRows.slice(0,Math.min(
+    selectedRows.length,
+    Math.max(count*2,12)
+  ));
+
+  // Fetch text attachment context for all candidate notes in ONE query instead
+  // of doing one database round-trip per card.
+  const noteIds=[...new Set(sourceRows.map(r=>r.source_note_id).filter(Boolean))];
+  const attachmentsByNote=new Map();
+
+  if(noteIds.length){
+    const ar=await query(`
+      SELECT note_id,id,original_name,mime_type,extracted_text,sort_order,created_at
+      FROM note_attachments
+      WHERE user_id=$1 AND note_id::text=ANY($2::text[])
+      ORDER BY note_id,sort_order ASC,created_at ASC
+    `,[uid,noteIds.map(String)]);
+
+    for(const a of ar.rows){
+      const key=String(a.note_id);
+      const list=attachmentsByNote.get(key)||[];
+      if(list.length<6){
+        list.push({
+          id:a.id,
+          name:a.original_name,
+          mimeType:a.mime_type,
+          // 2k is ample context for quiz generation and substantially reduces
+          // request size for image/PDF-heavy notes.
+          extractedText:String(a.extracted_text||"").slice(0,2000)
+        });
+        attachmentsByNote.set(key,list);
+      }
     }
-    source.push({
-      id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,tags:r.tags||[],
-      difficulty:Number(r.fsrs?.difficulty||0),due:r.due,
-      weaknessScore:Number(r.weakness_score||0),
-      lastRating:r.last_rating||null,lastVerdict:r.last_verdict||null,
-      wrongCount:Number(r.wrong_count||0),hardCount:Number(r.hard_count||0),
-      attachments:attachmentContext
-    });
   }
+
+  const source=sourceRows.map(r=>({
+    id:r.id,
+    front:r.front,
+    back:r.back,
+    example:r.example,
+    category:r.category,
+    tags:r.tags||[],
+    difficulty:Number(r.fsrs?.difficulty||0),
+    due:r.due,
+    weaknessScore:Number(r.weakness_score||0),
+    lastRating:r.last_rating||null,
+    lastVerdict:r.last_verdict||null,
+    wrongCount:Number(r.wrong_count||0),
+    hardCount:Number(r.hard_count||0),
+    attachments:r.source_note_id
+      ? (attachmentsByNote.get(String(r.source_note_id))||[])
+      : []
+  }));
 
   const quizProvider=await featureProvider(uid,"ai_quiz_provider","gemini");
 
-  // Generate up to three true visual questions from original image bytes.
-  const visualQuestions=[];
+  // Fetch visual candidates in one query as well.
   const visualCandidates=[];
-  for(const r of selectedRows){
-    if(!r.source_note_id)continue;
-    const ar=await query(`
-      SELECT id,original_name,mime_type,data,extracted_text,page_number,is_generated,source_attachment_id
+  if(noteIds.length){
+    const vr=await query(`
+      SELECT id,note_id,original_name,mime_type,data,extracted_text,page_number,is_generated,source_attachment_id
       FROM note_attachments
-      WHERE user_id=$1 AND note_id=$2
+      WHERE user_id=$1
+        AND note_id::text=ANY($2::text[])
         AND mime_type LIKE 'image/%'
       ORDER BY
         CASE WHEN is_generated=TRUE AND page_number IS NOT NULL THEN 0 ELSE 1 END,
         RANDOM()
-      LIMIT 4
-    `,[uid,r.source_note_id]);
-    for(const a of ar.rows){
-      if(visualCandidates.some(x=>String(x.attachment.id)===String(a.id)))continue;
-      visualCandidates.push({card:r,attachment:a});
+      LIMIT 8
+    `,[uid,noteIds.map(String)]);
+
+    const cardByNote=new Map();
+    for(const r of sourceRows){
+      if(r.source_note_id&&!cardByNote.has(String(r.source_note_id))){
+        cardByNote.set(String(r.source_note_id),r);
+      }
+    }
+
+    for(const a of vr.rows){
+      const card=cardByNote.get(String(a.note_id));
+      if(!card)continue;
+      visualCandidates.push({card,attachment:a});
       if(visualCandidates.length>=6)break;
     }
-    if(visualCandidates.length>=6)break;
   }
 
   const visualTarget=Math.min(2,Math.max(0,Math.floor(count/3)),visualCandidates.length);
-  for(let i=0;i<visualTarget;i++){
-    const item=visualCandidates[i];
-    try{
-      const v=await generateVisualStructured({
-        provider:quizProvider,
-        base64:item.attachment.data.toString("base64"),
-        mimeType:item.attachment.mime_type,
-        schema:watchMode?watchAdaptiveQuestionSchema:visualQuizQuestionSchema,
-        system:`Create ONE study question that genuinely requires looking at the supplied image.
+  const regularTarget=Math.max(0,count-visualTarget);
+
+  const makeVisualQuestion=async item=>{
+    const v=await generateVisualStructured({
+      provider:quizProvider,
+      base64:item.attachment.data.toString("base64"),
+      mimeType:item.attachment.mime_type,
+      schema:watchMode?watchAdaptiveQuestionSchema:visualQuizQuestionSchema,
+      system:`Create ONE study question that genuinely requires looking at the supplied image.
 ${watchMode?"Apple Watch mode: the question MUST be MCQ with exactly 4 choices. Do not generate fill-in or short-answer questions.":""}
 Use only facts visible in the image and the supplied card context. Do not invent labels, arrows, values, colors, anatomy, relationships, or other visual details.
 The visible prompt must be Simplified Chinese by default, while English target terms can stay in English.
@@ -1510,43 +1545,39 @@ Good visual questions may ask about a labeled structure, arrow, sequence, table 
 Do NOT ask a question that could be answered from the text context alone.
 For MCQ, provide exactly 4 plausible choices. Otherwise choices=[].
 Return schema-valid JSON only.`,
-        user:JSON.stringify({
-          card:{
-            id:item.card.id,
-            front:item.card.front,
-            back:item.card.back,
-            example:item.card.example,
-            tags:item.card.tags||[]
-          },
-          attachment:{
-            name:item.attachment.original_name,
-            pageNumber:item.attachment.page_number||null,
-            generatedFromPdf:item.attachment.is_generated===true,
-            extractedText:String(item.attachment.extracted_text||"").slice(0,5000)
-          }
-        })
-      });
-      visualQuestions.push({
-        ...v,
-        id:crypto.randomUUID(),
-        cardId:item.card.id,
-        audioText:"",
-        visualAttachmentId:item.attachment.id,
-        adaptive:false
-      });
-    }catch(err){
-      console.warn("Visual quiz generation skipped:",err?.message||err);
-    }
-  }
+      user:JSON.stringify({
+        card:{
+          id:item.card.id,
+          front:item.card.front,
+          back:item.card.back,
+          example:item.card.example,
+          tags:item.card.tags||[]
+        },
+        attachment:{
+          name:item.attachment.original_name,
+          pageNumber:item.attachment.page_number||null,
+          generatedFromPdf:item.attachment.is_generated===true,
+          extractedText:String(item.attachment.extracted_text||"").slice(0,2000)
+        }
+      })
+    });
 
-  const remaining=Math.max(0,count-visualQuestions.length);
-  let regularQuestions=[];
-  if(remaining>0){
-    const data=await generateStructured({
-      provider:quizProvider,
-      name:"memorycast_quiz",
-      schema:watchMode?watchQuizSchema:quizSchema,
-      system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
+    return {
+      ...v,
+      id:crypto.randomUUID(),
+      cardId:item.card.id,
+      audioText:"",
+      visualAttachmentId:item.attachment.id,
+      adaptive:false
+    };
+  };
+
+  const regularPromise=regularTarget>0
+    ? generateStructured({
+        provider:quizProvider,
+        name:"memorycast_quiz",
+        schema:watchMode?watchQuizSchema:quizSchema,
+        system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
 ${watchMode
   ?"Apple Watch mode: generate ONLY MCQ questions. Every question must have exactly 4 plausible choices. Do not generate fill, short-answer, or listening questions."
   :"Mix MCQ, fill, short-answer and listening items when appropriate."}
@@ -1569,14 +1600,46 @@ If a card includes attachments, their extractedText is part of the allowed sourc
 Do not invent visual facts that are not present in the extracted attachment text.
 Do not simply copy the card front as the answer cue.
 Return only schema-valid JSON.`,
-      user:JSON.stringify({count:remaining,mode,cards:source})
-    });
+        user:JSON.stringify({count:regularTarget,mode,cards:source})
+      })
+    : Promise.resolve({questions:[]});
 
-    const allowed=new Set(source.map(x=>x.id));
-    regularQuestions=(data.questions||[])
+  // The regular quiz request and visual requests now run concurrently.
+  const visualPromises=visualCandidates
+    .slice(0,visualTarget)
+    .map(item=>makeVisualQuestion(item));
+
+  const [regularResult,visualResults]=await Promise.all([
+    regularPromise,
+    Promise.allSettled(visualPromises)
+  ]);
+
+  const visualQuestions=visualResults
+    .filter(x=>x.status==="fulfilled")
+    .map(x=>x.value);
+
+  for(const result of visualResults){
+    if(result.status==="rejected"){
+      console.warn("Visual quiz generation skipped:",result.reason?.message||result.reason);
+    }
+  }
+
+  const allowed=new Set(source.map(x=>x.id));
+  let regularQuestions=(regularResult.questions||[])
+    .filter(q=>allowed.has(q.cardId))
+    .slice(0,regularTarget)
+    .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
+
+  // If a visual request fails, top up only the missing slots by reusing valid
+  // regular questions already returned beyond the nominal visual reservation.
+  // Normally this branch does no additional AI call.
+  const missing=Math.max(0,count-(visualQuestions.length+regularQuestions.length));
+  if(missing>0){
+    const extras=(regularResult.questions||[])
       .filter(q=>allowed.has(q.cardId))
-      .slice(0,remaining)
+      .slice(regularTarget,regularTarget+missing)
       .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
+    regularQuestions=[...regularQuestions,...extras];
   }
 
   const questions=[...visualQuestions,...regularQuestions]
