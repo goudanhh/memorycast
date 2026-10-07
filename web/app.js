@@ -1,6 +1,8 @@
 const $=id=>document.getElementById(id);
 let currentImportedNoteId=null,voiceRecorder=null,voiceChunks=[],voiceRecording=false,voicePreviewUrl=null;
-let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map(),walkmanChunkIndex=0,walkmanChunkTime=0,walkmanGlobalLineIndex=0,walkmanResumePending=false,walkmanPaused=false;
+let me=null,aiEnabled=false,cards=[],due=[],dueIndex=0,loop=false,autoPlay=false,isSpeaking=false,settings={},generated=[],editId=null,notes=[],currentNoteId=null,currentGeneratedNoteId=null;
+let libraryPage=1,notePage=1;
+const LIBRARY_PAGE_SIZE=10,NOTE_PAGE_SIZE=10;let walkmanQueue=[],walkmanIndex=0,walkmanPlaying=false,walkmanRate=1,walkmanAudioCache=new Map(),walkmanPrefetch=new Map(),walkmanChunkIndex=0,walkmanChunkTime=0,walkmanGlobalLineIndex=0,walkmanResumePending=false,walkmanPaused=false;
 let quizSessionId=null,quizQuestions=[],quizIndex=0,quizStats={correct:0,partial:0,wrong:0},selectedChoice="",quizConfidence="",quizAttempts=[],quizAdaptiveAdded=0;
 let ttsVoices=[],voiceCursor={zh:0,en:0},ttsInfoState={enabled:false,provider:"browser"},currentAudio=null,ttsPlaybackGeneration=0,noteSpeaking=false,activeTtsRequests=new Set(),currentTtsObjectUrl=null;
 let watchAudioPrimed=false;
@@ -505,6 +507,15 @@ function nextDue(){
 }
 async function grade(rating){const c=due[dueIndex];if(!c)return;await api("/review",{method:"POST",body:JSON.stringify({id:c.id,rating})});due.splice(dueIndex,1);if(dueIndex>=due.length)dueIndex=0;renderDue();await Promise.all([loadCards(),loadStats()])}
 
+function renderPager(prefix,page,totalPages,totalItems){
+  const info=$(prefix+"PageInfo");
+  const prev=$(prefix+"PrevPage");
+  const next=$(prefix+"NextPage");
+  if(info)info.textContent=totalItems?("第 "+page+" / "+totalPages+" 页 · 共 "+totalItems+" 条"):"暂无内容";
+  if(prev)prev.disabled=page<=1;
+  if(next)next.disabled=page>=totalPages;
+}
+
 function renderCategories(){
   const tags=[...new Set(cards.flatMap(c=>c.tags||[]).filter(Boolean))].sort();
   $("categoryFilter").innerHTML='<option value="">全部标签</option>'+tags.map(t=>"<option>"+esc(t)+"</option>").join("");
@@ -515,8 +526,17 @@ function renderLibrary(){
     const hay=(c.front+" "+c.back+" "+c.example+" "+(c.tags||[]).join(" ")).toLowerCase();
     return (!key||hay.includes(key))&&(!tag||(c.tags||[]).includes(tag));
   });
-  $("libraryList").innerHTML=arr.map(c=>'<div class="card-item"><div><b>'+esc(c.front)+'</b><div class="muted">'+esc(c.back)+'</div><div class="muted">下次：'+new Date(c.due).toLocaleString()+'</div></div><div class="card-actions"><div>'+(c.tags||[]).map(t=>'<span class="chip">'+esc(t)+'</span>').join(" ")+'</div><button class="ghost" data-edit="'+c.id+'">编辑</button><button class="ghost" data-del="'+c.id+'">删除</button></div></div>').join("")||'<div class="muted">暂无内容。</div>';
-  document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openEdit(b.dataset.edit));document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>deleteCard(b.dataset.del));
+
+  const totalPages=Math.max(1,Math.ceil(arr.length/LIBRARY_PAGE_SIZE));
+  libraryPage=Math.min(Math.max(1,libraryPage),totalPages);
+  const start=(libraryPage-1)*LIBRARY_PAGE_SIZE;
+  const pageItems=arr.slice(start,start+LIBRARY_PAGE_SIZE);
+
+  $("libraryList").innerHTML=pageItems.map(c=>'<div class="card-item"><div><b>'+esc(c.front)+'</b><div class="muted">'+esc(c.back)+'</div><div class="muted">下次：'+new Date(c.due).toLocaleString()+'</div></div><div class="card-actions"><div>'+(c.tags||[]).map(t=>'<span class="chip">'+esc(t)+'</span>').join(" ")+'</div><button class="ghost" data-edit="'+c.id+'">编辑</button><button class="ghost" data-del="'+c.id+'">删除</button></div></div>').join("")||'<div class="muted">暂无内容。</div>';
+  renderPager("library",libraryPage,totalPages,arr.length);
+
+  document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openEdit(b.dataset.edit));
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>deleteCard(b.dataset.del));
 }
 function openNew(){editId=null;$("modalTitle").textContent="新建卡片";$("mFront").value="";$("mBack").value="";$("mExample").value="";$("modal").classList.remove("hidden")}
 function openEdit(id){const c=cards.find(x=>x.id===id);if(!c)return;editId=id;$("modalTitle").textContent="编辑卡片";$("mFront").value=c.front;$("mBack").value=c.back;$("mExample").value=c.example;$("modal").classList.remove("hidden")}
@@ -532,12 +552,20 @@ function renderNotes(){
   if(!$("notesList"))return;
   const key=($("noteSearch")?.value||"").toLowerCase();
   const arr=notes.filter(n=>!key||((n.title+" "+n.content).toLowerCase().includes(key)));
-  $("notesList").innerHTML=arr.map(n=>{
+
+  const totalPages=Math.max(1,Math.ceil(arr.length/NOTE_PAGE_SIZE));
+  notePage=Math.min(Math.max(1,notePage),totalPages);
+  const start=(notePage-1)*NOTE_PAGE_SIZE;
+  const pageItems=arr.slice(start,start+NOTE_PAGE_SIZE);
+
+  $("notesList").innerHTML=pageItems.map(n=>{
     const lines=String(n.content||"").split(/\r?\n/);
     const preview=lines.slice(0,5).join("\n")+(lines.length>5?"\n…":"");
     const paused=n.studyEnabled===false?' · <span class="chip">不参与学习</span>':'';
     return '<div class="card-item"><div><b>'+esc(n.title)+'</b><pre class="note-preview muted">'+esc(preview)+'</pre><div class="muted">'+new Date(n.createdAt).toLocaleString()+' · 自主复习 '+(n.manualReviewCount||0)+' 次'+paused+'</div></div><div class="card-actions"><button class="ghost" data-note-review="'+n.id+'">复习</button></div></div>';
   }).join("")||'<div class="muted">还没有保存的原始笔记。</div>';
+
+  renderPager("note",notePage,totalPages,arr.length);
   document.querySelectorAll("[data-note-review]").forEach(b=>b.onclick=()=>openNoteReview(b.dataset.noteReview));
 }
 async function openNoteReview(id){
@@ -1682,7 +1710,49 @@ async function submitFeynman(){
   }
 }
 
-async function loadStats(){if(!me)return;const d=await api("/stats");$("homeCards").textContent=d.cards;$("homeReviews").textContent=d.reviews;$("homeAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";$("statCards").textContent=d.cards;$("statReviews").textContent=d.reviews;$("statAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";$("statLast7").textContent=d.last7;$("categoryStats").innerHTML=(d.categories||[]).map(x=>'<div class="card-item"><div><b>'+esc(x.category)+'</b><div class="muted">平均 FSRS difficulty '+Number(x.avg_difficulty||0).toFixed(2)+'</div></div><span class="chip">'+x.count+" 张</span></div>").join("")||'<div class="muted">暂无统计。</div>'}
+function renderReviewTrend(rows=[]){
+  const box=$("reviewTrendChart");
+  if(!box)return;
+  if(!rows.length){box.innerHTML='<div class="muted">暂无近 7 天复习记录。</div>';return;}
+
+  const max=Math.max(1,...rows.map(x=>Number(x.count||0)));
+  box.innerHTML='<div class="bar-chart">'+rows.map(x=>{
+    const count=Number(x.count||0);
+    const height=Math.max(count?8:2,Math.round(count/max*100));
+    return '<div class="bar-col"><div class="bar-value">'+count+'</div><div class="bar-track"><div class="bar-fill" style="height:'+height+'%"></div></div><div class="bar-label">'+esc(x.label||"")+'</div></div>';
+  }).join("")+'</div>';
+}
+
+function renderCategoryChart(rows=[]){
+  const box=$("categoryChart");
+  if(!box)return;
+  const top=rows.slice(0,8);
+  if(!top.length){box.innerHTML='<div class="muted">暂无分类数据。</div>';return;}
+
+  const max=Math.max(1,...top.map(x=>Number(x.count||0)));
+  box.innerHTML='<div class="hbar-chart">'+top.map(x=>{
+    const count=Number(x.count||0);
+    const width=Math.max(4,Math.round(count/max*100));
+    return '<div class="hbar-row"><div class="hbar-name">'+esc(x.category)+'</div><div class="hbar-track"><div class="hbar-fill" style="width:'+width+'%"></div></div><div class="hbar-value">'+count+'</div></div>';
+  }).join("")+'</div>';
+}
+
+async function loadStats(){
+  if(!me)return;
+  const d=await api("/stats");
+  $("homeCards").textContent=d.cards;
+  $("homeReviews").textContent=d.reviews;
+  $("homeAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";
+  $("statCards").textContent=d.cards;
+  $("statReviews").textContent=d.reviews;
+  $("statAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";
+  $("statLast7").textContent=d.last7;
+
+  renderReviewTrend(d.dailyReviews||[]);
+  renderCategoryChart(d.categories||[]);
+
+  $("categoryStats").innerHTML=(d.categories||[]).map(x=>'<div class="card-item"><div><b>'+esc(x.category)+'</b><div class="muted">平均 FSRS difficulty '+Number(x.avg_difficulty||0).toFixed(2)+'</div></div><span class="chip">'+x.count+" 张</span></div>").join("")||'<div class="muted">暂无统计。</div>';
+}
 async function loadSettings(){
   settings=await api("/settings");
   $("retentionSetting").value=String(Number(settings.fsrs_retention).toFixed(2));
@@ -3127,9 +3197,16 @@ $("mobileMenuBtn").onclick=toggleMobileNav;
 $("sidebarBackdrop").onclick=closeMobileNav;
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=enterWalkmanMode;
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
-document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));$("searchInput").oninput=renderLibrary;$("categoryFilter").onchange=renderLibrary;$("newCardBtn").onclick=openNew;
+document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));
+$("searchInput").oninput=()=>{libraryPage=1;renderLibrary()};
+$("categoryFilter").onchange=()=>{libraryPage=1;renderLibrary()};
+$("libraryPrevPage").onclick=()=>{if(libraryPage>1){libraryPage--;renderLibrary()}};
+$("libraryNextPage").onclick=()=>{libraryPage++;renderLibrary()};
+$("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
-$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);setupImportMediaDropPaste();$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=renderNotes;$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("toggleNoteStudyBtn").onclick=toggleCurrentNoteStudy;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
+$("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);setupImportMediaDropPaste();$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=()=>{notePage=1;renderNotes()};
+$("notePrevPage").onclick=()=>{if(notePage>1){notePage--;renderNotes()}};
+$("noteNextPage").onclick=()=>{notePage++;renderNotes()};$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("toggleNoteStudyBtn").onclick=toggleCurrentNoteStudy;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRate").onchange=()=>{
   const wasPlaying=walkmanPlaying;
   const wasPaused=walkmanPaused;
