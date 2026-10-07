@@ -410,3 +410,47 @@ body.walkman .walkman-mode{visibility:visible}
   .bar-col{grid-template-rows:20px 120px 26px}
   .bar-track{height:120px}
 }
+
+
+/* Review trend line chart */
+.trend-chart-wrap{
+  width:100%;
+  overflow:hidden;
+}
+.trend-chart{
+  display:block;
+  width:100%;
+  height:220px;
+  overflow:visible;
+}
+.trend-grid{
+  stroke:currentColor;
+  opacity:.08;
+  stroke-width:1;
+}
+.trend-line{
+  fill:none;
+  stroke:currentColor;
+  stroke-width:3;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  opacity:.82;
+}
+.trend-dot{
+  fill:#fff;
+  stroke:currentColor;
+  stroke-width:3;
+}
+.trend-value{
+  fill:currentColor;
+  font-size:12px;
+  font-weight:700;
+}
+.trend-label{
+  fill:currentColor;
+  opacity:.62;
+  font-size:11px;
+}
+@media(max-width:760px){
+  .trend-chart{height:190px}
+}
