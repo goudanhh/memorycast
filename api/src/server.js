@@ -2275,7 +2275,7 @@ Return schema-valid JSON only.`,
 
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
-  const [cards, reviews, recent, categories]=await Promise.all([
+  const [cards, reviews, recent, categories, dailyReviews]=await Promise.all([
     query(`
       SELECT COUNT(*)::int AS n FROM cards c
       WHERE c.user_id=$1
@@ -2299,9 +2299,55 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
         AND (c.source_note_id IS NULL OR EXISTS (
           SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
         ))
-        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}
+  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
+  res.json({
+    cards:cards.rows[0].n,
+    reviews:reviews.rows[0].n,
+    last7:recent.rows[0].last7||0,
+    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
+    categories:categories.rows,
+    dailyReviews:dailyReviews.rows.map(r=>({
+      date:r.day,
+      label:new Date(r.day).toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"}),
+      count:Number(r.count||0)
+    }))
+  });
+}));
+
+app.use((err,req,res,next)=>{
+  console.error(err);
+  const status=err.statusCode||500;
+  const safeMessage=status===500
+    ? "服务器处理失败，请稍后重试。若持续出现，请查看 API 日志。"
+    : (err.message||("HTTP "+status));
+  res.status(status).json({error:safeMessage});
+});
+app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+setTimeout(()=>runDailyReminders().catch(console.error),5000);
+setInterval(()=>runDailyReminders().catch(console.error),60*1000);
+
       GROUP BY tag
       ORDER BY count DESC
+    `,[uid]),
+    query(`
+      WITH days AS (
+        SELECT generate_series(
+          CURRENT_DATE - INTERVAL '6 days',
+          CURRENT_DATE,
+          INTERVAL '1 day'
+        )::date AS day
+      )
+      SELECT
+        d.day,
+        COUNT(r.id)::int AS count
+      FROM days d
+      LEFT JOIN reviews r
+        ON r.user_id=$1
+       AND r.reviewed_at>=d.day
+       AND r.reviewed_at<d.day+INTERVAL '1 day'
+      GROUP BY d.day
+      ORDER BY d.day ASC
     `,[uid])
   ]);
   const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
