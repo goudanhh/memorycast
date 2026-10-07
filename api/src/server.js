@@ -2275,61 +2275,62 @@ Return schema-valid JSON only.`,
 
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
+
   const [cards, reviews, recent, categories, dailyReviews]=await Promise.all([
     query(`
-      SELECT COUNT(*)::int AS n FROM cards c
+      SELECT COUNT(*)::int AS n
+      FROM cards c
       WHERE c.user_id=$1
-        AND (c.source_note_id IS NULL OR EXISTS (
-          SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
-        ))
+        AND (
+          c.source_note_id IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM notes n
+            WHERE n.id=c.source_note_id
+              AND n.user_id=c.user_id
+              AND n.study_enabled=TRUE
+          )
+        )
     `,[uid]),
-    query(`SELECT COUNT(*)::int AS n FROM reviews WHERE user_id=$1`,[uid]),
+
+    query(`
+      SELECT COUNT(*)::int AS n
+      FROM reviews
+      WHERE user_id=$1
+    `,[uid]),
+
     query(`
       SELECT
-        COUNT(*) FILTER(WHERE verdict='correct')::int AS correct,
-        COUNT(*) FILTER(WHERE source='quiz')::int AS quiz_total,
-        COUNT(*) FILTER(WHERE reviewed_at>=NOW()-INTERVAL '7 days')::int AS last7
-      FROM reviews WHERE user_id=$1
+        COUNT(*) FILTER (WHERE verdict='correct')::int AS correct,
+        COUNT(*) FILTER (WHERE source='quiz')::int AS quiz_total,
+        COUNT(*) FILTER (WHERE reviewed_at>=NOW()-INTERVAL '7 days')::int AS last7
+      FROM reviews
+      WHERE user_id=$1
     `,[uid]),
+
     query(`
-      SELECT tag AS category, COUNT(*)::int AS count,
+      SELECT
+        tag AS category,
+        COUNT(*)::int AS count,
         AVG(COALESCE((c.fsrs->>'difficulty')::float,0)) AS avg_difficulty
-      FROM cards c, LATERAL unnest(c.tags) AS tag
+      FROM cards c,
+           LATERAL unnest(c.tags) AS tag
       WHERE c.user_id=$1
-        AND (c.source_note_id IS NULL OR EXISTS (
-          SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
-        ))
-        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}
-  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
-  res.json({
-    cards:cards.rows[0].n,
-    reviews:reviews.rows[0].n,
-    last7:recent.rows[0].last7||0,
-    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
-    categories:categories.rows,
-    dailyReviews:dailyReviews.rows.map(r=>({
-      date:r.day,
-      label:new Date(r.day).toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"}),
-      count:Number(r.count||0)
-    }))
-  });
-}));
-
-app.use((err,req,res,next)=>{
-  console.error(err);
-  const status=err.statusCode||500;
-  const safeMessage=status===500
-    ? "服务器处理失败，请稍后重试。若持续出现，请查看 API 日志。"
-    : (err.message||("HTTP "+status));
-  res.status(status).json({error:safeMessage});
-});
-app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
-setTimeout(()=>runDailyReminders().catch(console.error),5000);
-setInterval(()=>runDailyReminders().catch(console.error),60*1000);
-
+        AND (
+          c.source_note_id IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM notes n
+            WHERE n.id=c.source_note_id
+              AND n.user_id=c.user_id
+              AND n.study_enabled=TRUE
+          )
+        )
+        AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       GROUP BY tag
       ORDER BY count DESC
     `,[uid]),
+
     query(`
       WITH days AS (
         SELECT generate_series(
@@ -2350,13 +2351,21 @@ setInterval(()=>runDailyReminders().catch(console.error),60*1000);
       ORDER BY d.day ASC
     `,[uid])
   ]);
-  const quizTotal=recent.rows[0].quiz_total||0, correct=recent.rows[0].correct||0;
+
+  const quizTotal=recent.rows[0]?.quiz_total||0;
+  const correct=recent.rows[0]?.correct||0;
+
   res.json({
-    cards:cards.rows[0].n,
-    reviews:reviews.rows[0].n,
-    last7:recent.rows[0].last7||0,
+    cards:cards.rows[0]?.n||0,
+    reviews:reviews.rows[0]?.n||0,
+    last7:recent.rows[0]?.last7||0,
     quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
-    categories:categories.rows
+    categories:categories.rows,
+    dailyReviews:dailyReviews.rows.map(r=>({
+      date:r.day,
+      label:new Date(r.day).toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"}),
+      count:Number(r.count||0)
+    }))
   });
 }));
 
@@ -2368,6 +2377,10 @@ app.use((err,req,res,next)=>{
     : (err.message||("HTTP "+status));
   res.status(status).json({error:safeMessage});
 });
-app.listen(PORT,"0.0.0.0",()=>console.log(`MemoryCast API listening on ${PORT}`));
+
+app.listen(PORT,"0.0.0.0",()=>{
+  console.log(`MemoryCast API listening on ${PORT}`);
+});
+
 setTimeout(()=>runDailyReminders().catch(console.error),5000);
 setInterval(()=>runDailyReminders().catch(console.error),60*1000);
