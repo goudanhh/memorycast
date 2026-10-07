@@ -1715,12 +1715,46 @@ function renderReviewTrend(rows=[]){
   if(!box)return;
   if(!rows.length){box.innerHTML='<div class="muted">暂无近 7 天复习记录。</div>';return;}
 
-  const max=Math.max(1,...rows.map(x=>Number(x.count||0)));
-  box.innerHTML='<div class="bar-chart">'+rows.map(x=>{
-    const count=Number(x.count||0);
-    const height=Math.max(count?8:2,Math.round(count/max*100));
-    return '<div class="bar-col"><div class="bar-value">'+count+'</div><div class="bar-track"><div class="bar-fill" style="height:'+height+'%"></div></div><div class="bar-label">'+esc(x.label||"")+'</div></div>';
-  }).join("")+'</div>';
+  const values=rows.map(x=>Number(x.count||0));
+  const max=Math.max(1,...values);
+  const width=700;
+  const height=220;
+  const padX=38;
+  const padTop=24;
+  const padBottom=38;
+  const plotW=width-padX*2;
+  const plotH=height-padTop-padBottom;
+
+  const pts=rows.map((x,i)=>{
+    const px=rows.length<=1
+      ? width/2
+      : padX+(plotW*i/(rows.length-1));
+    const py=padTop+plotH-(Number(x.count||0)/max)*plotH;
+    return {x:px,y:py,count:Number(x.count||0),label:x.label||""};
+  });
+
+  const polyline=pts.map(p=>p.x.toFixed(1)+","+p.y.toFixed(1)).join(" ");
+  const grid=[0,.25,.5,.75,1].map(r=>{
+    const y=padTop+plotH*(1-r);
+    return '<line x1="'+padX+'" y1="'+y+'" x2="'+(width-padX)+'" y2="'+y+'" class="trend-grid"/>';
+  }).join("");
+
+  const dots=pts.map(p=>
+    '<g>'+
+      '<circle cx="'+p.x+'" cy="'+p.y+'" r="5" class="trend-dot"></circle>'+
+      '<text x="'+p.x+'" y="'+Math.max(14,p.y-10)+'" text-anchor="middle" class="trend-value">'+p.count+'</text>'+
+      '<text x="'+p.x+'" y="'+(height-10)+'" text-anchor="middle" class="trend-label">'+esc(p.label)+'</text>'+
+    '</g>'
+  ).join("");
+
+  box.innerHTML=
+    '<div class="trend-chart-wrap">'+
+      '<svg class="trend-chart" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="近 7 天复习趋势折线图">'+
+        grid+
+        '<polyline points="'+polyline+'" class="trend-line"></polyline>'+
+        dots+
+      '</svg>'+
+    '</div>';
 }
 
 function renderCategoryChart(rows=[]){
