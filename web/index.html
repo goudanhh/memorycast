@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=media-drop-paste-56">
+<link rel="stylesheet" href="/styles.css?v=pagination-stats-58">
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -147,6 +147,11 @@
       </div>
       <input id="noteSearch" placeholder="搜索笔记内容或标题…">
       <div id="notesList" class="card-list" style="margin-top:12px"></div>
+      <div class="pager">
+        <button id="notePrevPage" class="ghost" type="button">← 上一页</button>
+        <span id="notePageInfo" class="muted">第 1 / 1 页</span>
+        <button id="noteNextPage" class="ghost" type="button">下一页 →</button>
+      </div>
     </article>
     <article id="manualReviewPanel" class="panel hidden">
       <div class="panel-head">
@@ -291,6 +296,11 @@
       <select id="categoryFilter"><option value="">全部分类</option></select>
     </div>
     <div id="libraryList" class="card-list"></div>
+    <div class="pager">
+      <button id="libraryPrevPage" class="ghost" type="button">← 上一页</button>
+      <span id="libraryPageInfo" class="muted">第 1 / 1 页</span>
+      <button id="libraryNextPage" class="ghost" type="button">下一页 →</button>
+    </div>
   </article>
 </section>
 
@@ -301,7 +311,17 @@
     <article class="stat"><b id="statAccuracy">—</b><span>测试正确率</span></article>
     <article class="stat"><b id="statLast7">0</b><span>近 7 日复习</span></article>
   </section>
-  <article class="panel"><h2>分类</h2><div id="categoryStats"></div></article>
+  <div class="stats-charts">
+    <article class="panel">
+      <div class="panel-head"><h2>近 7 天复习趋势</h2><span class="muted">每日复习次数</span></div>
+      <div id="reviewTrendChart" class="chart-box"></div>
+    </article>
+    <article class="panel">
+      <div class="panel-head"><h2>知识分类分布</h2><span class="muted">Top 8 标签</span></div>
+      <div id="categoryChart" class="chart-box"></div>
+    </article>
+  </div>
+  <article class="panel"><h2>分类详情</h2><div id="categoryStats"></div></article>
 </section>
 
 <section id="settingsPage" class="page">
@@ -391,7 +411,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=study-toggle-57"></script>
+<script type="module" src="/app.js?v=pagination-stats-58"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
