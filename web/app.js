@@ -2481,16 +2481,33 @@ function getWatchAudioContext(){
   }
 }
 
-function unlockWatchWebAudio(){
-  if(!isAppleWatchLike())return;
+async function unlockWatchWebAudio(){
+  if(!isAppleWatchLike())return false;
   const ctx=getWatchAudioContext();
-  if(!ctx)return;
+  if(!ctx)return false;
+
   try{
     if(ctx.state==="suspended"){
-      const p=ctx.resume();
-      if(p&&typeof p.catch==="function")p.catch(()=>{});
+      await ctx.resume();
     }
-  }catch{}
+
+    // Force watchOS/WebKit to activate the Web Audio output path while the
+    // user's tap is still active. A silent one-frame buffer is enough and does
+    // not touch the legacy HTML audio/video pipeline.
+    const buffer=ctx.createBuffer(1,1,22050);
+    const source=ctx.createBufferSource();
+    const gain=ctx.createGain();
+    gain.gain.value=0;
+    source.buffer=buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+
+    return ctx.state==="running";
+  }catch(err){
+    console.warn("Watch WebAudio unlock failed:",err?.message||err);
+    return false;
+  }
 }
 
 function watchWebAudioKey(card,chunkIndex,lines){
@@ -2587,6 +2604,7 @@ async function playWalkmanWatchWebAudio(card){
 
   try{
     if(ctx.state==="suspended")await ctx.resume();
+    if(ctx.state!=="running")return false;
   }catch{
     return false;
   }
@@ -3127,29 +3145,14 @@ async function enterWalkmanMode(){
 
   const watch=isAppleWatchLike();
 
-  // Resume the Web Audio context immediately inside the user's tap.
-  if(watch)unlockWatchWebAudio();
+  // Start unlocking Web Audio immediately inside the tap and keep the promise.
+  // Do not touch legacy <audio>/<video> priming here: Web Audio is the proven
+  // working Watch path.
+  const watchUnlockPromise=watch
+    ? unlockWatchWebAudio()
+    : Promise.resolve(true);
 
-  // Important for watchOS: if the first natural-voice MP4 was prepared in the
-  // background, start it synchronously inside the user's "随身听" tap before
-  // any await/fetch can consume the user activation.
   watchInitialVideoStarted=false;
-  if(watch && watchPreparedFirstMedia?.url){
-    try{
-      const video=getWatchVideoElement();
-      video.src=watchPreparedFirstMedia.url;
-      video.load();
-      const p=video.play();
-      watchInitialVideoStarted=true;
-      if(p&&typeof p.catch==="function"){
-        p.catch(()=>{
-          watchInitialVideoStarted=false;
-        });
-      }
-    }catch{
-      watchInitialVideoStarted=false;
-    }
-  }
 
   walkmanPlaying=false;
   walkmanIndex=0;
@@ -3186,8 +3189,13 @@ async function enterWalkmanMode(){
   }
 
   // Apple Watch starts immediately after entering Walkman mode.
-  // Other devices retain the existing manual play button behavior.
+  // Wait until the Web Audio context is actually running before starting TTS.
   if(watch && walkmanQueue.length){
+    const unlocked=await watchUnlockPromise;
+    if(!unlocked){
+      console.warn("Apple Watch WebAudio context did not unlock.");
+    }
+
     const direct=document.getElementById("watchDirectAudioLink");
     if(direct)direct.remove();
     if(watchDiagEl){
