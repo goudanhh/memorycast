@@ -2483,39 +2483,23 @@ function getWatchAudioContext(){
 function unlockWatchWebAudio(){
   if(!isAppleWatchLike())return;
   const ctx=getWatchAudioContext();
-  if(!ctx){
-    watchDiag("ctx unavailable");
-    return;
-  }
+  if(!ctx)return;
   try{
-    watchDiag("ctx before state="+ctx.state+" sr="+ctx.sampleRate);
-    ctx.onstatechange=()=>watchDiag("ctx statechange="+ctx.state);
-
     if(ctx.state==="suspended"){
       const p=ctx.resume();
-      if(p&&typeof p.then==="function"){
-        p.then(()=>watchDiag("ctx resume resolved state="+ctx.state))
-         .catch(err=>watchDiag("ctx resume failed "+(err?.name||"")+" "+(err?.message||err)));
-      }
+      if(p&&typeof p.catch==="function")p.catch(()=>{});
     }
 
-    // Audible but gentle diagnostic tone. This is started synchronously from
-    // the user's Walkman tap, so it tells us whether watchOS opened a real
-    // Web Audio output route at all.
-    const osc=ctx.createOscillator();
-    const gain=ctx.createGain();
-    osc.frequency.value=523.25;
-    gain.gain.value=0.04;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    const now=ctx.currentTime;
-    osc.start(now);
-    osc.stop(now+0.14);
-    osc.onended=()=>watchDiag("tap test tone ended state="+ctx.state+" t="+ctx.currentTime.toFixed(3));
-    watchDiag("tap test tone started state="+ctx.state+" t="+ctx.currentTime.toFixed(3));
-  }catch(err){
-    watchDiag("unlock error "+(err?.name||"")+" "+(err?.message||err));
-  }
+    // watchOS may report an AudioContext as running without actually opening
+    // an audible output route. Start a tiny silent Web Audio source directly
+    // inside the user's Walkman tap so the output pipeline is activated while
+    // user activation is still valid.
+    const buffer=ctx.createBuffer(1,1,Math.max(8000,ctx.sampleRate||44100));
+    const source=ctx.createBufferSource();
+    source.buffer=buffer;
+    source.connect(ctx.destination);
+    source.start(0);
+  }catch{}
 }
 
 function watchWebAudioKey(card,chunkIndex,lines){
@@ -2621,11 +2605,8 @@ async function playWalkmanWatchWebAudio(card){
 
     let media;
     try{
-      watchDiag("chunk "+i+" request ctx="+ctx.state);
       media=await requestWatchWebAudioChunk(card,i,groups[i]);
-      watchDiag("chunk "+i+" bytes="+(media?.buffer?.byteLength||0)+" ctx="+ctx.state);
-    }catch(err){
-      watchDiag("chunk "+i+" request error "+(err?.name||"")+" "+(err?.message||err));
+    }catch{
       return false;
     }
 
@@ -2633,28 +2614,7 @@ async function playWalkmanWatchWebAudio(card){
     try{
       // Safari implementations may detach the passed ArrayBuffer.
       decoded=await ctx.decodeAudioData(media.buffer.slice(0));
-
-      let peak=0;
-      try{
-        const data=decoded.numberOfChannels?decoded.getChannelData(0):null;
-        if(data){
-          const step=Math.max(1,Math.floor(data.length/4000));
-          for(let s=0;s<data.length;s+=step){
-            const v=Math.abs(data[s]||0);
-            if(v>peak)peak=v;
-          }
-        }
-      }catch{}
-      watchDiag(
-        "chunk "+i+
-        " decoded dur="+Number(decoded.duration||0).toFixed(2)+
-        "s ch="+decoded.numberOfChannels+
-        " sr="+decoded.sampleRate+
-        " peak="+peak.toFixed(4)+
-        " ctx="+ctx.state
-      );
-    }catch(err){
-      watchDiag("chunk "+i+" decode error "+(err?.name||"")+" "+(err?.message||err));
+    }catch{
       return false;
     }
 
@@ -2701,16 +2661,11 @@ async function playWalkmanWatchWebAudio(card){
         setWalkmanLyricIndex(lines,Math.min(lines.length-1,globalStart+local));
       },80);
 
-      source.onended=()=>{
-        watchDiag("chunk "+i+" ended ctx="+ctx.state+" t="+ctx.currentTime.toFixed(3));
-        finish(true);
-      };
+      source.onended=()=>finish(true);
 
       try{
-        watchDiag("chunk "+i+" source.start ctx="+ctx.state+" t="+ctx.currentTime.toFixed(3));
         source.start(0);
-      }catch(err){
-        watchDiag("chunk "+i+" start error "+(err?.name||"")+" "+(err?.message||err));
+      }catch{
         finish(false);
       }
     });
@@ -3236,7 +3191,10 @@ async function enterWalkmanMode(){
   if(watch && walkmanQueue.length){
     const direct=document.getElementById("watchDirectAudioLink");
     if(direct)direct.remove();
-    watchDiag("walkman start");
+    if(watchDiagEl){
+      watchDiagEl.remove();
+      watchDiagEl=null;
+    }
     walkmanPlaying=true;
     walkmanPaused=false;
     playWalkmanCurrent();
