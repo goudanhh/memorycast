@@ -106,11 +106,10 @@ async function init(){
         const groups=walkmanChunkGroups(walkmanSegments(card));
         if(!groups[0])return null;
 
-        if(isAppleWatchLike()){
-          // Fetch and decode the first natural-voice chunk in the background.
-          // Playback still waits for the user's Walkman tap to resume AudioContext.
-          prepareWatchWebAudioChunk(card,0,groups[0]).catch(()=>{});
-        }
+        // Do not create/decode through Web Audio during background startup on
+        // Apple Watch. watchOS may keep an AudioContext created outside a real
+        // user gesture effectively silent even though currentTime advances.
+        // The Watch AudioContext is created only from the Walkman tap instead.
 
         const key=walkmanChunkKey(card,0,groups[0]);
         return prefetchWalkmanChunk(card,0,groups[0]).then(media=>{
