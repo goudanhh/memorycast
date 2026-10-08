@@ -34,11 +34,19 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
-            "lines": lines.map {
+            // 服务器要求每行是 { parts: [{ text, language, style, rate }] }
+            // 以前发的是 { text, language, rate }（少了 parts 包裹层），
+            // 服务器把每行的 parts 解析成空数组 → 400 "Timed TTS lines are required" → 无声
+            "lines": lines.map { line in
                 [
-                    "text": $0,
-                    "language": language(for: $0),
-                    "rate": rate
+                    "parts": [
+                        [
+                            "text": line,
+                            "language": language(for: line),
+                            "style": "smart",
+                            "rate": rate
+                        ]
+                    ]
                 ]
             },
             "format": "mp3"
