@@ -2469,6 +2469,35 @@ async function playWalkmanChunk(card,chunkIndex,lines,globalStartIndex,allLines)
   return generation===ttsPlaybackGeneration&&walkmanPlaying;
 }
 
+function showWatchWebAudioDiag(message){
+  if(!isAppleWatchLike())return;
+  let el=document.getElementById("watchWebAudioDiag");
+  if(!el){
+    el=document.createElement("div");
+    el.id="watchWebAudioDiag";
+    el.style.cssText="position:fixed;left:6px;right:6px;bottom:6px;z-index:100001;padding:6px 8px;border-radius:8px;background:rgba(0,0,0,.72);color:#fff;font:10px/1.3 system-ui;white-space:pre-wrap;pointer-events:none;";
+    document.body.appendChild(el);
+  }
+  el.textContent=String(message||"");
+}
+
+function watchAudioPeak(buffer){
+  try{
+    let peak=0;
+    for(let ch=0;ch<buffer.numberOfChannels;ch++){
+      const data=buffer.getChannelData(ch);
+      const step=Math.max(1,Math.floor(data.length/12000));
+      for(let i=0;i<data.length;i+=step){
+        const v=Math.abs(data[i]);
+        if(v>peak)peak=v;
+      }
+    }
+    return peak;
+  }catch{
+    return -1;
+  }
+}
+
 function getWatchAudioContext(){
   if(watchAudioContext)return watchAudioContext;
   const Ctx=window.AudioContext||window.webkitAudioContext;
@@ -2533,7 +2562,11 @@ async function requestWatchWebAudioChunk(card,chunkIndex,lines){
 
 async function playWalkmanWatchWebAudio(card){
   const ctx=getWatchAudioContext();
-  if(!ctx)return false;
+  if(!ctx){
+    showWatchWebAudioDiag("ctx: unavailable");
+    return false;
+  }
+  showWatchWebAudioDiag("ctx: "+ctx.state);
 
   const lines=walkmanSegments(card);
   if(!lines.length)return false;
@@ -2563,9 +2596,19 @@ async function playWalkmanWatchWebAudio(card){
     try{
       // Safari implementations may detach the passed ArrayBuffer.
       decoded=await ctx.decodeAudioData(media.buffer.slice(0));
-    }catch{
+    }catch(err){
+      showWatchWebAudioDiag("decode failed: "+(err?.message||err));
       return false;
     }
+
+    const peak=watchAudioPeak(decoded);
+    showWatchWebAudioDiag(
+      "ctx: "+ctx.state+
+      "\nduration: "+Number(decoded.duration||0).toFixed(2)+"s"+
+      "\nchannels: "+decoded.numberOfChannels+
+      "\nrate: "+decoded.sampleRate+
+      "\npeak: "+(peak>=0?peak.toFixed(4):"n/a")
+    );
 
     const source=ctx.createBufferSource();
     source.buffer=decoded;
@@ -2614,13 +2657,22 @@ async function playWalkmanWatchWebAudio(card){
 
       try{
         source.start(0);
-      }catch{
+        showWatchWebAudioDiag(
+          (document.getElementById("watchWebAudioDiag")?.textContent||"")+
+          "\nsource: started"
+        );
+      }catch(err){
+        showWatchWebAudioDiag("source failed: "+(err?.message||err));
         finish(false);
       }
     });
 
     if(watchAudioSource===source)watchAudioSource=null;
     if(!ok)return false;
+    showWatchWebAudioDiag(
+      (document.getElementById("watchWebAudioDiag")?.textContent||"")+
+      "\nsource: ended"
+    );
     globalStart+=groups[i].length;
   }
 
@@ -3171,6 +3223,8 @@ function exitWalkmanMode(){
     watchDiagEl.remove();
     watchDiagEl=null;
   }
+  const webDiag=document.getElementById("watchWebAudioDiag");
+  if(webDiag)webDiag.remove();
 }
 
 function closeMobileNav(){document.body.classList.remove("mobile-nav-open")}
