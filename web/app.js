@@ -2489,6 +2489,16 @@ function unlockWatchWebAudio(){
       const p=ctx.resume();
       if(p&&typeof p.catch==="function")p.catch(()=>{});
     }
+
+    // watchOS may report an AudioContext as running without actually opening
+    // an audible output route. Start a tiny silent Web Audio source directly
+    // inside the user's Walkman tap so the output pipeline is activated while
+    // user activation is still valid.
+    const buffer=ctx.createBuffer(1,1,Math.max(8000,ctx.sampleRate||44100));
+    const source=ctx.createBufferSource();
+    source.buffer=buffer;
+    source.connect(ctx.destination);
+    source.start(0);
   }catch{}
 }
 
