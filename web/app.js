@@ -2594,35 +2594,27 @@ async function playWalkmanWatchWebAudio(card){
   for(let i=0;i<groups.length;i++){
     if(!walkmanPlaying||generation!==ttsPlaybackGeneration)return false;
 
-    let prepared;
+    let media;
     try{
-      prepared=await prepareWatchWebAudioChunk(card,i,groups[i]);
+      media=await requestWatchWebAudioChunk(card,i,groups[i]);
     }catch{
       return false;
     }
-    if(!prepared?.decoded)return false;
 
-    // Start network + decode work for the next sentence before this one plays.
-    if(i+1<groups.length){
-      prepareWatchWebAudioChunk(card,i+1,groups[i+1]).catch(()=>{});
-    }else if(walkmanQueue.length>1){
-      const nextCard=walkmanQueue[(walkmanIndex+1)%walkmanQueue.length];
-      const nextGroups=walkmanChunkGroups(walkmanSegments(nextCard));
-      if(nextGroups[0]){
-        prepareWatchWebAudioChunk(nextCard,0,nextGroups[0]).catch(()=>{});
-      }
+    let decoded;
+    try{
+      // Safari implementations may detach the passed ArrayBuffer.
+      decoded=await ctx.decodeAudioData(media.buffer.slice(0));
+    }catch{
+      return false;
     }
 
     const source=ctx.createBufferSource();
-    source.buffer=prepared.decoded;
-    // Apple Watch Walkman only: gently boost quiet TTS in AirPods.
-    const gain=ctx.createGain();
-    gain.gain.value=1.25;
-    source.connect(gain);
-    gain.connect(ctx.destination);
+    source.buffer=decoded;
+    source.connect(ctx.destination);
     watchAudioSource=source;
 
-    const exactTimings=(prepared.timings||[])
+    const exactTimings=(media.timings||[])
       .map(x=>({
         index:Number(x.index||0),
         offsetMs:Number.isFinite(Number(x.offsetMs))
@@ -2658,7 +2650,7 @@ async function playWalkmanWatchWebAudio(card){
           else break;
         }
         setWalkmanLyricIndex(lines,Math.min(lines.length-1,globalStart+local));
-      },60);
+      },80);
 
       source.onended=()=>finish(true);
 
