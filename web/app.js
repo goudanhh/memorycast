@@ -1658,9 +1658,20 @@ async function submitFeynman(){
   $("feynmanMicStatus").textContent="正在分析你的完整讲解…";
 
   try{
-    const d=await api("/feynman/respond",{method:"POST",body:JSON.stringify({
-      topic,explanation,sessionId:feynmanSessionId,cardId:currentFeynmanCardId
-    })});
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),45000);
+    let d;
+    try{
+      d=await api("/feynman/respond",{
+        method:"POST",
+        signal:controller.signal,
+        body:JSON.stringify({
+          topic,explanation,sessionId:feynmanSessionId,cardId:currentFeynmanCardId
+        })
+      });
+    }finally{
+      clearTimeout(timeout);
+    }
 
     feynmanSessionId=d.sessionId||feynmanSessionId;
     feynmanHistory.push({role:"user",text:explanation});
@@ -1701,7 +1712,10 @@ async function submitFeynman(){
     const spoken=[d.studentReply,d.followUpQuestion].filter(Boolean).join(" ");
     if(spoken)speakOne(spoken,null,"conversation");
   }catch(e){
-    alert(e.message);
+    const message=e?.name==="AbortError"
+      ? "AI 分析超过 45 秒，已自动停止。你的回答还在，可以直接重试。"
+      : (e?.message||"AI 分析失败，请重试。");
+    alert(message);
     $("feynmanMicStatus").textContent="分析失败，但你的转写还在，可以再次提交。";
   }finally{
     btn.disabled=false;
