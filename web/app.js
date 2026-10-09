@@ -1301,7 +1301,11 @@ function renderQuiz(){
   selectedChoice="";
   quizConfidence="";
   $("quizProgress").textContent=(quizIndex+1)+" / "+quizQuestions.length;
-  $("quizType").textContent=(q.visualAttachmentId?"看图题 · ":"")+({mcq:"选择题",fill:"填空题",short:"简答题",listening:"听力题"}[q.type]||q.type)+(q.adaptive?" · 自适应变式":"");
+  const hasQuizAudio=Boolean(String(q.audioText||"").trim());
+  const quizKind=hasQuizAudio&&q.type==="mcq"
+    ?"听力选择题"
+    : ({mcq:"选择题",fill:"填空题",short:"简答题",listening:"听力题"}[q.type]||q.type);
+  $("quizType").textContent=(q.visualAttachmentId?"看图题 · ":"")+quizKind+(q.adaptive?" · 自适应变式":"");
   $("quizDifficulty").textContent=difficultyLabel(q.difficultyLevel);
   $("quizPrompt").textContent=q.prompt;
 
@@ -1314,8 +1318,8 @@ function renderQuiz(){
     visual.classList.add("hidden");
   }
 
-  $("listenQuizBtn").classList.toggle("hidden",q.type!=="listening");
-  $("listenQuizBtn").textContent=q.type==="listening"?"🔊 播放听力":"🔊 播放听力";
+  $("listenQuizBtn").classList.toggle("hidden",!hasQuizAudio);
+  $("listenQuizBtn").textContent="🔊 播放听力";
   $("listenQuizBtn").disabled=false;
 
   $("quizChoices").innerHTML=q.type==="mcq"
