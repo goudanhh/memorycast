@@ -2,6 +2,35 @@ import OpenAI from "openai";
 
 let openaiClient;
 
+async function fetchWithTimeout(url,options={},timeoutMs=35000){
+  const controller=new AbortController();
+  const upstreamSignal=options.signal;
+  let upstreamAbortHandler=null;
+  if(upstreamSignal){
+    if(upstreamSignal.aborted)controller.abort();
+    else{
+      upstreamAbortHandler=()=>controller.abort();
+      upstreamSignal.addEventListener("abort",upstreamAbortHandler,{once:true});
+    }
+  }
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    return await fetch(url,{...options,signal:controller.signal});
+  }catch(err){
+    if(err?.name==="AbortError"){
+      const e=new Error("AI 请求超时，请重试一次。");
+      e.statusCode=504;
+      throw e;
+    }
+    throw err;
+  }finally{
+    clearTimeout(timer);
+    if(upstreamSignal&&upstreamAbortHandler){
+      upstreamSignal.removeEventListener("abort",upstreamAbortHandler);
+    }
+  }
+}
+
 export function provider() {
   if (process.env.AI_PROVIDER) return process.env.AI_PROVIDER.toLowerCase();
   if (process.env.GEMINI_API_KEY) return "gemini";
@@ -39,7 +68,7 @@ async function generateGeminiJson({ system, user, schema, modelOverride }) {
   const model = modelOverride || geminiModel();
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -145,7 +174,7 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
     const e=new Error(`${providerName.toUpperCase()} API key is not configured.`);e.statusCode=503;throw e;
   }
 
-  const response=await fetch(baseURL+"/chat/completions",{
+  const response=await fetchWithTimeout(baseURL+"/chat/completions",{
     method:"POST",
     headers:{
       Authorization:`Bearer ${key}`,
