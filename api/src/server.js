@@ -1861,6 +1861,20 @@ const feynmanSchema={
   additionalProperties:false
 };
 
+const feynmanFollowupSchema={
+  type:"object",
+  properties:{
+    studentReply:{type:"string"},
+    strengths:{type:"array",items:{type:"string"},maxItems:2},
+    gaps:{type:"array",items:{type:"string"},maxItems:1},
+    followUpQuestion:{type:"string"},
+    status:{type:"string",enum:["continue","mastered"]},
+    clarityScore:{type:"integer",minimum:0,maximum:100}
+  },
+  required:["studentReply","strengths","gaps","followUpQuestion","status","clarityScore"],
+  additionalProperties:false
+};
+
 app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
   const exclude=String(req.query?.exclude||"").trim();
@@ -2018,35 +2032,66 @@ app.post("/feynman/respond", requireAuth, asyncRoute(async(req,res)=>{
     FROM feynman_turns
     WHERE session_id=$1
     ORDER BY created_at DESC,id DESC
-    LIMIT 16
+    LIMIT 6
   `,[sessionId]);
   const history=prior.rows.reverse().map(x=>({role:x.role,text:x.content}));
 
   const aiProvider=await featureProvider(uid,"ai_feynman_provider","gemini");
+  const firstTurn=history.length===0;
+  const fastModel=aiProvider==="gemini"
+    ? (process.env.FEYNMAN_FAST_MODEL||"gemini-3.5-flash-lite")
+    : undefined;
 
-  const analysisRequest={
-    name:"feynman_analysis",
-    schema:feynmanSchema,
-    system:`You are an expert Feynman-method tutor.
-The user has FINISHED one complete explanation. Do not decide whether to stay silent; always analyze the explanation now.
+  const analysisRequest=firstTurn
+    ? {
+        name:"feynman_analysis",
+        schema:feynmanSchema,
+        system:`You are an expert Feynman-method tutor.
+The user has FINISHED one complete explanation. Analyze it now.
 
 Your job:
-1. Briefly state what you understood the user to mean.
-2. Identify the strongest parts of the explanation.
-3. Identify only meaningful conceptual or logical gaps. Ignore harmless speech-to-text mistakes unless they change meaning.
-4. In studentReply, give concise, useful feedback and directly correct the most important factual or logical mistake if there is one.
-5. Ask exactly ONE highest-value follow-up question that makes the learner explain the weakest point in their own words.
-6. Do not overwhelm the learner with a lecture. Prioritize the 1–3 most important issues.
-7. Use the recent session history when judging contradictions or whether an earlier gap has now been resolved.
-8. status="mastered" only when the core idea is accurate, causally coherent, and understandable to a beginner.
-9. clarityScore measures the explanation's clarity and completeness, not the learner's intelligence.
-10. Reply mainly in the user's language while preserving useful English technical terms.
+1. Briefly state what you understood.
+2. Identify the strongest parts.
+3. Identify only meaningful conceptual or logical gaps.
+4. Give concise feedback and correct the most important mistake if needed.
+5. Ask exactly ONE highest-value follow-up question.
+6. Prioritize only the 1–3 most important issues.
+7. status="mastered" only when the core idea is accurate, causally coherent, and understandable to a beginner.
+8. clarityScore measures clarity and completeness.
+9. Reply mainly in the user's language while preserving useful English technical terms.
 
 Return schema-valid JSON only.`,
-    user:JSON.stringify({topic:session.topic,history,currentExplanation:explanation})
-  };
+        user:JSON.stringify({topic:session.topic,currentExplanation:explanation})
+      }
+    : {
+        name:"feynman_followup",
+        schema:feynmanFollowupSchema,
+        model:fastModel,
+        system:`You are the fast follow-up stage of a Feynman-method tutor.
+Judge ONLY the learner's newest answer using the short recent history.
 
-  const data=await generateStructured({...analysisRequest,provider:aiProvider});
+Be brief and fast:
+1. Say whether the newest answer resolves the previous question; correct at most ONE important mistake.
+2. strengths: at most 2 short points.
+3. gaps: at most 1 short remaining conceptual gap.
+4. Ask exactly ONE next question only if a meaningful gap remains.
+5. status="mastered" when the core idea is now accurate and causally coherent.
+6. Keep studentReply concise; do not lecture or restate the whole conversation.
+7. Reply mainly in the user's language.
+
+Return schema-valid JSON only.`,
+        user:JSON.stringify({topic:session.topic,history,currentAnswer:explanation})
+      };
+
+  const rawData=await generateStructured({...analysisRequest,provider:aiProvider});
+  const data=firstTurn
+    ? rawData
+    : {
+        ...rawData,
+        understood:rawData.studentReply||"",
+        strengths:rawData.strengths||[],
+        gaps:rawData.gaps||[]
+      };
 
   let feynmanFsrsRating=null;
   let updatedCard=null;
