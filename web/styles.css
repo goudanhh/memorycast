@@ -205,6 +205,23 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}input,te
   cursor:pointer;
   box-shadow:0 18px 60px rgba(0,0,0,.28);
 }
+.walkman-repeat{
+  min-width:100px;
+  height:56px;
+  border:1px solid rgba(255,255,255,.28);
+  border-radius:16px;
+  background:rgba(255,255,255,.10);
+  color:#fff;
+  font-size:18px;
+  font-weight:850;
+  cursor:pointer;
+  backdrop-filter:blur(8px);
+}
+.walkman-repeat.active{
+  background:#fff;
+  color:#0f172a;
+  border-color:#fff;
+}
 .walkman-rate{
   width:110px;
   min-width:110px;
@@ -224,6 +241,7 @@ body.walkman .walkman-mode{visibility:visible}
   .walkman-lyrics{width:94vw;height:48vh}.walkman-lyrics-track{padding:120px 6px}.walkman-lyric{min-height:64px;font-size:22px;padding:8px 10px}.walkman-lyric.active{font-size:32px}
   .walkman-controls{gap:16px}
   .walkman-play{width:84px;height:84px;font-size:34px}
+  .walkman-repeat{min-width:92px;height:52px;font-size:16px}
   .walkman-rate{width:104px;min-width:104px;text-align:center}
 }
 
@@ -279,6 +297,13 @@ body.walkman .walkman-mode{visibility:visible}
     height:44px;
     font-size:20px;
     box-shadow:0 6px 18px rgba(0,0,0,.24);
+  }
+  .walkman-repeat{
+    min-width:58px;
+    height:40px;
+    padding:0 6px;
+    border-radius:10px;
+    font-size:12px;
   }
   .walkman-rate{
     width:66px;
