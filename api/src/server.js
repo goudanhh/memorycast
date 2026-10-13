@@ -1440,11 +1440,11 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     }
   }
 
-  // Keep enough candidate cards for variety, but avoid sending 30 full cards
-  // (and all attachment text) to the model when the quiz only needs 5-10 items.
+  // Keep a small candidate pool: enough variety for the requested quiz while
+  // avoiding huge prompts on free/slow providers.
   const sourceRows=selectedRows.slice(0,Math.min(
     selectedRows.length,
-    Math.max(count*2,12)
+    Math.max(count+2,8)
   ));
 
   // Fetch text attachment context for all candidate notes in ONE query instead
@@ -1463,14 +1463,13 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     for(const a of ar.rows){
       const key=String(a.note_id);
       const list=attachmentsByNote.get(key)||[];
-      if(list.length<6){
+      if(list.length<2){
         list.push({
           id:a.id,
           name:a.original_name,
           mimeType:a.mime_type,
-          // 2k is ample context for quiz generation and substantially reduces
-          // request size for image/PDF-heavy notes.
-          extractedText:String(a.extracted_text||"").slice(0,2000)
+          // Keep only concise attachment context for quiz generation.
+          extractedText:String(a.extracted_text||"").slice(0,1000)
         });
         attachmentsByNote.set(key,list);
       }
@@ -1510,7 +1509,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
       ORDER BY
         CASE WHEN is_generated=TRUE AND page_number IS NOT NULL THEN 0 ELSE 1 END,
         RANDOM()
-      LIMIT 8
+      LIMIT 4
     `,[uid,noteIds.map(String)]);
 
     const cardByNote=new Map();
@@ -1524,12 +1523,14 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
       const card=cardByNote.get(String(a.note_id));
       if(!card)continue;
       visualCandidates.push({card,attachment:a});
-      if(visualCandidates.length>=6)break;
+      if(visualCandidates.length>=3)break;
     }
   }
 
-  const visualTarget=Math.min(2,Math.max(0,Math.floor(count/3)),visualCandidates.length);
-  const regularTarget=Math.max(0,count-visualTarget);
+  // At most one image question per generated quiz. Visual calls are the
+  // slowest path, so keep them optional and never let them dominate latency.
+  const visualTarget=Math.min(1,Math.max(0,Math.floor(count/3)),visualCandidates.length);
+  const regularRequestTarget=count;
 
   const makeVisualQuestion=async item=>{
     const v=await generateVisualStructured({
@@ -1557,7 +1558,7 @@ Return schema-valid JSON only.`,
           name:item.attachment.original_name,
           pageNumber:item.attachment.page_number||null,
           generatedFromPdf:item.attachment.is_generated===true,
-          extractedText:String(item.attachment.extracted_text||"").slice(0,2000)
+          extractedText:String(item.attachment.extracted_text||"").slice(0,1000)
         }
       })
     });
@@ -1572,11 +1573,12 @@ Return schema-valid JSON only.`,
     };
   };
 
-  const regularPromise=regularTarget>0
+  const regularPromise=regularRequestTarget>0
     ? generateStructured({
         provider:quizProvider,
         name:"memorycast_quiz",
         schema:watchMode?watchQuizSchema:quizSchema,
+        maxTokens:Math.min(7000,1200+regularRequestTarget*450),
         system:`Generate a rigorous but fair adaptive study quiz only from the supplied cards.
 ${watchMode
   ?"Apple Watch mode: generate ONLY MCQ questions. Every question must have exactly 4 plausible choices. Do not generate fill, short-answer, or listening questions."
@@ -1599,20 +1601,27 @@ A single card may contain a whole note: generate distinct questions from differe
 If a card includes attachments, their extractedText is part of the allowed source context. Use it when relevant, especially for image/PDF-derived notes.
 Do not invent visual facts that are not present in the extracted attachment text.
 Do not simply copy the card front as the answer cue.
+Keep explanations concise: normally one short sentence per question.
 Return only schema-valid JSON.`,
-        user:JSON.stringify({count:regularTarget,mode,cards:source})
+        user:JSON.stringify({count:regularRequestTarget,mode,cards:source})
       })
     : Promise.resolve({questions:[]});
 
-  // The regular quiz request and visual requests now run concurrently.
+  // Start visual work in parallel, but do not let slow image generation hold
+  // the normal quiz hostage. Once the regular quiz is ready, visual work gets
+  // only a short grace period.
   const visualPromises=visualCandidates
     .slice(0,visualTarget)
     .map(item=>makeVisualQuestion(item));
+  const visualBatch=Promise.allSettled(visualPromises);
 
-  const [regularResult,visualResults]=await Promise.all([
-    regularPromise,
-    Promise.allSettled(visualPromises)
-  ]);
+  const regularResult=await regularPromise;
+  const visualResults=visualPromises.length
+    ? await Promise.race([
+        visualBatch,
+        new Promise(resolve=>setTimeout(()=>resolve([]),5000))
+      ])
+    : [];
 
   const visualQuestions=visualResults
     .filter(x=>x.status==="fulfilled")
@@ -1625,22 +1634,11 @@ Return only schema-valid JSON.`,
   }
 
   const allowed=new Set(source.map(x=>x.id));
-  let regularQuestions=(regularResult.questions||[])
+  const regularLimit=Math.max(0,count-visualQuestions.length);
+  const regularQuestions=(regularResult.questions||[])
     .filter(q=>allowed.has(q.cardId))
-    .slice(0,regularTarget)
+    .slice(0,regularLimit)
     .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
-
-  // If a visual request fails, top up only the missing slots by reusing valid
-  // regular questions already returned beyond the nominal visual reservation.
-  // Normally this branch does no additional AI call.
-  const missing=Math.max(0,count-(visualQuestions.length+regularQuestions.length));
-  if(missing>0){
-    const extras=(regularResult.questions||[])
-      .filter(q=>allowed.has(q.cardId))
-      .slice(regularTarget,regularTarget+missing)
-      .map(q=>({...q,id:crypto.randomUUID(),adaptive:false,visualAttachmentId:q.visualAttachmentId||""}));
-    regularQuestions=[...regularQuestions,...extras];
-  }
 
   const questions=[...visualQuestions,...regularQuestions]
     .sort(()=>Math.random()-.5)
