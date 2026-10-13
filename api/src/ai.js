@@ -57,7 +57,7 @@ function openaiModel() {
   return process.env.OPENAI_MODEL || "gpt-5.4-mini";
 }
 
-async function generateGeminiJson({ system, user, schema, modelOverride }) {
+async function generateGeminiJson({ system, user, schema, modelOverride, maxTokens }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     const e = new Error("GEMINI_API_KEY is not configured on the server.");
@@ -82,7 +82,8 @@ async function generateGeminiJson({ system, user, schema, modelOverride }) {
         }]
       }],
       generationConfig: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        ...(Number(maxTokens)>0?{maxOutputTokens:Number(maxTokens)}:{})
       }
     })
   });
@@ -121,7 +122,7 @@ async function generateGeminiJson({ system, user, schema, modelOverride }) {
   }
 }
 
-async function generateOpenAIJson({ system, user, schema, name, modelOverride }) {
+async function generateOpenAIJson({ system, user, schema, name, modelOverride, maxTokens }) {
   if (!process.env.OPENAI_API_KEY) {
     const e = new Error("OPENAI_API_KEY is not configured on the server.");
     e.statusCode = 503;
@@ -142,7 +143,8 @@ async function generateOpenAIJson({ system, user, schema, name, modelOverride })
         strict: true,
         schema
       }
-    }
+    },
+    ...(Number(maxTokens)>0?{max_output_tokens:Number(maxTokens)}:{})
   });
 
   return JSON.parse(response.output_text);
@@ -153,7 +155,7 @@ function stripJsonFence(value=""){
   return t.replace(/^\`\`\`(?:json)?\s*/i,"").replace(/\s*\`\`\`$/,"").trim();
 }
 
-async function generateCompatibleJson({providerName,system,user,schema,modelOverride}){
+async function generateCompatibleJson({providerName,system,user,schema,modelOverride,maxTokens}){
   let key,baseURL,model;
   if(providerName==="openrouter"){
     key=String(process.env.OPENROUTER_API_KEY||"").trim();
@@ -187,7 +189,8 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
         {role:"system",content:`${system}\n\nReturn JSON only. Follow this schema exactly: ${JSON.stringify(schema)}`},
         {role:"user",content:user}
       ],
-      temperature:0
+      temperature:0,
+      ...(Number(maxTokens)>0?{max_tokens:Number(maxTokens)}:{})
     })
   });
   const data=await response.json().catch(()=>({}));
@@ -208,14 +211,14 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
   }
 }
 
-export async function generateStructured({ system, user, schema, name, model, provider:providerOverride }) {
+export async function generateStructured({ system, user, schema, name, model, maxTokens, provider:providerOverride }) {
   const p = String(providerOverride || provider()).toLowerCase();
 
   const run=async chosen=>{
-    if (chosen === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model });
+    if (chosen === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model, maxTokens });
     if (chosen === "cloudflare" || chosen === "openrouter")
-      return generateCompatibleJson({providerName:chosen,system,user,schema,modelOverride:model});
-    if (chosen === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model });
+      return generateCompatibleJson({providerName:chosen,system,user,schema,modelOverride:model,maxTokens});
+    if (chosen === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model, maxTokens });
     const e = new Error("No supported AI provider is configured.");e.statusCode=503;throw e;
   };
 
