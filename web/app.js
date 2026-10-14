@@ -38,8 +38,14 @@ async function api(path,opts={}){
   }
   if(res.status===401){showLogin();throw new Error("请先登录")}
   if(!res.ok){
-    if(res.status===504)throw new Error("AI 出题响应超时了。视觉题会自动降级，请重新生成一次。");
-    if(res.status===502||res.status===503)throw new Error("AI 服务暂时不可用，请稍后重试或切换 API。");
+    if(res.status===504){
+      if(path.startsWith("/ai/organize"))throw new Error("AI 整理笔记超时，请重试一次。");
+      if(path.startsWith("/quiz/generate"))throw new Error("AI 出题响应超时，请重新生成一次。");
+      throw new Error(data.error||"AI 请求超时，请重试一次。");
+    }
+    if(res.status===502||res.status===503){
+      throw new Error(data.error||"AI 服务暂时不可用，请稍后重试或切换 API。");
+    }
     throw new Error(data.error||("HTTP "+res.status));
   }
   return data;
