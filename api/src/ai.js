@@ -57,7 +57,7 @@ function openaiModel() {
   return process.env.OPENAI_MODEL || "gpt-5.4-mini";
 }
 
-async function generateGeminiJson({ system, user, schema, modelOverride, maxTokens }) {
+async function generateGeminiJson({ system, user, schema, modelOverride, maxTokens, timeoutMs }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     const e = new Error("GEMINI_API_KEY is not configured on the server.");
@@ -86,7 +86,7 @@ async function generateGeminiJson({ system, user, schema, modelOverride, maxToke
         ...(Number(maxTokens)>0?{maxOutputTokens:Number(maxTokens)}:{})
       }
     })
-  });
+  }, Number(timeoutMs)||35000);
 
   const data = await response.json();
   if (!response.ok) {
@@ -110,12 +110,8 @@ async function generateGeminiJson({ system, user, schema, modelOverride, maxToke
   }
 
   try{
-    return JSON.parse(stripJsonFence(text));
-  }catch(err){
-    const match=stripJsonFence(text).match(/\{[\s\S]*\}/);
-    if(match){
-      try{return JSON.parse(match[0]);}catch{}
-    }
+    return parseJsonRelaxed(text);
+  }catch{
     const e=new Error("Gemini returned invalid JSON.");
     e.statusCode=502;
     throw e;
@@ -155,7 +151,28 @@ function stripJsonFence(value=""){
   return t.replace(/^\`\`\`(?:json)?\s*/i,"").replace(/\s*\`\`\`$/,"").trim();
 }
 
-async function generateCompatibleJson({providerName,system,user,schema,modelOverride,maxTokens}){
+function parseJsonRelaxed(value){
+  let text=stripJsonFence(value)
+    .replace(/<think>[\s\S]*?<\/think>/gi,"")
+    .trim();
+
+  const candidates=[text];
+  const first=text.indexOf("{");
+  const last=text.lastIndexOf("}");
+  if(first>=0&&last>first)candidates.push(text.slice(first,last+1));
+
+  for(const candidate of candidates){
+    for(const variant of [
+      candidate,
+      candidate.replace(/,\s*([}\]])/g,"$1")
+    ]){
+      try{return JSON.parse(variant)}catch{}
+    }
+  }
+  throw new Error("invalid JSON");
+}
+
+async function generateCompatibleJson({providerName,system,user,schema,modelOverride,maxTokens,timeoutMs}){
   let key,baseURL,model;
   if(providerName==="openrouter"){
     key=String(process.env.OPENROUTER_API_KEY||"").trim();
@@ -192,7 +209,7 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
       temperature:0,
       ...(Number(maxTokens)>0?{max_tokens:Number(maxTokens)}:{})
     })
-  });
+  }, Number(timeoutMs)||35000);
   const data=await response.json().catch(()=>({}));
   if(!response.ok){
     const msg=data?.error?.message||data?.errors?.[0]?.message||`${providerName} API error (${response.status})`;
@@ -203,28 +220,34 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
     const e=new Error(`${providerName} returned an empty response.`);e.statusCode=502;throw e;
   }
   try{
-    return JSON.parse(stripJsonFence(text));
+    return parseJsonRelaxed(text);
   }catch{
-    const match=stripJsonFence(text).match(/\{[\s\S]*\}/);
-    if(match) return JSON.parse(match[0]);
     const e=new Error(`${providerName} returned invalid JSON.`);e.statusCode=502;throw e;
   }
 }
 
-export async function generateStructured({ system, user, schema, name, model, maxTokens, provider:providerOverride }) {
+export async function generateStructured({ system, user, schema, name, model, maxTokens, timeoutMs, provider:providerOverride }) {
   const p = String(providerOverride || provider()).toLowerCase();
 
-  const run=async chosen=>{
-    if (chosen === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model, maxTokens });
+  const run=async(chosen,requestTimeoutMs=timeoutMs)=>{
+    if (chosen === "gemini") return generateGeminiJson({ system, user, schema, modelOverride:model, maxTokens, timeoutMs:requestTimeoutMs });
     if (chosen === "cloudflare" || chosen === "openrouter")
-      return generateCompatibleJson({providerName:chosen,system,user,schema,modelOverride:model,maxTokens});
+      return generateCompatibleJson({providerName:chosen,system,user,schema,modelOverride:model,maxTokens,timeoutMs:requestTimeoutMs});
     if (chosen === "openai") return generateOpenAIJson({ system, user, schema, name, modelOverride:model, maxTokens });
     const e = new Error("No supported AI provider is configured.");e.statusCode=503;throw e;
   };
 
-  if(p!=="auto") return run(p);
+  if(p!=="auto") return run(p,timeoutMs);
 
-  const order=["gemini","cloudflare","openrouter"];
+  // Fast failover for free providers. Gemini is tried first, OpenRouter second
+  // because it is usually a better structured-output fallback than Cloudflare.
+  const order=["gemini","openrouter","cloudflare"];
+  const autoTimeouts={
+    gemini:Number(process.env.AI_AUTO_GEMINI_TIMEOUT_MS||15000),
+    openrouter:Number(process.env.AI_AUTO_OPENROUTER_TIMEOUT_MS||18000),
+    cloudflare:Number(process.env.AI_AUTO_CLOUDFLARE_TIMEOUT_MS||15000)
+  };
+
   const failures=[];
   for(const chosen of order){
     const configured=
@@ -232,14 +255,32 @@ export async function generateStructured({ system, user, schema, name, model, ma
       chosen==="cloudflare" ? Boolean(process.env.CLOUDFLARE_API_KEY&&process.env.CLOUDFLARE_ACCOUNT_ID) :
       Boolean(process.env.OPENROUTER_API_KEY);
     if(!configured)continue;
-    try{return await run(chosen);}
-    catch(err){
-      failures.push(chosen+": "+(err?.message||String(err)));
-      console.warn("AI auto provider failed:",chosen,err?.message||err);
+
+    try{
+      return await run(chosen,autoTimeouts[chosen]);
+    }catch(err){
+      const message=err?.message||String(err);
+      failures.push({provider:chosen,message,status:Number(err?.statusCode||0)});
+      console.warn("AI auto provider failed:",chosen,message);
     }
   }
-  const e=new Error(failures.length?"所有免费 AI API 当前都不可用，请稍后重试。":"尚未配置可用的 AI API。");
-  e.statusCode=failures.length?502:503;
+
+  if(!failures.length){
+    const e=new Error("尚未配置可用的 AI API。");
+    e.statusCode=503;
+    throw e;
+  }
+
+  const short=failures.map(f=>{
+    const label=f.provider==="gemini"?"Gemini":f.provider==="openrouter"?"OpenRouter":"Cloudflare";
+    if(f.status===504||/超时|timeout/i.test(f.message))return label+" 超时";
+    if(f.status===503||/high demand|unavailable|overload/i.test(f.message))return label+" 高负载";
+    if(/invalid json/i.test(f.message))return label+" 输出格式错误";
+    return label+" 调用失败";
+  }).join("；");
+
+  const e=new Error("自动切换失败："+short+"。请稍后重试。");
+  e.statusCode=502;
   throw e;
 }
 
