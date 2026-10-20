@@ -2381,97 +2381,108 @@ Return schema-valid JSON only.`,
 
 app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
   const uid=userId(req);
+  const requestedDays=Number(req.query.days);
+  const days=[7,30,90].includes(requestedDays)?requestedDays:7;
+  const requestedTz=typeof req.query.tz==="string"?req.query.tz:"UTC";
+  let timeZone="UTC";
+  try{
+    if(requestedTz.length<=64){
+      new Intl.DateTimeFormat("en-US",{timeZone:requestedTz});
+      timeZone=requestedTz;
+    }
+  }catch{
+    // If an invalid timezone is supplied, use UTC instead.
+  }
+  const historyDays=Math.max(84,days*2);
+  const studyFilter=`
+    c.user_id=$1
+    AND (
+      c.source_note_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM notes n
+        WHERE n.id=c.source_note_id
+          AND n.user_id=c.user_id
+          AND n.study_enabled=TRUE
+      )
+    )
+  `;
 
-  const [cards, reviews, recent, categories, dailyReviews]=await Promise.all([
+  const [cards,reviews,quiz,categories,history,settingsResult]=await Promise.all([
     query(`
-      SELECT COUNT(*)::int AS n
+      SELECT COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE c.review_count>0)::int AS studied,
+             COUNT(*) FILTER (WHERE c.due<=NOW())::int AS due
       FROM cards c
-      WHERE c.user_id=$1
-        AND (
-          c.source_note_id IS NULL
-          OR EXISTS (
-            SELECT 1
-            FROM notes n
-            WHERE n.id=c.source_note_id
-              AND n.user_id=c.user_id
-              AND n.study_enabled=TRUE
-          )
-        )
-    `,[uid]),
-
-    query(`
-      SELECT COUNT(*)::int AS n
-      FROM reviews
-      WHERE user_id=$1
-    `,[uid]),
-
+      WHERE `+studyFilter,[uid]),
+    query("SELECT COUNT(*)::int AS total FROM reviews WHERE user_id=$1",[uid]),
     query(`
       SELECT
-        COUNT(*) FILTER (WHERE verdict='correct')::int AS correct,
-        COUNT(*) FILTER (WHERE source='quiz')::int AS quiz_total,
-        COUNT(*) FILTER (WHERE reviewed_at>=NOW()-INTERVAL '7 days')::int AS last7
-      FROM reviews
-      WHERE user_id=$1
+        COUNT(*) FILTER (WHERE source='quiz' AND verdict IN ('correct','partial','wrong'))::int AS total,
+        COUNT(*) FILTER (WHERE source='quiz' AND verdict='correct')::int AS correct
+      FROM reviews WHERE user_id=$1
     `,[uid]),
-
     query(`
-      SELECT
-        tag AS category,
-        COUNT(*)::int AS count,
-        AVG(COALESCE((c.fsrs->>'difficulty')::float,0)) AS avg_difficulty
-      FROM cards c,
-           LATERAL unnest(c.tags) AS tag
-      WHERE c.user_id=$1
-        AND (
-          c.source_note_id IS NULL
-          OR EXISTS (
-            SELECT 1
-            FROM notes n
-            WHERE n.id=c.source_note_id
-              AND n.user_id=c.user_id
-              AND n.study_enabled=TRUE
-          )
-        )
+      SELECT tag AS category,
+             COUNT(*)::int AS count,
+             AVG(COALESCE((c.fsrs->>'difficulty')::float,0)) AS avg_difficulty
+      FROM cards c, LATERAL unnest(c.tags) AS tag
+      WHERE `+studyFilter+`
         AND tag !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       GROUP BY tag
-      ORDER BY count DESC
+      ORDER BY count DESC, tag ASC
     `,[uid]),
-
     query(`
       WITH days AS (
-        SELECT generate_series(
-          CURRENT_DATE - INTERVAL '6 days',
-          CURRENT_DATE,
-          INTERVAL '1 day'
-        )::date AS day
+        SELECT ((NOW() AT TIME ZONE $2)::date - ($3::int - 1) + n)::date AS day
+        FROM generate_series(0,$3::int - 1) AS n
       )
-      SELECT
-        d.day,
-        COUNT(r.id)::int AS count
+      SELECT d.day, COUNT(r.id)::int AS count
       FROM days d
       LEFT JOIN reviews r
         ON r.user_id=$1
-       AND r.reviewed_at>=d.day
-       AND r.reviewed_at<d.day+INTERVAL '1 day'
+       AND r.reviewed_at >= (d.day::timestamp AT TIME ZONE $2)
+       AND r.reviewed_at < ((d.day + 1)::timestamp AT TIME ZONE $2)
       GROUP BY d.day
       ORDER BY d.day ASC
-    `,[uid])
+    `,[uid,timeZone,historyDays]),
+    query("SELECT daily_goal FROM user_settings WHERE user_id=$1",[uid])
   ]);
 
-  const quizTotal=recent.rows[0]?.quiz_total||0;
-  const correct=recent.rows[0]?.correct||0;
+  const allDays=history.rows.map(row=>({
+    date:row.day instanceof Date?row.day.toISOString().slice(0,10):String(row.day).slice(0,10),
+    count:Number(row.count||0)
+  }));
+  const dailyReviews=allDays.slice(-days);
+  const previousDays=allDays.slice(-days*2,-days);
+  const periodReviews=dailyReviews.reduce((sum,row)=>sum+row.count,0);
+  const previousPeriodReviews=previousDays.reduce((sum,row)=>sum+row.count,0);
+  const quizTotal=Number(quiz.rows[0]?.total||0);
+  const quizCorrect=Number(quiz.rows[0]?.correct||0);
+  let streakIndex=allDays.length-1;
+  if(streakIndex>=0&&allDays[streakIndex].count===0)streakIndex--;
+  let streak=0;
+  while(streakIndex>=0&&allDays[streakIndex].count>0){streak++;streakIndex--;}
 
   res.json({
-    cards:cards.rows[0]?.n||0,
-    reviews:reviews.rows[0]?.n||0,
-    last7:recent.rows[0]?.last7||0,
-    quizAccuracy:quizTotal?Math.round(correct/quizTotal*100):null,
+    cards:Number(cards.rows[0]?.total||0),
+    studiedCards:Number(cards.rows[0]?.studied||0),
+    dueCards:Number(cards.rows[0]?.due||0),
+    reviews:Number(reviews.rows[0]?.total||0),
+    last7:allDays.slice(-7).reduce((sum,row)=>sum+row.count,0),
+    quizAccuracy:quizTotal?Math.round(quizCorrect/quizTotal*100):null,
+    quizTotal,
+    dailyGoal:Number(settingsResult.rows[0]?.daily_goal||20),
+    todayReviews:allDays[allDays.length-1]?.count||0,
+    periodDays:days,
+    periodReviews,
+    previousPeriodReviews,
+    activeDays:dailyReviews.filter(row=>row.count>0).length,
+    streak,
+    streakCapped:streak===allDays.length&&allDays.length===84,
+    timeZone,
     categories:categories.rows,
-    dailyReviews:dailyReviews.rows.map(r=>({
-      date:r.day,
-      label:new Date(r.day).toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"}),
-      count:Number(r.count||0)
-    }))
+    dailyReviews,
+    heatmap:allDays.slice(-84)
   });
 }));
 
