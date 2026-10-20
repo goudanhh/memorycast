@@ -1733,83 +1733,173 @@ async function submitFeynman(){
   }
 }
 
+const statsState={days:7,requestId:0,categories:[],showAllCategories:false};
+
+function statsDateLabel(date){
+  const parts=String(date||"").slice(0,10).split("-");
+  return parts.length===3?Number(parts[1])+"/"+Number(parts[2]):String(date||"");
+}
+
 function renderReviewTrend(rows=[]){
   const box=$("reviewTrendChart");
   if(!box)return;
-  if(!rows.length){box.innerHTML='<div class="muted">暂无近 7 天复习记录。</div>';return;}
-
-  const values=rows.map(x=>Number(x.count||0));
-  const max=Math.max(1,...values);
-  const width=700;
-  const height=220;
-  const padX=38;
-  const padTop=24;
-  const padBottom=38;
-  const plotW=width-padX*2;
-  const plotH=height-padTop-padBottom;
-
-  const pts=rows.map((x,i)=>{
-    const px=rows.length<=1
-      ? width/2
-      : padX+(plotW*i/(rows.length-1));
-    const py=padTop+plotH-(Number(x.count||0)/max)*plotH;
-    return {x:px,y:py,count:Number(x.count||0),label:x.label||""};
-  });
-
-  const polyline=pts.map(p=>p.x.toFixed(1)+","+p.y.toFixed(1)).join(" ");
-  const grid=[0,.25,.5,.75,1].map(r=>{
-    const y=padTop+plotH*(1-r);
-    return '<line x1="'+padX+'" y1="'+y+'" x2="'+(width-padX)+'" y2="'+y+'" class="trend-grid"/>';
+  if(!rows.length){box.innerHTML='<p class="insights-empty">暂无复习记录。</p>';return;}
+  const width=720,height=232,left=30,right=24,top=27,bottom=38;
+  const counts=rows.map(x=>Math.max(0,Number(x.count)||0));
+  const max=Math.max(1,...counts),plotW=width-left-right,plotH=height-top-bottom;
+  const points=counts.map((count,i)=>({
+    x:left+(rows.length===1?plotW/2:i*plotW/(rows.length-1)),
+    y:top+plotH-count/max*plotH,count,date:rows[i].date
+  }));
+  const path=points.map((p,i)=>(i?"L":"M")+p.x.toFixed(2)+","+p.y.toFixed(2)).join(" ");
+  const floor=top+plotH,first=points[0],last=points[points.length-1];
+  const area=path+" L"+last.x.toFixed(2)+","+floor+" L"+first.x.toFixed(2)+","+floor+" Z";
+  const grid=[0,.25,.5,.75,1].map(v=>{
+    const y=top+plotH*(1-v);
+    return '<line class="insights-trend-grid" x1="'+left+'" x2="'+(width-right)+'" y1="'+y+'" y2="'+y+'"/>';
   }).join("");
-
-  const dots=pts.map(p=>
-    '<g>'+
-      '<circle cx="'+p.x+'" cy="'+p.y+'" r="5" class="trend-dot"></circle>'+
-      '<text x="'+p.x+'" y="'+Math.max(14,p.y-10)+'" text-anchor="middle" class="trend-value">'+p.count+'</text>'+
-      '<text x="'+p.x+'" y="'+(height-10)+'" text-anchor="middle" class="trend-label">'+esc(p.label)+'</text>'+
-    '</g>'
-  ).join("");
-
-  box.innerHTML=
-    '<div class="trend-chart-wrap">'+
-      '<svg class="trend-chart" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="近 7 天复习趋势折线图">'+
-        grid+
-        '<polyline points="'+polyline+'" class="trend-line"></polyline>'+
-        dots+
-      '</svg>'+
-    '</div>';
+  const step=rows.length<=7?1:Math.ceil((rows.length-1)/6);
+  const labels=points.map((p,i)=>(i%step===0||i===points.length-1)
+    ?'<text class="insights-trend-label" x="'+p.x+'" y="'+(height-12)+'" text-anchor="middle">'+esc(statsDateLabel(p.date))+'</text>'
+    :"").join("");
+  const dots=points.map((p,i)=>{
+    const visible=rows.length<=14||i===points.length-1;
+    return '<circle class="insights-trend-dot'+(visible?" visible":"")+'" cx="'+p.x+'" cy="'+p.y+'" r="'+(visible?4:9)+'"><title>'+esc(p.date)+' · '+p.count+' 次</title></circle>';
+  }).join("");
+  box.innerHTML='<div class="insights-trend-container"><svg class="insights-trend-svg" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="最近'+statsState.days+'天每日复习与测试次数趋势图">'+
+    '<defs><linearGradient id="insightsTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5b76ed" stop-opacity=".24"/><stop offset="100%" stop-color="#5b76ed" stop-opacity="0"/></linearGradient></defs>'+
+    grid+'<path class="insights-trend-area" d="'+area+'"/><path class="insights-trend-path" d="'+path+'"/>'+dots+labels+'</svg></div>';
 }
 
 function renderCategoryChart(rows=[]){
   const box=$("categoryChart");
   if(!box)return;
   const top=rows.slice(0,8);
-  if(!top.length){box.innerHTML='<div class="muted">暂无分类数据。</div>';return;}
-
-  const max=Math.max(1,...top.map(x=>Number(x.count||0)));
-  box.innerHTML='<div class="hbar-chart">'+top.map(x=>{
-    const count=Number(x.count||0);
-    const width=Math.max(4,Math.round(count/max*100));
-    return '<div class="hbar-row"><div class="hbar-name">'+esc(x.category)+'</div><div class="hbar-track"><div class="hbar-fill" style="width:'+width+'%"></div></div><div class="hbar-value">'+count+'</div></div>';
+  if(!top.length){box.innerHTML='<p class="insights-empty">还没有标签数据，添加知识卡片后会显示。</p>';return;}
+  const max=Math.max(1,...top.map(x=>Number(x.count)||0));
+  box.innerHTML='<div class="insights-hbars">'+top.map(x=>{
+    const count=Math.max(0,Number(x.count)||0);
+    return '<div class="insights-hbar-row"><div class="insights-hbar-label" title="'+esc(x.category)+'">'+esc(x.category)+'</div>'+
+      '<div class="insights-hbar-track"><div class="insights-hbar-fill" style="width:'+Math.round(count/max*100)+'%"></div></div>'+
+      '<span class="insights-hbar-value">'+count+'</span></div>';
   }).join("")+'</div>';
+}
+
+function renderStatsCategories(){
+  const rows=statsState.categories||[];
+  const container=$("categoryStats"),toggle=$("statsCategoryToggle");
+  if(!container||!toggle)return;
+  toggle.classList.toggle("hidden",rows.length<=8);
+  toggle.textContent=statsState.showAllCategories?"收起详情":"展开全部（"+rows.length+"）";
+  toggle.setAttribute("aria-expanded",statsState.showAllCategories?"true":"false");
+  const shown=statsState.showAllCategories?rows:rows.slice(0,8);
+  const max=Math.max(1,...rows.map(x=>Number(x.count)||0));
+  container.innerHTML=shown.map(x=>{
+    const count=Math.max(0,Number(x.count)||0),difficulty=Number(x.avg_difficulty||0);
+    return '<div class="insights-category-row"><div class="insights-category-name"><b>'+esc(x.category)+'</b>'+
+      '<span>平均 FSRS 难度 '+(Number.isFinite(difficulty)?difficulty.toFixed(2):"—")+'</span></div>'+
+      '<div class="insights-category-track"><div style="width:'+Math.round(count/max*100)+'%"></div></div>'+
+      '<strong>'+count+' 张</strong></div>';
+  }).join("")||'<p class="insights-empty">暂无分类数据。</p>';
+}
+
+function renderStatsCalendar(rows=[]){
+  const box=$("statsHeatmap");
+  if(!box)return;
+  const data=rows.slice(-84);
+  if(!data.length){box.innerHTML='<p class="insights-empty">暂无日历数据。</p>';return;}
+  const peak=Math.max(1,...data.map(x=>Number(x.count)||0));
+  const firstDate=new Date(String(data[0].date)+"T12:00:00Z");
+  const padding=Number.isNaN(firstDate.getTime())?0:(firstDate.getUTCDay()+6)%7;
+  const blanks=Array.from({length:padding},()=>'<span class="insights-calendar-blank" aria-hidden="true"></span>').join("");
+  const cells=data.map(x=>{
+    const count=Math.max(0,Number(x.count)||0);
+    const level=count===0?0:Math.min(4,Math.max(1,Math.ceil(count/peak*4)));
+    return '<span class="insights-calendar-cell" data-level="'+level+'" title="'+esc(x.date)+'：'+count+' 次"></span>';
+  }).join("");
+  box.innerHTML='<div class="insights-calendar-days" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>'+
+    '<div class="insights-calendar-grid" role="img" aria-label="最近12周学习活跃日历，颜色越深表示当日学习次数越多">'+blanks+cells+'</div>';
+  $("statsCalendarHint").textContent='近 84 天有 '+data.filter(x=>Number(x.count)>0).length+' 天留下学习记录';
+}
+
+function renderStatsHighlights(d){
+  const rows=d.dailyReviews||[];
+  const active=rows.filter(x=>Number(x.count)>0).length;
+  const best=rows.reduce((a,b)=>Number(b.count)>Number(a.count||0)?b:a,{count:0,date:""});
+  const streak=Number(d.streak||0),streakLabel=d.streakCapped?"≥"+streak:streak;
+  const items=[
+    {symbol:"◷",value:active+" 天",name:"活跃学习天数",hint:"所选 "+statsState.days+" 天内有学习记录"},
+    {symbol:"↝",value:streakLabel+" 天",name:"连续学习",hint:"允许今天尚未学习，最多追溯 84 天"},
+    {symbol:"▥",value:Number(d.dueCards||0)+" 张",name:"当前待复习",hint:"已到期的启用中知识卡片"},
+    {symbol:"★",value:Number(best.count)>0?best.count+" 次":"—",name:"阶段最佳单日",hint:Number(best.count)>0?statsDateLabel(best.date)+" 的复习 / 测试次数":"尚无记录"}
+  ];
+  $("statsHighlights").innerHTML=items.map(x=>'<div class="insights-highlight"><span aria-hidden="true">'+x.symbol+'</span><strong>'+esc(x.value)+'</strong><b>'+x.name+'</b><small>'+esc(x.hint)+'</small></div>').join("");
 }
 
 async function loadStats(){
   if(!me)return;
-  const d=await api("/stats");
-  $("homeCards").textContent=d.cards;
-  $("homeReviews").textContent=d.reviews;
-  $("homeAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";
-  $("statCards").textContent=d.cards;
-  $("statReviews").textContent=d.reviews;
-  $("statAccuracy").textContent=d.quizAccuracy==null?"—":d.quizAccuracy+"%";
-  $("statLast7").textContent=d.last7;
-
-  renderReviewTrend(d.dailyReviews||[]);
-  renderCategoryChart(d.categories||[]);
-
-  $("categoryStats").innerHTML=(d.categories||[]).map(x=>'<div class="card-item"><div><b>'+esc(x.category)+'</b><div class="muted">平均 FSRS difficulty '+Number(x.avg_difficulty||0).toFixed(2)+'</div></div><span class="chip">'+x.count+" 张</span></div>").join("")||'<div class="muted">暂无统计。</div>';
+  const requestId=++statsState.requestId;
+  const refresh=$("statsRefreshBtn");
+  if(refresh)refresh.disabled=true;
+  $("statsStatus").textContent="正在更新学习统计…";
+  try{
+    const tz=Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC";
+    const d=await api("/stats?"+new URLSearchParams({days:String(statsState.days),tz}).toString());
+    if(requestId!==statsState.requestId)return;
+    const cards=Number(d.cards||0),reviews=Number(d.reviews||0);
+    const accuracy=d.quizAccuracy==null?"—":d.quizAccuracy+"%";
+    $("homeCards").textContent=cards;
+    $("homeReviews").textContent=reviews;
+    $("homeAccuracy").textContent=accuracy;
+    $("statCards").textContent=cards.toLocaleString("zh-CN");
+    $("statReviews").textContent=reviews.toLocaleString("zh-CN");
+    $("statAccuracy").textContent=accuracy;
+    $("statCardsHint").textContent=Number(d.studiedCards||0)+" 张至少完成过一次复习";
+    $("statReviewsHint").textContent="包含普通复习和 AI 测试";
+    $("statAccuracyHint").textContent=Number(d.quizTotal||0)+" 次已判分 AI 测试";
+    $("statsRangeLabel").textContent="近 "+statsState.days+" 天学习次数";
+    const previous=Number(d.previousPeriodReviews||0),current=Number(d.periodReviews||0);
+    $("statLast7").textContent=current.toLocaleString("zh-CN");
+    const change=current-previous;
+    $("statLast7Hint").textContent=previous===0
+      ?(current===0?"本期和上期均无记录":"上期无记录，本期新增 "+current+" 次")
+      :(change===0?"与上期持平":(change>0?"比上期增加 ":"比上期减少 ")+Math.round(Math.abs(change)/previous*100)+"%");
+    $("statsTrendTitle").textContent="近 "+statsState.days+" 天复习趋势";
+    $("statsTrendSummary").textContent="日均 "+(current/statsState.days).toFixed(1)+" 次 · "+Number(d.activeDays||0)+" 个活跃日";
+    const today=Math.max(0,Number(d.todayReviews||0)),goal=Math.max(1,Number(d.dailyGoal||20));
+    const pct=Math.min(100,Math.round(today/goal*100));
+    $("statsGoalRing").style.setProperty("--goal-fill",pct+"%");
+    $("statsGoalRing").setAttribute("aria-valuenow",String(pct));
+    $("statsGoalPercent").textContent=pct+"%";
+    $("statsGoalCount").textContent=today+" / "+goal;
+    $("statsGoalHint").textContent=today>=goal?"今日目标已达成，继续保持！":"距离今日目标还差 "+(goal-today)+" 次。";
+    statsState.categories=d.categories||[];
+    renderReviewTrend(d.dailyReviews||[]);
+    renderCategoryChart(statsState.categories);
+    renderStatsCalendar(d.heatmap||[]);
+    renderStatsHighlights(d);
+    renderStatsCategories();
+    $("statsStatus").textContent="按 "+(d.timeZone||"UTC")+" 日期统计 · 刚刚更新";
+  }catch(error){
+    if(requestId!==statsState.requestId)return;
+    console.error("Failed to load learning statistics:",error);
+    $("statsStatus").textContent="加载失败："+(error?.message||"请检查网络")+"。可以点击刷新重试。";
+  }finally{
+    if(requestId===statsState.requestId&&refresh)refresh.disabled=false;
+  }
 }
+
+function changeStatsPeriod(days){
+  if(![7,30,90].includes(days)||days===statsState.days)return;
+  statsState.days=days;
+  document.querySelectorAll("[data-stats-period]").forEach(button=>{
+    const active=Number(button.dataset.statsPeriod)===days;
+    button.classList.toggle("active",active);
+    button.setAttribute("aria-pressed",active?"true":"false");
+  });
+  loadStats();
+}
+
 async function loadSettings(){
   settings=await api("/settings");
   $("retentionSetting").value=String(Number(settings.fsrs_retention).toFixed(2));
@@ -3315,6 +3405,9 @@ $("newCardBtn").onclick=openNew;
 $("modalClose").onclick=()=>$("modal").classList.add("hidden");$("modalSave").onclick=saveModal;$("organizeBtn").onclick=organize;$("saveGeneratedBtn").onclick=saveGenerated;
 $("generateQuizBtn").onclick=()=>generateQuiz();$("submitQuizBtn").onclick=submitQuiz;document.querySelectorAll("[data-confidence]").forEach(b=>b.onclick=()=>setQuizConfidence(b.dataset.confidence));$("nextQuizBtn").onclick=()=>{quizIndex++;renderQuiz()};$("listenQuizBtn").onclick=replayQuizAudio;$("voiceNoteBtn").onclick=toggleVoiceNote;$("photoOcrBtn").onclick=()=>$("photoOcrInput").click();$("photoOcrInput").onchange=e=>handleMediaFiles(e.target.files);setupImportMediaDropPaste();$("feynmanMicBtn").onclick=toggleFeynmanMic;$("submitFeynmanBtn").onclick=submitFeynman;$("clearFeynmanInputBtn").onclick=()=>{$("feynmanInput").value="";feynmanRecognitionBase=""};$("resetFeynmanBtn").onclick=resetFeynman;$("randomFeynmanTopicBtn").onclick=chooseAnotherFeynmanTopic;$("speakFeynmanQuestionBtn").onclick=()=>{if(feynmanLastQuestion)speakOne(feynmanLastQuestion)};$("saveSettingsBtn").onclick=saveSettings;$("pushToggleBtn").onclick=togglePush;$("englishVoice").onchange=()=>localStorage.setItem("memorycast_en_voice",$("englishVoice").value);$("chineseVoice").onchange=()=>localStorage.setItem("memorycast_zh_voice",$("chineseVoice").value);$("englishVoiceStyle").onchange=()=>localStorage.setItem("memorycast_en_voice_style",$("englishVoiceStyle").value);$("chineseVoiceStyle").onchange=()=>localStorage.setItem("memorycast_zh_voice_style",$("chineseVoiceStyle").value);$("noteSearch").oninput=()=>{notePage=1;renderNotes()};
 $("notePrevPage").onclick=()=>{if(notePage>1){notePage--;renderNotes()}};
+document.querySelectorAll("[data-stats-period]").forEach(button=>button.onclick=()=>changeStatsPeriod(Number(button.dataset.statsPeriod)));
+$("statsRefreshBtn").onclick=loadStats;
+$("statsCategoryToggle").onclick=()=>{statsState.showAllCategories=!statsState.showAllCategories;renderStatsCategories()};
 $("noteNextPage").onclick=()=>{notePage++;renderNotes()};$("speakNoteBtn").onclick=speakSelectedNote;$("markNoteReviewedBtn").onclick=markSelectedNoteReviewed;$("editNoteBtn").onclick=openNoteEdit;$("toggleNoteStudyBtn").onclick=toggleCurrentNoteStudy;$("deleteNoteBtn").onclick=deleteCurrentNote;$("noteModalClose").onclick=()=>$("noteModal").classList.add("hidden");$("noteModalSave").onclick=saveNoteEdit;
 $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRepeatBtn").onclick=toggleWalkmanRepeatTen;$("walkmanRate").onchange=()=>{
   const wasPlaying=walkmanPlaying;
