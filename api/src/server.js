@@ -2478,7 +2478,7 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
     previousPeriodReviews,
     activeDays:dailyReviews.filter(row=>row.count>0).length,
     streak,
-    streakCapped:streak===allDays.length&&allDays.length===84,
+    streakCapped:streak===allDays.length,
     timeZone,
     categories:categories.rows,
     dailyReviews,
