@@ -1829,7 +1829,7 @@ function renderStatsHighlights(d){
   const streak=Number(d.streak||0),streakLabel=d.streakCapped?"≥"+streak:streak;
   const items=[
     {symbol:"◷",value:active+" 天",name:"活跃学习天数",hint:"所选 "+statsState.days+" 天内有学习记录"},
-    {symbol:"↝",value:streakLabel+" 天",name:"连续学习",hint:"允许今天尚未学习，最多追溯 84 天"},
+    {symbol:"↝",value:streakLabel+" 天",name:"连续学习",hint:"允许今天尚未学习，近期数据不足时显示下限"},
     {symbol:"▥",value:Number(d.dueCards||0)+" 张",name:"当前待复习",hint:"已到期的启用中知识卡片"},
     {symbol:"★",value:Number(best.count)>0?best.count+" 次":"—",name:"阶段最佳单日",hint:Number(best.count)>0?statsDateLabel(best.date)+" 的复习 / 测试次数":"尚无记录"}
   ];
