@@ -1319,7 +1319,57 @@ const listeningExamSchema={
   },
   required:["title","transcript","questions"],additionalProperties:false
 };
-const listeningExamSessions=new Map();
+// Persistent listening examinations: survive API restarts and never expire automatically.
+async function ensureListeningSessions(){
+  await query(`CREATE TABLE IF NOT EXISTS listening_exam_sessions (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    transcript TEXT NOT NULL,
+    questions JSONB NOT NULL,
+    level TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+    results JSONB,
+    vocabulary JSONB,
+    vocabulary_partial BOOLEAN NOT NULL DEFAULT FALSE,
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    graded BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await query("CREATE INDEX IF NOT EXISTS idx_listening_sessions_user_time ON listening_exam_sessions(user_id, created_at DESC)");
+}
+async function getListeningSession(id,uid){
+  if(!/^[0-9a-f-]{36}$/i.test(String(id||"")))return null;
+  await ensureListeningSessions();
+  const {rows}=await query("SELECT * FROM listening_exam_sessions WHERE id=$1 AND user_id=$2",[id,uid]);
+  const row=rows[0];
+  return row?{id:row.id,uid:row.user_id,title:row.title,transcript:row.transcript,questions:row.questions,level:row.level,topic:row.topic,answers:row.answers,results:row.results,vocabulary:row.vocabulary,vocabularyPartial:row.vocabulary_partial,graded:row.graded,durationSeconds:row.duration_seconds}:null;
+}
+app.get("/listening/sessions",requireAuth,asyncRoute(async(req,res)=>{
+  await ensureListeningSessions();
+  const {rows}=await query("SELECT id,title,level,topic,graded,created_at,updated_at FROM listening_exam_sessions WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100",[userId(req)]);
+  res.json({sessions:rows});
+}));
+app.get("/listening/session/:id",requireAuth,asyncRoute(async(req,res)=>{
+  const session=await getListeningSession(req.params.id,userId(req));
+  if(!session)return res.status(404).json({error:"未找到本次听力记录"});
+  const {questions,results}=session;
+  res.json({sessionId:session.id,title:session.title,level:session.level,topic:session.topic,graded:session.graded,answers:session.answers,
+    transcript:session.graded?session.transcript:undefined,results:session.graded?results:undefined,
+    questions:session.graded?questions:questions.map(({answer,explanation,...safe})=>safe)});
+}));
+app.post("/listening/progress",requireAuth,asyncRoute(async(req,res)=>{
+  const id=String(req.body?.sessionId||""),session=await getListeningSession(id,userId(req));
+  if(!session)return res.status(404).json({error:"听力记录不存在"});
+  if(session.graded)return res.status(409).json({error:"试卷已经提交"});
+  const raw=req.body?.answers;
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))return res.status(400).json({error:"答案格式无效"});
+  const answers=Object.fromEntries(session.questions.map(q=>[q.id,String(raw[q.id]||"").slice(0,1000)]));
+  await query("UPDATE listening_exam_sessions SET answers=$3::jsonb,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND graded=FALSE",[id,session.uid,JSON.stringify(answers)]);
+  res.json({ok:true});
+}));
 async function ensureListeningHistory(){
   await query(`CREATE TABLE IF NOT EXISTS listening_exam_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1387,16 +1437,17 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
   if(!transcript||questions.length!==5||questions.some(q=>!q.prompt||!q.answer||q.type!=="mcq"||q.choices.length!==4||!q.choices.includes(q.answer)))
     return res.status(502).json({error:"AI 生成的听力试卷不完整，请重新生成。"});
   const id=crypto.randomUUID();
-  for(const [key,value] of listeningExamSessions)if(value.expires<Date.now())listeningExamSessions.delete(key);
-  listeningExamSessions.set(id,{uid,transcript,questions,level,topic,expires:Date.now()+3600000});
+  await ensureListeningSessions();
+  await query("INSERT INTO listening_exam_sessions(id,user_id,title,transcript,questions,level,topic) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)",
+    [id,uid,String(data.title||"Listening Exam").slice(0,100),transcript,JSON.stringify(questions),level,topic]);
   res.json({sessionId:id,title:String(data.title||"Listening Exam").slice(0,100),transcriptLength:transcript.length,
     questions:questions.map(({answer,explanation,...safe})=>safe)});
 }));
 
 const listeningVocabSchema={type:"object",properties:{cards:{type:"array",items:{type:"object",properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},related:{type:"string"},ipa:{type:"string"},memoryMethod:{type:"string"},memoryTip:{type:"string"}},required:["front","lemma","inflection","back","example","related","ipa","memoryMethod","memoryTip"],additionalProperties:false}}},required:["cards"],additionalProperties:false};
 app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
-  const session=listeningExamSessions.get(String(req.body?.sessionId||""));
-  if(!session||session.uid!==userId(req)||session.expires<Date.now())return res.status(404).json({error:"本次听力已过期，请重新考试。"});
+  const session=await getListeningSession(String(req.body?.sessionId||""),userId(req));
+  if(!session)return res.status(404).json({error:"听力记录不存在。"});
   if(!session.graded)return res.status(403).json({error:"请先提交试卷。"});
   if(session.vocabulary)return res.json({cards:session.vocabulary,partial:Boolean(session.vocabularyPartial)});
   const provider=await featureProvider(session.uid,"ai_quiz_provider","gemini");
@@ -1426,12 +1477,14 @@ app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
   }
   session.vocabulary=gathered.slice(0,70);
   session.vocabularyPartial=settled.some(x=>x.status==="rejected");
-  res.json({cards:session.vocabulary});
+  await query("UPDATE listening_exam_sessions SET vocabulary=$3::jsonb,vocabulary_partial=$4,updated_at=NOW() WHERE id=$1 AND user_id=$2",
+    [session.id,session.uid,JSON.stringify(session.vocabulary),session.vocabularyPartial]);
+  res.json({cards:session.vocabulary,partial:session.vocabularyPartial});
 }));
 app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
-  const session=listeningExamSessions.get(String(req.body?.sessionId||""));
-  if(!session||session.uid!==userId(req)||session.expires<Date.now())
-    return res.status(404).json({error:"考试已过期，请重新生成。"});
+  const session=await getListeningSession(String(req.body?.sessionId||""),userId(req));
+  if(!session)return res.status(404).json({error:"听力记录不存在。"});
+  if(session.graded)return res.status(409).json({error:"本次考试已提交，请在历史记录中查看。"});
   const answers=req.body?.answers||{};
   const normalize=x=>String(x||"").trim().toLowerCase().replace(/[.,!?;:]/g,"").replace(/\\s+/g," ");
   const results=session.questions.map(q=>{
@@ -1449,17 +1502,15 @@ app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
     const content=wrong.map(r=>"题目："+r.prompt+"\\n你的答案："+r.submitted+"\\n正确答案："+r.answer+"\\n解析："+r.explanation).join("\\n\\n");
     await query("INSERT INTO notes(user_id,title,content,tags) VALUES($1,$2,$3,$4)",[session.uid,"TOEFL 听力错题 · "+new Date().toISOString().slice(0,10),"听力原文：\\n"+session.transcript+"\\n\\n"+content,["TOEFL","Listening","错题"]]);
   }
-  // Keep the graded session briefly so the original recording remains playable on the result page.
-  session.durationSeconds=durationSeconds;
-  session.graded=true;
-  session.expires=Date.now()+30*60*1000;
+  await query("UPDATE listening_exam_sessions SET answers=$3::jsonb,results=$4::jsonb,duration_seconds=$5,graded=TRUE,updated_at=NOW() WHERE id=$1 AND user_id=$2",
+    [session.id,session.uid,JSON.stringify(answers),JSON.stringify(results),durationSeconds]);
   res.json({score,total:results.length,results,transcript:session.transcript,savedWrong:wrong.length,durationSeconds});
 }));
 
 
 app.get("/listening/sentence-audio/:id/:index",requireAuth,asyncRoute(async(req,res)=>{
-  const session=listeningExamSessions.get(String(req.params.id||""));
-  if(!session||session.uid!==userId(req)||session.expires<Date.now()||!session.graded)return res.status(404).json({error:"音频不可用"});
+  const session=await getListeningSession(String(req.params.id||""),userId(req));
+  if(!session||!session.graded)return res.status(404).json({error:"音频不可用"});
   const sentences=session.transcript.match(/[^.!?]+[.!?]+(?:["']|$)?|[^.!?]+$/g)?.map(x=>x.trim()).filter(Boolean)||[];
   const index=Number(req.params.index);
   if(!Number.isInteger(index)||index<0||index>=sentences.length)return res.status(400).json({error:"句子序号无效"});
@@ -1467,9 +1518,8 @@ app.get("/listening/sentence-audio/:id/:index",requireAuth,asyncRoute(async(req,
   res.setHeader("Content-Type",result.mimeType||"audio/mpeg");res.setHeader("Cache-Control","private, no-store");res.send(result.audio);
 }));
 app.get("/listening/audio/:id",requireAuth,asyncRoute(async(req,res)=>{
-  const session=listeningExamSessions.get(String(req.params.id||""));
-  if(!session||session.uid!==userId(req)||session.expires<Date.now())
-    return res.status(404).json({error:"听力试卷已过期"});
+  const session=await getListeningSession(String(req.params.id||""),userId(req));
+  if(!session)return res.status(404).json({error:"听力记录不存在"});
   const result=await synthesizeTimedTts([{parts:[{text:session.transcript,language:"en-US",style:"natural",rate:1}]}],{format:"mp3"});
   res.setHeader("Content-Type",result.mimeType||"audio/mpeg");
   res.setHeader("Cache-Control","private, no-store");
