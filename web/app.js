@@ -3484,6 +3484,8 @@ function listeningResetAudio(){
 }
 async function listeningGenerate(){
   listeningTimerReset();
+  if(listeningTrainingAudio){listeningTrainingAudio.pause();listeningTrainingAudio=null;}
+  if(listeningRecognition){listeningRecognition.abort();listeningRecognition=null;}
   listeningResetAudio();
   const previousResultAudio=$("listeningResultAudio");if(previousResultAudio)previousResultAudio.pause();
   const btn=$("listeningGenerate");btn.disabled=true;
@@ -3542,7 +3544,7 @@ async function listeningSubmit(){
   if(Object.values(answers).some(x=>!String(x).trim()))return alert("请先完成全部题目");
   const btn=$("listeningSubmit");btn.disabled=true;
   try{
-    const d=await api("/listening/grade",{method:"POST",body:JSON.stringify({sessionId:listeningSession.sessionId,answers})});
+    const d=await api("/listening/grade",{method:"POST",body:JSON.stringify({sessionId:listeningSession.sessionId,answers,durationSeconds:Math.round(listeningTimerElapsed+(listeningTimerStartedAt?(Date.now()-listeningTimerStartedAt)/1000:0))})});
     listeningTimerFreeze();
     listeningResetAudio();
     const completedListeningSessionId=listeningSession.sessionId;
@@ -3555,11 +3557,13 @@ async function listeningSubmit(){
       '<audio id="listeningResultAudio" controls preload="none" style="width:100%;max-width:780px"></audio>'+
       '<p id="listeningResultAudioStatus" class="muted">点击播放，复听完整原文。</p></div>'+
       '<h3>听力原文（答案依据已标注）</h3><div id="listeningMarkedTranscript" class="listening-marked-transcript"></div>'+
+      '<section id="listeningTraining" style="margin:24px 0;border-top:1px solid #dbe3ef;padding-top:20px"></section>'+
       '<section id="listeningVocabulary" style="margin-top:28px;border-top:1px solid #dbe3ef;padding-top:22px">'+
       '<h3>📚 听力重点词汇与拓展词汇</h3><p class="muted">自动整理释义、例句及相关表达；勾选后批量加入 MemoryCast 复习卡片。</p>'+
       '<div id="listeningVocabularyStatus">正在提取重点词汇…</div><div id="listeningVocabularyList"></div>'+
       '<button type="button" id="listeningVocabImport" class="btn dark" disabled>一键导入选中卡片</button></section></div>';
     renderListeningEvidence(d.transcript,d.results);
+    renderListeningTraining(completedListeningSessionId,d.transcript,d.results);
     const resultAudio=$("listeningResultAudio");
     resultAudio.src="/api/listening/audio/"+encodeURIComponent(completedListeningSessionId);
     resultAudio.addEventListener("error",()=>{
@@ -3574,6 +3578,56 @@ async function listeningSubmit(){
 }
 
 
+
+let listeningTrainingAudio=null,listeningRecognition=null;
+function listeningWords(text){return String(text||"").toLowerCase().replace(/[^a-z' ]/g," ").split(/\\s+/).filter(Boolean)}
+function listeningSimilarity(expected,actual){
+  const a=listeningWords(expected),b=listeningWords(actual),dp=Array.from({length:a.length+1},()=>Array(b.length+1).fill(0));
+  for(let i=0;i<=a.length;i++)dp[i][0]=i;
+  for(let k=0;k<=b.length;k++)dp[0][k]=k;
+  for(let i=1;i<=a.length;i++)for(let k=1;k<=b.length;k++)dp[i][k]=Math.min(dp[i-1][k]+1,dp[i][k-1]+1,dp[i-1][k-1]+(a[i-1]===b[k-1]?0:1));
+  return {score:Math.round(100*(1-dp[a.length][b.length]/Math.max(1,a.length,b.length))),expected:a.length};
+}
+function renderListeningTraining(sessionId,transcript,results){
+  const root=$("listeningTraining");if(!root)return;
+  const sentences=(transcript.match(/[^.!?]+[.!?]+(?:["']|$)?|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
+  const weak=results.filter(r=>!r.correct).map(r=>r.skill);
+  root.innerHTML='<h3>🎯 错题诊断与精听训练</h3><p class="muted">错题能力点：'+esc(weak.length?weak.join("、"):"本次全部答对。可以继续做精听巩固。")+'。诊断基于题型和作答结果，不等同于准确识别错误原因。</p>'+
+    '<p class="muted">逐句复听采用单句重新合成的语音，不是原始整段录音的精确时间轴。</p>'+
+    '<div id="listeningSentenceList">'+sentences.map((sentence,i)=>'<div class="quiz-card" style="margin:10px 0;padding:14px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="ghost" data-li-sentence="'+i+'">▶ 第'+(i+1)+'句</button><button class="ghost" data-li-loop="'+i+'">↻ 单句循环</button><button class="ghost" data-li-shadow="'+i+'">🎙 跟读</button></div><p>'+esc(sentence)+'</p><input data-li-dictation="'+i+'" placeholder="听写这一句（可先不看原文）" style="width:100%"><button class="ghost" data-li-check="'+i+'">检查听写</button><div class="muted" data-li-feedback="'+i+'"></div></div>').join("")+'</div>'+
+    '<p id="listeningTrainingStatus" class="muted">跟读需要浏览器支持语音识别并授权麦克风。评分仅比较转写文字，不代表发音准确度。</p>'+
+    '<button class="btn dark" id="listeningRetest">🔄 生成新材料，复测薄弱点</button>';
+  let looping=-1;
+  const audio=new Audio();listeningTrainingAudio=audio;
+  audio.onended=()=>{if(looping>=0){audio.currentTime=0;audio.play().catch(()=>{looping=-1})}};
+  async function playSentence(i,loop=false){
+    if(looping===i&&loop){looping=-1;audio.pause();return}
+    looping=loop?i:-1;audio.pause();
+    const status=$("listeningTrainingStatus");status.textContent="正在准备第 "+(i+1)+" 句音频…";
+    try{audio.src="/api/listening/sentence-audio/"+encodeURIComponent(sessionId)+"/"+i;await audio.play();status.textContent=loop?"正在循环第 "+(i+1)+" 句；再次点击循环按钮停止。":"正在播放第 "+(i+1)+" 句";}
+    catch(e){status.textContent="播放失败："+e.message}
+  }
+  root.querySelectorAll("[data-li-sentence]").forEach(b=>b.onclick=()=>playSentence(Number(b.dataset.liSentence)));
+  root.querySelectorAll("[data-li-loop]").forEach(b=>b.onclick=()=>playSentence(Number(b.dataset.liLoop),true));
+  root.querySelectorAll("[data-li-check]").forEach(b=>b.onclick=()=>{
+    const i=Number(b.dataset.liCheck),input=root.querySelector('[data-li-dictation="'+i+'"]'),feedback=root.querySelector('[data-li-feedback="'+i+'"]');
+    const v=listeningSimilarity(sentences[i],input.value);feedback.textContent="词序匹配约 "+v.score+"%（仅供练习参考）；原句："+sentences[i];
+  });
+  root.querySelectorAll("[data-li-shadow]").forEach(b=>b.onclick=()=>{
+    const i=Number(b.dataset.liShadow),SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+    const status=$("listeningTrainingStatus");
+    if(!SpeechRecognition){status.textContent="当前浏览器不支持语音识别，可使用听写练习。";return}
+    if(listeningRecognition)listeningRecognition.abort();
+    audio.pause();looping=-1;
+    const rec=new SpeechRecognition();listeningRecognition=rec;rec.lang="en-US";rec.interimResults=false;
+    rec.onresult=e=>{const heard=e.results[0][0].transcript,v=listeningSimilarity(sentences[i],heard);status.textContent="识别到："+heard+"。与原句的词序匹配约 "+v.score+"%；这不是发音评分。"};
+    rec.onerror=e=>{status.textContent="语音识别失败："+e.error};
+    rec.onend=()=>{if(listeningRecognition===rec)listeningRecognition=null};
+    try{rec.start();status.textContent="请跟读第 "+(i+1)+" 句…"}catch(e){status.textContent=e.message}
+  });
+  $("listeningRetest").onclick=()=>{audio.pause();looping=-1;listeningGenerate()};
+}
+
 let listeningVocabCards=[];
 async function loadListeningVocabulary(sessionId){
   const status=$("listeningVocabularyStatus"),list=$("listeningVocabularyList"),importBtn=$("listeningVocabImport");
@@ -3587,12 +3641,12 @@ async function loadListeningVocabulary(sessionId){
     list.innerHTML=listeningVocabCards.map((v,i)=>{
       const exists=known.has(v.front.toLowerCase());
       return '<label style="display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e1e7ef;border-radius:12px;margin:10px 0;cursor:pointer">'+
-        '<input type="checkbox" data-listening-vocab="'+i+'" '+(exists?'disabled':'checked')+' style="width:20px;height:20px;margin-top:4px;flex-shrink:0">'+
+        '<input type="checkbox" data-listening-vocab="'+i+'" '+(exists?'disabled':'')+' style="width:20px;height:20px;margin-top:4px;flex-shrink:0">'+
         '<span><strong style="font-size:19px">'+esc(v.front)+'</strong> <small>'+esc(v.related)+(exists?' · 已在知识库':'')+'</small>'+
         '<div style="font-size:17px;line-height:1.65">'+esc(v.back)+'</div><div class="muted">'+esc(v.example)+'</div>'+
         (v.memoryTip?'<div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff7e6;color:#654313;font-size:16px;line-height:1.6">🧠 '+esc(v.memoryMethod)+'：'+esc(v.memoryTip)+'</div>':'')+'</span></label>';
     }).join("");
-    status.textContent="共整理 "+listeningVocabCards.length+" 个词汇；已存在的卡片不会重复导入。";
+    status.textContent="共整理 "+listeningVocabCards.length+" 个词汇。默认不导入，勾选真正需要记忆的词汇；已存在的卡片不会重复导入。";
     importBtn.disabled=false;
     importBtn.onclick=importListeningVocabulary;
   }catch(e){status.textContent="词汇整理失败："+e.message+"。";const retry=document.createElement("button");retry.textContent="重试提取";retry.type="button";retry.className="ghost";retry.onclick=()=>loadListeningVocabulary(sessionId);status.appendChild(retry)}
@@ -3649,7 +3703,7 @@ async function listeningInsights(){
     root.innerHTML='<div class="li-head"><div><small>LISTENING INTELLIGENCE</small><h2>听力能力分析</h2></div><span class="li-pill">'+d.attempts+' 次测试</span></div>'+
       '<div class="li-metrics"><div><small>累计正确率</small><strong>'+(d.accuracy==null?'—':d.accuracy+'%')+'</strong></div><div><small>雅思听力估计</small><strong>待校准</strong></div></div>'+
       '<p class="muted">'+esc(d.estimateNote)+'</p>'+
-      '<h3>能力维度</h3>'+ (skills.length?skills.map(([name,v])=>'<div class="li-skill"><span>'+esc(name)+'</span><div class="li-track"><i style="width:'+Math.round(v.correct/v.total*100)+'%"></i></div><b>'+Math.round(v.correct/v.total*100)+'%</b></div>').join(""):'<p class="muted">完成考试后开始建立能力档案。</p>')+
+      '<h3>能力维度</h3>'+(d.weakSkills?.length?'<p class="muted">优先训练：'+d.weakSkills.map(x=>esc(x.skill)+'（'+x.accuracy+'%，'+x.count+'题）').join(' · ')+'</p>':'')+ (skills.length?skills.map(([name,v])=>'<div class="li-skill"><span>'+esc(name)+'</span><div class="li-track"><i style="width:'+Math.round(v.correct/v.total*100)+'%"></i></div><b>'+Math.round(v.correct/v.total*100)+'%</b></div>').join(""):'<p class="muted">完成考试后开始建立能力档案。</p>')+
       '<h3>历次表现</h3><div class="li-history">'+history.slice(0,12).reverse().map(r=>'<div title="'+esc(r.level+' '+r.score+'/'+r.total)+'"><i style="height:'+Math.max(6,r.score/r.total*100)+'%"></i></div>').join("")+'</div>';
   }catch(e){root.textContent="能力档案加载失败："+e.message}
 }
