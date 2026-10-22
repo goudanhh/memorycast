@@ -226,7 +226,7 @@ async function generateCompatibleJson({providerName,system,user,schema,modelOver
   }
 }
 
-export async function generateStructured({ system, user, schema, name, model, maxTokens, timeoutMs, provider:providerOverride }) {
+export async function generateStructured({ system, user, schema, name, model, maxTokens, timeoutMs, provider:providerOverride, raceProviders=false, validateResult }) {
   const p = String(providerOverride || provider()).toLowerCase();
 
   const run=async(chosen,requestTimeoutMs=timeoutMs)=>{
@@ -253,6 +253,39 @@ export async function generateStructured({ system, user, schema, name, model, ma
   if(Number.isFinite(requestedTimeout)&&requestedTimeout>0){
     for(const key of Object.keys(autoTimeouts))
       autoTimeouts[key]=Math.max(autoTimeouts[key],Math.min(60000,requestedTimeout));
+  }
+
+  if(raceProviders){
+    // Run only configured providers. The first structurally valid response wins.
+    // Promise.any avoids serially spending the entire proxy timeout on failed models.
+    const configured=order.filter(chosen=>
+      chosen==="gemini" ? Boolean(process.env.GEMINI_API_KEY) :
+      chosen==="cloudflare" ? Boolean(process.env.CLOUDFLARE_API_KEY&&process.env.CLOUDFLARE_ACCOUNT_ID) :
+      Boolean(process.env.OPENROUTER_API_KEY));
+    if(!configured.length){
+      const e=new Error("没有配置可用的 AI 服务");e.statusCode=503;throw e;
+    }
+    const failures=[];
+    try{
+      return await Promise.any(configured.map(async chosen=>{
+        const start=Date.now();
+        try{
+          const data=await run(chosen,autoTimeouts[chosen]);
+          if(typeof validateResult==="function"&&!validateResult(data)){
+            const e=new Error("AI 返回试卷结构不合格");e.statusCode=502;throw e;
+          }
+          console.info("Listening AI succeeded:",chosen,"elapsedMs:",Date.now()-start);
+          return data;
+        }catch(e){
+          failures.push(chosen+": "+String(e?.message||e).slice(0,160));
+          console.warn("Listening AI provider failed:",chosen,"elapsedMs:",Date.now()-start,String(e?.message||e).slice(0,160));
+          throw e;
+        }
+      }));
+    }catch{
+      const e=new Error("所有 AI 服务均未生成有效试卷："+failures.join("；"));
+      e.statusCode=502;throw e;
+    }
   }
 
   const failures=[];
