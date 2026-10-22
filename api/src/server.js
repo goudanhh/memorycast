@@ -1431,15 +1431,27 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
     system:"Create an ORIGINAL TOEFL-style English listening comprehension exam at CEFR "+level+". Produce a coherent university conversation or academic lecture of 150-240 words. Generate exactly 5 questions: 5 mcq with four distinct plausible choices. Include main idea, detail, inference, speaker attitude and organization questions. All questions must be answerable from the transcript. Questions and options in English. Answers must be unambiguous. Do not reveal answers in prompts. Provide concise Chinese explanations. For EACH question include evidence: a short exact verbatim contiguous quote from the transcript (ideally one sentence) that supports the answer. Do not paraphrase evidence. Return only the requested JSON.",
     user:JSON.stringify({topic,level,weakSkill,adaptation:weakSkill?"Prioritize one or two new questions testing this weak skill while retaining five distinct question types. Do not reuse previous questions.":""})
   });
-  const transcript=String(data?.transcript||"").trim().slice(0,3500);
-  const questions=(Array.isArray(data?.questions)?data.questions:[]).slice(0,8).map((q,i)=>({
-    id:String(i+1),type:q.type==="fill"?"fill":"mcq",prompt:String(q.prompt||"").slice(0,350),
-    choices:q.type==="fill"?[]:(Array.isArray(q.choices)?q.choices.map(String).slice(0,4):[]),
-    answer:String(q.answer||"").trim(),explanation:String(q.explanation||"").slice(0,600),
-    evidence:String(q.evidence||"").trim().slice(0,450)
+  // Do not coerce AI objects into "[object Object]" and accidentally treat them as valid questions.
+  const plainText=value=>typeof value==="string"?value.trim():"";
+  const transcript=plainText(data?.transcript).slice(0,3500);
+  const rawQuestions=Array.isArray(data?.questions)?data.questions:[];
+  const questions=rawQuestions.slice(0,8).map((q,i)=>({
+    id:String(i+1),type:q?.type==="fill"?"fill":"mcq",
+    prompt:plainText(q?.prompt).slice(0,350),
+    choices:Array.isArray(q?.choices)?q.choices.map(x=>plainText(x).slice(0,350)).slice(0,4):[],
+    answer:plainText(q?.answer),
+    explanation:plainText(q?.explanation).slice(0,600),
+    evidence:plainText(q?.evidence).slice(0,450)
   }));
-  if(!transcript||questions.length!==5||questions.some(q=>!q.prompt||!q.answer||q.type!=="mcq"||q.choices.length!==4||!q.choices.includes(q.answer)))
-    return res.status(502).json({error:"AI 生成的听力试卷不完整，请重新生成。"});
+  const invalid=typeof data?.title!=="string"||!transcript||questions.length!==5||
+    questions.some(q=>!q.prompt||q.prompt==="[object Object]"||!q.answer||!q.explanation||
+      q.type!=="mcq"||q.choices.length!==4||q.choices.some(c=>!c||c==="[object Object]")||
+      new Set(q.choices).size!==4||!q.choices.includes(q.answer)||
+      !q.evidence||!transcript.includes(q.evidence));
+  if(invalid){
+    console.warn("Listening AI output failed structural validation (question fields, options or evidence).");
+    return res.status(502).json({error:"AI 返回的试卷格式不正确（题干或选项不完整），请重新生成。"});
+  }
   const id=crypto.randomUUID();
   await ensureListeningSessions();
   await query("INSERT INTO listening_exam_sessions(id,user_id,title,transcript,questions,level,topic) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)",
