@@ -57,8 +57,7 @@ function openaiModel() {
   return process.env.OPENAI_MODEL || "gpt-5.4-mini";
 }
 
-async function generateGeminiJson({ system, user, schema, modelOverride, maxTokens, timeoutMs }) {
-  const key = process.env.GEMINI_API_KEY;
+async function generateGeminiJsonWithKey({ system, user, schema, modelOverride, maxTokens, timeoutMs },key) {
   if (!key) {
     const e = new Error("GEMINI_API_KEY is not configured on the server.");
     e.statusCode = 503;
@@ -117,6 +116,26 @@ async function generateGeminiJson({ system, user, schema, modelOverride, maxToke
     throw e;
   }
 }
+async function generateGeminiJson(options){
+  const keys=[process.env.GEMINI_API_KEY,process.env.GEMINI_API_KEY_SECONDARY]
+    .map(key=>String(key||"").trim()).filter((key,i,arr)=>key&&arr.indexOf(key)===i);
+  if(!keys.length){
+    const e=new Error("GEMINI_API_KEY is not configured on the server.");e.statusCode=503;throw e;
+  }
+  let lastError;
+  for(let i=0;i<keys.length;i++){
+    try{return await generateGeminiJsonWithKey(options,keys[i]);}
+    catch(err){
+      lastError=err;
+      const status=Number(err?.statusCode||0);
+      const retryable=[429,502,503,504].includes(status)||/quota|limit|overload|high demand|timeout|超时|empty response|invalid json/i.test(String(err?.message||""));
+      if(!retryable||i===keys.length-1)break;
+      console.warn("Gemini key fallback triggered; retrying with secondary key. Key value is not logged.");
+    }
+  }
+  throw lastError;
+}
+
 
 async function generateOpenAIJson({ system, user, schema, name, modelOverride, maxTokens }) {
   if (!process.env.OPENAI_API_KEY) {
@@ -259,7 +278,7 @@ export async function generateStructured({ system, user, schema, name, model, ma
     // Run only configured providers. The first structurally valid response wins.
     // Promise.any avoids serially spending the entire proxy timeout on failed models.
     const configured=order.filter(chosen=>
-      chosen==="gemini" ? Boolean(process.env.GEMINI_API_KEY) :
+      chosen==="gemini" ? Boolean(process.env.GEMINI_API_KEY||process.env.GEMINI_API_KEY_SECONDARY) :
       chosen==="cloudflare" ? Boolean(process.env.CLOUDFLARE_API_KEY&&process.env.CLOUDFLARE_ACCOUNT_ID) :
       Boolean(process.env.OPENROUTER_API_KEY));
     if(!configured.length){
