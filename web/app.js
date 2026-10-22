@@ -3138,8 +3138,8 @@ function scheduleWalkmanAfterCard(delay=160){
       return;
     }
 
-    // Exactly ten complete plays, then continue with the next knowledge point.
-    walkmanRepeatTen=false;
+    // Keep repeat mode enabled for every subsequent card.
+    // Reset only the per-card count after ten complete plays.
     walkmanRepeatCount=0;
     updateWalkmanRepeatButton();
   }else{
