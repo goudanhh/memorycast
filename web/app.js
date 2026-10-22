@@ -3534,3 +3534,44 @@ listeningInsights();
 $("listeningPlay").onclick=listeningPlay;
 $("listeningStop").onclick=listeningStop;
 $("listeningSubmit").onclick=listeningSubmit;
+
+
+/* Listening result: right-click selected text or a paragraph to make a card. */
+(function setupListeningResultCardMenu(){
+  const root=$("listeningResult");
+  if(!root)return;
+  const menu=document.createElement("div");
+  menu.id="listeningCardContextMenu";
+  menu.setAttribute("role","menu");
+  menu.style.cssText="position:fixed;z-index:10000;display:none;background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 12px 35px #0f172a30;padding:6px;max-width:calc(100vw - 20px)";
+  const action=document.createElement("button");
+  action.type="button";action.textContent="＋ 加入知识卡片";
+  action.style.cssText="display:block;border:0;background:#fff;color:#172033;font-size:17px;padding:12px 18px;cursor:pointer;border-radius:8px";
+  menu.appendChild(action);document.body.appendChild(menu);
+  let pending="";
+  const hide=()=>{menu.style.display="none"};
+  root.addEventListener("contextmenu",event=>{
+    const selected=String(window.getSelection()?.toString()||"").trim();
+    const target=event.target.closest("p");
+    if(!selected&&!target)return;
+    pending=(selected||(target?.innerText||"")).trim().slice(0,3000);
+    if(!pending)return;
+    event.preventDefault();
+    menu.style.display="block";
+    const rect=menu.getBoundingClientRect();
+    menu.style.left=Math.max(8,Math.min(event.clientX,window.innerWidth-rect.width-8))+"px";
+    menu.style.top=Math.max(8,Math.min(event.clientY,window.innerHeight-rect.height-8))+"px";
+  });
+  action.addEventListener("click",()=>{
+    hide();
+    if(!pending)return;
+    openNew();
+    $("mFront").value=pending;
+    $("mBack").value="";
+    $("mExample").value="来源：AI 听力考试";
+    $("mBack").focus();
+  });
+  document.addEventListener("click",event=>{if(!menu.contains(event.target))hide()});
+  document.addEventListener("keydown",event=>{if(event.key==="Escape")hide()});
+  window.addEventListener("scroll",hide,true);
+})();
