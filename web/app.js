@@ -3503,6 +3503,7 @@ async function listeningGenerate(){
     ).join("");
     $("listeningStatus").textContent="试卷已生成，请播放录音后答题。";
     $("listeningExam").classList.remove("hidden");
+    listeningTimerStart();
   }catch(e){$("listeningStatus").textContent=e.message}
   finally{btn.disabled=false}
 }
@@ -3512,7 +3513,7 @@ async function listeningPlay(){
   if(listeningTranscriptAudio){
     if(!listeningTranscriptAudio.paused){listeningStop();return;}
     if(listeningTranscriptAudio.ended)listeningTranscriptAudio.currentTime=0;
-    try{await listeningTranscriptAudio.play();listeningTimerStart();btn.textContent="Ⅱ 暂停";}catch(e){$("listeningStatus").textContent=e.message}
+    try{await listeningTranscriptAudio.play();btn.textContent="Ⅱ 暂停";}catch(e){$("listeningStatus").textContent=e.message}
     return;
   }
   const request=++listeningAudioRequest;
@@ -3527,7 +3528,6 @@ async function listeningPlay(){
     audio.onended=()=>{btn.textContent="▶ 重播录音"};
     audio.onerror=()=>{$("listeningStatus").textContent="音频播放失败";btn.textContent="▶ 重试播放"};
     await audio.play();
-    listeningTimerStart();
     if(request===listeningAudioRequest)btn.textContent="Ⅱ 暂停";
   }catch(e){if(request===listeningAudioRequest)$("listeningStatus").textContent=e.message}
   finally{btn.disabled=false;if(request!==listeningAudioRequest&&!listeningTranscriptAudio)btn.textContent="▶ 播放录音"}
