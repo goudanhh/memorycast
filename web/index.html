@@ -29,6 +29,7 @@
     <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="quizPage">📝 AI 测试</button>
+    <button data-page="listeningPage">🎧 AI 听力考试</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="feynmanPage">🧠 费曼模式</button>
     <button data-page="libraryPage">📚 知识库</button>
@@ -172,6 +173,29 @@
   </div>
 </section>
 
+<section id="listeningPage" class="page">
+  <article class="panel">
+    <div class="panel-head"><div><div class="eyebrow">AI LISTENING</div><h2>🎧 AI 听力考试</h2></div></div>
+    <p class="muted">AI 原创英语听力 · 3 道选择题 + 2 道填空题 · 提交后显示成绩和原文</p>
+    <div class="row" style="flex-wrap:wrap">
+      <select id="listeningLevel" aria-label="听力难度" style="max-width:140px"><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select>
+      <input id="listeningTopic" placeholder="主题，如 campus life（可选）" style="flex:1;min-width:160px">
+      <button id="listeningGenerate" class="btn dark">✨ 生成新试卷</button>
+    </div>
+    <div id="listeningStatus" class="muted" style="margin-top:12px">选择难度后生成试卷。</div>
+    <div id="listeningExam" class="hidden">
+      <div class="quiz-card">
+        <h3 id="listeningTitle"></h3>
+        <p class="muted">先听录音，再回答下面的问题。提交前不显示原文。</p>
+        <button id="listeningPlay" class="ghost">▶ 播放录音</button>
+        <button id="listeningStop" class="ghost">■ 停止</button>
+        <div id="listeningQuestions"></div>
+        <button id="listeningSubmit" class="btn dark">提交试卷并评分</button>
+      </div>
+    </div>
+    <div id="listeningResult" class="hidden"></div>
+  </article>
+</section>
 <section id="quizPage" class="page">
   <article class="panel">
     <div class="panel-head">
@@ -448,7 +472,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=insights-1"></script>
+<script type="module" src="/app.js?v=listening-exam-1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
