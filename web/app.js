@@ -3456,6 +3456,7 @@ function listeningStop(){
 }
 async function listeningGenerate(){
   listeningStop();
+  const previousResultAudio=$("listeningResultAudio");if(previousResultAudio)previousResultAudio.pause();
   const btn=$("listeningGenerate");btn.disabled=true;
   $("listeningStatus").textContent="AI 正在生成听力材料和试题…";
   $("listeningExam").classList.add("hidden");$("listeningResult").classList.add("hidden");
@@ -3506,10 +3507,20 @@ async function listeningSubmit(){
   try{
     const d=await api("/listening/grade",{method:"POST",body:JSON.stringify({sessionId:listeningSession.sessionId,answers})});
     listeningStop();
+    const completedListeningSessionId=listeningSession.sessionId;
     $("listeningResult").innerHTML='<div class="quiz-card"><h3>成绩：'+d.score+' / '+d.total+'</h3>'+
       d.results.map((r,i)=>'<p><b>'+(i+1)+'. '+(r.correct?'✅':'❌')+'</b> 你的答案：'+esc(r.submitted)+
       '<br>正确答案：'+esc(r.answer)+'<br>'+esc(r.explanation)+'</p>').join("")+
+      '<div class="listening-result-player" style="margin:20px 0;padding:18px;border:1px solid #d8e1ed;border-radius:16px;background:#f8fafc">'+
+      '<b style="display:block;margin-bottom:10px;font-size:20px">🎧 重新播放本次听力</b>'+
+      '<audio id="listeningResultAudio" controls preload="none" style="width:100%;max-width:780px"></audio>'+
+      '<p id="listeningResultAudioStatus" class="muted">点击播放，复听完整原文。</p></div>'+
       '<h3>听力原文</h3><p style="white-space:pre-wrap">'+esc(d.transcript)+'</p></div>';
+    const resultAudio=$("listeningResultAudio");
+    resultAudio.src="/api/listening/audio/"+encodeURIComponent(completedListeningSessionId);
+    resultAudio.addEventListener("error",()=>{
+      $("listeningResultAudioStatus").textContent="音频加载失败，请刷新或重新生成试卷。";
+    });
     $("listeningResult").classList.remove("hidden");
     $("listeningExam").classList.add("hidden");
     listeningSession=null;
