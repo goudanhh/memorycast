@@ -3510,12 +3510,14 @@ async function listeningSubmit(){
     const completedListeningSessionId=listeningSession.sessionId;
     $("listeningResult").innerHTML='<div class="quiz-card"><h3>成绩：'+d.score+' / '+d.total+'</h3>'+
       d.results.map((r,i)=>'<p><b>'+(i+1)+'. '+(r.correct?'✅':'❌')+'</b> 你的答案：'+esc(r.submitted)+
-      '<br>正确答案：'+esc(r.answer)+'<br>'+esc(r.explanation)+'</p>').join("")+
+      '<br>正确答案：'+esc(r.answer)+'<br>'+esc(r.explanation)+
+      (r.evidence?'<br><button type="button" class="listening-evidence-link" data-evidence-id="'+esc(r.id)+'">📍 定位原文证据</button>':'')+'</p>').join("")+
       '<div class="listening-result-player" style="margin:20px 0;padding:18px;border:1px solid #d8e1ed;border-radius:16px;background:#f8fafc">'+
       '<b style="display:block;margin-bottom:10px;font-size:20px">🎧 重新播放本次听力</b>'+
       '<audio id="listeningResultAudio" controls preload="none" style="width:100%;max-width:780px"></audio>'+
       '<p id="listeningResultAudioStatus" class="muted">点击播放，复听完整原文。</p></div>'+
-      '<h3>听力原文</h3><p style="white-space:pre-wrap">'+esc(d.transcript)+'</p></div>';
+      '<h3>听力原文（答案依据已标注）</h3><div id="listeningMarkedTranscript" class="listening-marked-transcript"></div></div>';
+    renderListeningEvidence(d.transcript,d.results);
     const resultAudio=$("listeningResultAudio");
     resultAudio.src="/api/listening/audio/"+encodeURIComponent(completedListeningSessionId);
     resultAudio.addEventListener("error",()=>{
@@ -3527,6 +3529,32 @@ async function listeningSubmit(){
     await listeningInsights();
   }catch(e){alert(e.message)}finally{btn.disabled=false}
 }
+
+function renderListeningEvidence(transcript,results){
+  const root=$("listeningMarkedTranscript");
+  if(!root)return;
+  const ranges=[];
+  for(const r of results){
+    if(!r.evidence)continue;
+    const at=transcript.indexOf(r.evidence);
+    if(at>=0)ranges.push({start:at,end:at+r.evidence.length,id:String(r.id)});
+  }
+  const boundaries=new Set([0,transcript.length]);
+  for(const r of ranges){boundaries.add(r.start);boundaries.add(r.end)}
+  const points=[...boundaries].sort((a,b)=>a-b);
+  root.innerHTML=points.slice(0,-1).map((start,i)=>{
+    const end=points[i+1],ids=ranges.filter(r=>r.start<=start&&r.end>=end).map(r=>r.id);
+    return ids.length?'<mark class="listening-evidence-mark" data-evidence-ids="'+ids.join(" ")+'" title="第 '+ids.join("、")+' 题依据">'+esc(transcript.slice(start,end))+'</mark>':esc(transcript.slice(start,end));
+  }).join("");
+  $("listeningResult").querySelectorAll("[data-evidence-id]").forEach(btn=>btn.addEventListener("click",()=>{
+    const id=btn.dataset.evidenceId;
+    const mark=[...root.querySelectorAll(".listening-evidence-mark")].find(el=>el.dataset.evidenceIds.split(" ").includes(id));
+    if(!mark)return;
+    root.querySelectorAll(".listening-evidence-mark").forEach(el=>el.classList.toggle("listening-evidence-active",el.dataset.evidenceIds.split(" ").includes(id)));
+    mark.scrollIntoView({behavior:"smooth",block:"center"});
+  }));
+}
+
 async function listeningInsights(){
   const root=$("listeningInsights");if(!root)return;
   try{
