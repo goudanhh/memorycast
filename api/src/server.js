@@ -1384,18 +1384,18 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
     questions:questions.map(({answer,explanation,...safe})=>safe)});
 }));
 
-const listeningVocabSchema={type:"object",properties:{cards:{type:"array",items:{type:"object",properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},related:{type:"string"}},required:["front","back","example","related"],additionalProperties:false}}},required:["cards"],additionalProperties:false};
+const listeningVocabSchema={type:"object",properties:{cards:{type:"array",items:{type:"object",properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},related:{type:"string"},memoryMethod:{type:"string"},memoryTip:{type:"string"}},required:["front","back","example","related","memoryMethod","memoryTip"],additionalProperties:false}}},required:["cards"],additionalProperties:false};
 app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
   const session=listeningExamSessions.get(String(req.body?.sessionId||""));
   if(!session||session.uid!==userId(req)||session.expires<Date.now())return res.status(404).json({error:"本次听力已过期，请重新考试。"});
   if(!session.graded)return res.status(403).json({error:"请先提交试卷。"});
   if(session.vocabulary)return res.json({cards:session.vocabulary});
   const provider=await featureProvider(session.uid,"ai_quiz_provider","gemini");
-  const data=await generateStructured({provider,name:"listening_vocabulary",schema:listeningVocabSchema,maxTokens:2200,
-    system:"You are an English listening vocabulary tutor. Extract 8-12 useful B1-C1 words or collocations from the transcript, prioritizing academically useful and potentially unfamiliar terms. Include 2-3 closely related vocabulary expressions as separate cards, marked related='拓展'; mark original transcript terms related='原文'. For each card front is English word/phrase, back is concise Chinese definition with part of speech, example is an accurate English example sentence followed by its Chinese translation. Return JSON only. No duplicate fronts.",
+  const data=await generateStructured({provider,name:"listening_vocabulary",schema:listeningVocabSchema,maxTokens:3400,
+    system:"You are an English listening vocabulary tutor. Extract 8-12 useful B1-C1 words or collocations from the transcript, prioritizing academically useful and potentially unfamiliar terms. Include 2-3 closely related vocabulary expressions as separate cards, marked related='拓展'; mark original transcript terms related='原文'. For each card front is English word/phrase, back is concise Chinese definition with part of speech, example is an accurate English example sentence followed by its Chinese translation. For EACH card include memoryMethod (choose one of 谐音联想, 词根词缀, 拆分联想, 场景故事, 对比记忆) and memoryTip in concise vivid Chinese (max 70 Chinese characters). Prefer accurate roots and affixes when real; never invent false etymologies. For sound mnemonics clearly label them as creative association, not actual pronunciation or etymology. Link the image or story to the real meaning. Return JSON only. No duplicate fronts.",
     user:JSON.stringify({transcript:session.transcript,topic:session.topic})});
   const seen=new Set();
-  session.vocabulary=(Array.isArray(data?.cards)?data.cards:[]).map(x=>({front:String(x.front||"").trim().slice(0,120),back:String(x.back||"").trim().slice(0,260),example:String(x.example||"").trim().slice(0,400),related:x.related==="拓展"?"拓展":"原文"})).filter(x=>{const key=x.front.toLowerCase();if(!key||!x.back||seen.has(key))return false;seen.add(key);return true}).slice(0,15);
+  session.vocabulary=(Array.isArray(data?.cards)?data.cards:[]).map(x=>({front:String(x.front||"").trim().slice(0,120),back:String(x.back||"").trim().slice(0,260),example:String(x.example||"").trim().slice(0,400),related:x.related==="拓展"?"拓展":"原文",memoryMethod:String(x.memoryMethod||"场景故事").trim().slice(0,24),memoryTip:String(x.memoryTip||"").trim().slice(0,240)})).filter(x=>{const key=x.front.toLowerCase();if(!key||!x.back||seen.has(key))return false;seen.add(key);return true}).slice(0,15);
   res.json({cards:session.vocabulary});
 }));
 app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
