@@ -1427,7 +1427,18 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
   const weakSkill=Object.entries(tally).filter(([,v])=>v.n>=2).sort((a,b)=>a[1].ok/a[1].n-b[1].ok/b[1].n)[0]?.[0]||"";
   const provider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const data=await generateStructured({
-    provider,name:"memorycast_listening_exam",schema:listeningExamSchema,maxTokens:2800,timeoutMs:45000,
+    provider,name:"memorycast_listening_exam",schema:listeningExamSchema,maxTokens:2800,timeoutMs:45000,raceProviders:true,
+    validateResult:d=>{
+      if(typeof d?.title!=="string"||typeof d?.transcript!=="string"||!d.transcript.trim()||
+        !Array.isArray(d.questions)||d.questions.length!==5)return false;
+      return d.questions.every(q=>
+        q&&q.type==="mcq"&&typeof q.prompt==="string"&&q.prompt.trim()&&
+        Array.isArray(q.choices)&&q.choices.length===4&&
+        q.choices.every(c=>typeof c==="string"&&c.trim())&&new Set(q.choices).size===4&&
+        typeof q.answer==="string"&&q.choices.includes(q.answer)&&
+        typeof q.explanation==="string"&&q.explanation.trim()&&
+        typeof q.evidence==="string"&&q.evidence.trim()&&d.transcript.includes(q.evidence.trim()));
+    },
     system:"Create an ORIGINAL TOEFL-style English listening comprehension exam at CEFR "+level+". Produce a coherent university conversation or academic lecture of 150-240 words. Generate exactly 5 questions: 5 mcq with four distinct plausible choices. Include main idea, detail, inference, speaker attitude and organization questions. All questions must be answerable from the transcript. Questions and options in English. Answers must be unambiguous. Do not reveal answers in prompts. Provide concise Chinese explanations. For EACH question include evidence: a short exact verbatim contiguous quote from the transcript (ideally one sentence) that supports the answer. Do not paraphrase evidence. Return only the requested JSON.",
     user:JSON.stringify({topic,level,weakSkill,adaptation:weakSkill?"Prioritize one or two new questions testing this weak skill while retaining five distinct question types. Do not reuse previous questions.":""})
   });
