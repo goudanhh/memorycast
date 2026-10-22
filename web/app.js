@@ -3482,6 +3482,59 @@ function listeningResetAudio(){
   if(listeningAudioUrl){URL.revokeObjectURL(listeningAudioUrl);listeningAudioUrl=null;}
   const btn=$("listeningPlay");if(btn)btn.textContent="▶ 播放录音";
 }
+function listeningAnswers(){
+  if(!listeningSession)return {};
+  return Object.fromEntries(listeningSession.questions.map((q,i)=>[q.id,q.type==="mcq"?(document.querySelector('input[name="listening-q'+i+'"]:checked')?.value||""):(document.querySelector('[data-listening-fill="'+i+'"]')?.value||"")]));
+}
+let listeningSaveTimeout=null;
+function listeningScheduleSave(){
+  clearTimeout(listeningSaveTimeout);
+  if(!listeningSession)return;
+  const id=listeningSession.sessionId;
+  listeningSaveTimeout=setTimeout(async()=>{
+    if(!listeningSession||listeningSession.sessionId!==id)return;
+    try{await api("/listening/progress",{method:"POST",body:JSON.stringify({sessionId:id,answers:listeningAnswers()})})}
+    catch(e){console.warn("听力进度保存失败",e)}
+  },700);
+}
+function listeningRenderExam(d){
+  listeningSession=d;
+  $("listeningTitle").textContent=d.title;
+  $("listeningQuestions").innerHTML=d.questions.map((q,i)=>
+    '<div class="quiz-card"><b>'+(i+1)+'. '+esc(q.prompt)+'</b>'+
+    (q.type==="mcq"?'<div class="quiz-choices">'+q.choices.map((c,j)=>
+      '<label class="quiz-choice"><input type="radio" name="listening-q'+i+'" value="'+esc(c)+'" style="width:auto"> '+String.fromCharCode(65+j)+'. '+esc(c)+'</label>').join("")+'</div>':
+      '<input data-listening-fill="'+i+'" placeholder="输入英文答案" autocomplete="off">')+'</div>').join("");
+  d.questions.forEach((q,i)=>{
+    const answer=d.answers?.[q.id];if(!answer)return;
+    if(q.type==="mcq"){const radio=[...document.querySelectorAll('input[name="listening-q'+i+'"]')].find(x=>x.value===answer);if(radio)radio.checked=true;}
+    else{const field=document.querySelector('[data-listening-fill="'+i+'"]');if(field)field.value=answer;}
+  });
+  $("listeningQuestions").addEventListener("input",listeningScheduleSave);
+  $("listeningQuestions").addEventListener("change",listeningScheduleSave);
+  $("listeningExam").classList.remove("hidden");
+  $("listeningResult").classList.add("hidden");
+  listeningTimerReset();listeningTimerStart();
+}
+async function listeningLoadSessions(){
+  const el=$("listeningSavedSessions");if(!el)return;
+  try{
+    const data=await api("/listening/sessions");
+    el.innerHTML='<h3>📁 历史试卷（永久保存）</h3>'+(data.sessions||[]).map(row=>
+      '<button class="ghost" style="margin:5px" data-listening-open="'+esc(row.id)+'">'+esc(row.title)+' · '+esc(new Date(row.created_at).toLocaleString())+' · '+(row.graded?'查看答案与精听':'继续答题')+'</button>').join("") ;
+    el.querySelectorAll("[data-listening-open]").forEach(b=>b.onclick=()=>listeningOpenSession(b.dataset.listeningOpen));
+  }catch(e){el.textContent="历史试卷加载失败："+e.message}
+}
+async function listeningOpenSession(id){
+  try{
+    const d=await api("/listening/session/"+encodeURIComponent(id));
+    listeningResetAudio();
+    if(d.graded){
+      listeningSession=null;
+      listeningRenderResult(id,{results:d.results,transcript:d.transcript,score:(d.results||[]).filter(x=>x.correct).length,total:(d.results||[]).length});
+    }else{listeningRenderExam(d);$("listeningStatus").textContent="已恢复上次未完成的试卷和答案。";}
+  }catch(e){$("listeningStatus").textContent="打开试卷失败："+e.message}
+}
 async function listeningGenerate(){
   listeningTimerReset();
   if(listeningTrainingAudio){listeningTrainingAudio.pause();listeningTrainingAudio=null;}
@@ -3495,17 +3548,9 @@ async function listeningGenerate(){
     const d=await api("/listening/generate",{method:"POST",body:JSON.stringify({
       auto:true
     })});
-    listeningSession=d;
-    $("listeningTitle").textContent=d.title;
-    $("listeningQuestions").innerHTML=d.questions.map((q,i)=>
-      '<div class="quiz-card"><b>'+(i+1)+'. '+esc(q.prompt)+'</b>'+
-      (q.type==="mcq"?'<div class="quiz-choices">'+q.choices.map((c,j)=>
-        '<label class="quiz-choice"><input type="radio" name="listening-q'+i+'" value="'+esc(c)+'" style="width:auto"> '+String.fromCharCode(65+j)+'. '+esc(c)+'</label>').join("")+'</div>':
-        '<input data-listening-fill="'+i+'" placeholder="输入英文答案" autocomplete="off">')+'</div>'
-    ).join("");
-    $("listeningStatus").textContent="试卷已生成，请播放录音后答题。";
-    $("listeningExam").classList.remove("hidden");
-    listeningTimerStart();
+    listeningRenderExam(d);
+    $("listeningStatus").textContent="试卷已生成；答案自动保存。";
+    listeningLoadSessions();
   }catch(e){$("listeningStatus").textContent=e.message}
   finally{btn.disabled=false}
 }
@@ -3536,11 +3581,8 @@ async function listeningPlay(){
 }
 async function listeningSubmit(){
   if(!listeningSession)return;
-  const answers={};
-  listeningSession.questions.forEach((q,i)=>{
-    answers[q.id]=q.type==="mcq"?(document.querySelector('input[name="listening-q'+i+'"]:checked')?.value||""):
-      (document.querySelector('[data-listening-fill="'+i+'"]')?.value||"");
-  });
+  const answers=listeningAnswers();
+  clearTimeout(listeningSaveTimeout);
   if(Object.values(answers).some(x=>!String(x).trim()))return alert("请先完成全部题目");
   const btn=$("listeningSubmit");btn.disabled=true;
   try{
@@ -3548,6 +3590,16 @@ async function listeningSubmit(){
     listeningTimerFreeze();
     listeningResetAudio();
     const completedListeningSessionId=listeningSession.sessionId;
+    listeningSession=null;
+    listeningRenderResult(completedListeningSessionId,d);
+    await listeningLoadSessions();
+    await listeningInsights();
+  }catch(e){alert(e.message)}finally{btn.disabled=false}
+}
+
+
+
+function listeningRenderResult(sessionId,d){
     $("listeningResult").innerHTML='<div class="quiz-card"><h3>成绩：'+d.score+' / '+d.total+'</h3>'+
       d.results.map((r,i)=>'<p><b>'+(i+1)+'. '+(r.correct?'✅':'❌')+'</b> 你的答案：'+esc(r.submitted)+
       '<br>正确答案：'+esc(r.answer)+'<br>'+esc(r.explanation)+
@@ -3563,21 +3615,18 @@ async function listeningSubmit(){
       '<div id="listeningVocabularyStatus">正在提取重点词汇…</div><div id="listeningVocabularyList"></div>'+
       '<button type="button" id="listeningVocabImport" class="btn dark" disabled>一键导入选中卡片</button></section></div>';
     renderListeningEvidence(d.transcript,d.results);
-    renderListeningTraining(completedListeningSessionId,d.transcript,d.results);
+    renderListeningTraining(sessionId,d.transcript,d.results);
     const resultAudio=$("listeningResultAudio");
-    resultAudio.src="/api/listening/audio/"+encodeURIComponent(completedListeningSessionId);
+    resultAudio.src="/api/listening/audio/"+encodeURIComponent(sessionId);
     resultAudio.addEventListener("error",()=>{
       $("listeningResultAudioStatus").textContent="音频加载失败，请刷新或重新生成试卷。";
     });
     $("listeningResult").classList.remove("hidden");
     $("listeningExam").classList.add("hidden");
-    loadListeningVocabulary(completedListeningSessionId);
-    listeningSession=null;
-    await listeningInsights();
-  }catch(e){alert(e.message)}finally{btn.disabled=false}
+    loadListeningVocabulary(sessionId);
+
+
 }
-
-
 
 let listeningTrainingAudio=null,listeningRecognition=null;
 function listeningWords(text){return String(text||"").toLowerCase().replace(/[^a-z' ]/g," ").split(/\s+/).filter(Boolean)}
@@ -3708,6 +3757,7 @@ async function listeningInsights(){
   }catch(e){root.textContent="能力档案加载失败："+e.message}
 }
 $("listeningGenerate").onclick=listeningGenerate;
+listeningLoadSessions();
 listeningInsights();
 $("listeningPlay").onclick=listeningPlay;
 $("listeningStop").onclick=listeningStop;
