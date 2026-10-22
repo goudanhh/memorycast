@@ -3451,6 +3451,24 @@ $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRepeatBtn").onclick=
 
 let listeningSession=null,listeningTranscriptAudio=null;
 let listeningAudioUrl=null,listeningAudioRequest=0;
+let listeningTimerStartedAt=0,listeningTimerInterval=null,listeningTimerElapsed=0;
+function listeningTimerDisplay(){
+  const el=$("listeningTimer");if(!el)return;
+  const secs=Math.floor(listeningTimerElapsed+(listeningTimerStartedAt?(Date.now()-listeningTimerStartedAt)/1000:0));
+  el.textContent="⏱ 答题用时 "+String(Math.floor(secs/60)).padStart(2,"0")+":"+String(secs%60).padStart(2,"0");
+}
+function listeningTimerStart(){
+  if(listeningTimerStartedAt)return;
+  listeningTimerStartedAt=Date.now();
+  listeningTimerInterval=setInterval(listeningTimerDisplay,1000);
+  listeningTimerDisplay();
+}
+function listeningTimerFreeze(){
+  if(listeningTimerStartedAt){listeningTimerElapsed+=(Date.now()-listeningTimerStartedAt)/1000;listeningTimerStartedAt=0;}
+  clearInterval(listeningTimerInterval);listeningTimerInterval=null;listeningTimerDisplay();
+}
+function listeningTimerReset(){listeningTimerFreeze();listeningTimerElapsed=0;listeningTimerDisplay();}
+
 function listeningStop(){
   // Stop means pause: keep the position and cached audio for Resume.
   listeningAudioRequest++;
@@ -3465,6 +3483,7 @@ function listeningResetAudio(){
   const btn=$("listeningPlay");if(btn)btn.textContent="▶ 播放录音";
 }
 async function listeningGenerate(){
+  listeningTimerReset();
   listeningResetAudio();
   const previousResultAudio=$("listeningResultAudio");if(previousResultAudio)previousResultAudio.pause();
   const btn=$("listeningGenerate");btn.disabled=true;
@@ -3493,7 +3512,7 @@ async function listeningPlay(){
   if(listeningTranscriptAudio){
     if(!listeningTranscriptAudio.paused){listeningStop();return;}
     if(listeningTranscriptAudio.ended)listeningTranscriptAudio.currentTime=0;
-    try{await listeningTranscriptAudio.play();btn.textContent="Ⅱ 暂停";}catch(e){$("listeningStatus").textContent=e.message}
+    try{await listeningTranscriptAudio.play();listeningTimerStart();btn.textContent="Ⅱ 暂停";}catch(e){$("listeningStatus").textContent=e.message}
     return;
   }
   const request=++listeningAudioRequest;
@@ -3508,6 +3527,7 @@ async function listeningPlay(){
     audio.onended=()=>{btn.textContent="▶ 重播录音"};
     audio.onerror=()=>{$("listeningStatus").textContent="音频播放失败";btn.textContent="▶ 重试播放"};
     await audio.play();
+    listeningTimerStart();
     if(request===listeningAudioRequest)btn.textContent="Ⅱ 暂停";
   }catch(e){if(request===listeningAudioRequest)$("listeningStatus").textContent=e.message}
   finally{btn.disabled=false;if(request!==listeningAudioRequest&&!listeningTranscriptAudio)btn.textContent="▶ 播放录音"}
@@ -3523,6 +3543,7 @@ async function listeningSubmit(){
   const btn=$("listeningSubmit");btn.disabled=true;
   try{
     const d=await api("/listening/grade",{method:"POST",body:JSON.stringify({sessionId:listeningSession.sessionId,answers})});
+    listeningTimerFreeze();
     listeningResetAudio();
     const completedListeningSessionId=listeningSession.sessionId;
     $("listeningResult").innerHTML='<div class="quiz-card"><h3>成绩：'+d.score+' / '+d.total+'</h3>'+
