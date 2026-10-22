@@ -1383,6 +1383,21 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
   res.json({sessionId:id,title:String(data.title||"Listening Exam").slice(0,100),transcriptLength:transcript.length,
     questions:questions.map(({answer,explanation,...safe})=>safe)});
 }));
+
+const listeningVocabSchema={type:"object",properties:{cards:{type:"array",items:{type:"object",properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},related:{type:"string"}},required:["front","back","example","related"],additionalProperties:false}}},required:["cards"],additionalProperties:false};
+app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
+  const session=listeningExamSessions.get(String(req.body?.sessionId||""));
+  if(!session||session.uid!==userId(req)||session.expires<Date.now())return res.status(404).json({error:"本次听力已过期，请重新考试。"});
+  if(!session.graded)return res.status(403).json({error:"请先提交试卷。"});
+  if(session.vocabulary)return res.json({cards:session.vocabulary});
+  const provider=await featureProvider(session.uid,"ai_quiz_provider","gemini");
+  const data=await generateStructured({provider,name:"listening_vocabulary",schema:listeningVocabSchema,maxTokens:2200,
+    system:"You are an English listening vocabulary tutor. Extract 8-12 useful B1-C1 words or collocations from the transcript, prioritizing academically useful and potentially unfamiliar terms. Include 2-3 closely related vocabulary expressions as separate cards, marked related='拓展'; mark original transcript terms related='原文'. For each card front is English word/phrase, back is concise Chinese definition with part of speech, example is an accurate English example sentence followed by its Chinese translation. Return JSON only. No duplicate fronts.",
+    user:JSON.stringify({transcript:session.transcript,topic:session.topic})});
+  const seen=new Set();
+  session.vocabulary=(Array.isArray(data?.cards)?data.cards:[]).map(x=>({front:String(x.front||"").trim().slice(0,120),back:String(x.back||"").trim().slice(0,260),example:String(x.example||"").trim().slice(0,400),related:x.related==="拓展"?"拓展":"原文"})).filter(x=>{const key=x.front.toLowerCase();if(!key||!x.back||seen.has(key))return false;seen.add(key);return true}).slice(0,15);
+  res.json({cards:session.vocabulary});
+}));
 app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
   const session=listeningExamSessions.get(String(req.body?.sessionId||""));
   if(!session||session.uid!==userId(req)||session.expires<Date.now())
@@ -1404,6 +1419,7 @@ app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
     await query("INSERT INTO notes(user_id,title,content,tags) VALUES($1,$2,$3,$4)",[session.uid,"TOEFL 听力错题 · "+new Date().toISOString().slice(0,10),"听力原文：\\n"+session.transcript+"\\n\\n"+content,["TOEFL","Listening","错题"]]);
   }
   // Keep the graded session briefly so the original recording remains playable on the result page.
+  session.graded=true;
   session.expires=Date.now()+30*60*1000;
   res.json({score,total:results.length,results,transcript:session.transcript,savedWrong:wrong.length});
 }));
