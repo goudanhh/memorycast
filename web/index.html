@@ -8,6 +8,10 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css?v=walkman-repeat10-60">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
+<style>
+.listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
+.li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
+</style>
 </head>
 <body>
 <div id="loginScreen" class="login-screen">
@@ -176,13 +180,12 @@
 <section id="listeningPage" class="page">
   <article class="panel">
     <div class="panel-head"><div><div class="eyebrow">AI LISTENING</div><h2>🎧 AI 听力考试</h2></div></div>
-    <p class="muted">AI 原创英语听力 · 3 道选择题 + 2 道填空题 · 提交后显示成绩和原文</p>
+    <p class="muted">TOEFL 风格 · AI 随机选题 · 自动调整难度 · 错题自动保存笔记</p>
     <div class="row" style="flex-wrap:wrap">
-      <select id="listeningLevel" aria-label="听力难度" style="max-width:140px"><option>A2</option><option selected>B1</option><option>B2</option><option>C1</option></select>
-      <input id="listeningTopic" placeholder="主题，如 campus life（可选）" style="flex:1;min-width:160px">
+
       <button id="listeningGenerate" class="btn dark">✨ 生成新试卷</button>
     </div>
-    <div id="listeningStatus" class="muted" style="margin-top:12px">选择难度后生成试卷。</div>
+    <div id="listeningStatus" class="muted" style="margin-top:12px">点击开始，AI 自动选择主题和难度。</div>
     <div id="listeningExam" class="hidden">
       <div class="quiz-card">
         <h3 id="listeningTitle"></h3>
@@ -193,7 +196,7 @@
         <button id="listeningSubmit" class="btn dark">提交试卷并评分</button>
       </div>
     </div>
-    <div id="listeningResult" class="hidden"></div>
+    <div id="listeningResult" class="hidden"></div><div id="listeningInsights" class="listening-insights"></div>
   </article>
 </section>
 <section id="quizPage" class="page">
@@ -472,7 +475,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=listening-exam-1"></script>
+<script type="module" src="/app.js?v=listening-adaptive-2"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
