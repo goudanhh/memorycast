@@ -1310,9 +1310,10 @@ const listeningExamSchema={
         prompt:{type:"string"},
         choices:{type:"array",items:{type:"string"},maxItems:4},
         answer:{type:"string"},
-        explanation:{type:"string"}
+        explanation:{type:"string"},
+        evidence:{type:"string"}
       },
-      required:["type","prompt","choices","answer","explanation"],
+      required:["type","prompt","choices","answer","explanation","evidence"],
       additionalProperties:false
     }}
   },
@@ -1364,14 +1365,15 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
   const provider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const data=await generateStructured({
     provider,name:"memorycast_listening_exam",schema:listeningExamSchema,maxTokens:2800,
-    system:"Create an ORIGINAL TOEFL-style English listening comprehension exam at CEFR "+level+". Produce a coherent university conversation or academic lecture of 150-240 words. Generate exactly 5 questions: 5 mcq with four distinct plausible choices. Include main idea, detail, inference, speaker attitude and organization questions. All questions must be answerable from the transcript. Questions and options in English. Answers must be unambiguous. Do not reveal answers in prompts. Provide concise Chinese explanations. Return only the requested JSON.",
+    system:"Create an ORIGINAL TOEFL-style English listening comprehension exam at CEFR "+level+". Produce a coherent university conversation or academic lecture of 150-240 words. Generate exactly 5 questions: 5 mcq with four distinct plausible choices. Include main idea, detail, inference, speaker attitude and organization questions. All questions must be answerable from the transcript. Questions and options in English. Answers must be unambiguous. Do not reveal answers in prompts. Provide concise Chinese explanations. For EACH question include evidence: a short exact verbatim contiguous quote from the transcript (ideally one sentence) that supports the answer. Do not paraphrase evidence. Return only the requested JSON.",
     user:JSON.stringify({topic,level})
   });
   const transcript=String(data?.transcript||"").trim().slice(0,3500);
   const questions=(Array.isArray(data?.questions)?data.questions:[]).slice(0,8).map((q,i)=>({
     id:String(i+1),type:q.type==="fill"?"fill":"mcq",prompt:String(q.prompt||"").slice(0,350),
     choices:q.type==="fill"?[]:(Array.isArray(q.choices)?q.choices.map(String).slice(0,4):[]),
-    answer:String(q.answer||"").trim(),explanation:String(q.explanation||"").slice(0,600)
+    answer:String(q.answer||"").trim(),explanation:String(q.explanation||"").slice(0,600),
+    evidence:String(q.evidence||"").trim().slice(0,450)
   }));
   if(!transcript||questions.length!==5||questions.some(q=>!q.prompt||!q.answer||q.type!=="mcq"||q.choices.length!==4||!q.choices.includes(q.answer)))
     return res.status(502).json({error:"AI 生成的听力试卷不完整，请重新生成。"});
@@ -1389,7 +1391,8 @@ app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
   const normalize=x=>String(x||"").trim().toLowerCase().replace(/[.,!?;:]/g,"").replace(/\\s+/g," ");
   const results=session.questions.map(q=>{
     const submitted=String(answers[q.id]||"");
-    return {id:q.id,skill:["main idea","detail","inference","attitude","organization"][Number(q.id)-1]||"comprehension",prompt:q.prompt,correct:normalize(submitted)===normalize(q.answer),
+    const evidence=session.transcript.includes(q.evidence)?q.evidence:"";
+    return {id:q.id,evidence,skill:["main idea","detail","inference","attitude","organization"][Number(q.id)-1]||"comprehension",prompt:q.prompt,correct:normalize(submitted)===normalize(q.answer),
       submitted,answer:q.answer,explanation:q.explanation};
   });
   const score=results.filter(r=>r.correct).length;
