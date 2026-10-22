@@ -3450,12 +3450,22 @@ $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRepeatBtn").onclick=
 
 
 let listeningSession=null,listeningTranscriptAudio=null;
+let listeningAudioUrl=null,listeningAudioRequest=0;
 function listeningStop(){
-  if(listeningTranscriptAudio){listeningTranscriptAudio.pause();listeningTranscriptAudio.src="";listeningTranscriptAudio=null;}
-  try{speechSynthesis.cancel()}catch{}
+  // Stop means pause: keep the position and cached audio for Resume.
+  listeningAudioRequest++;
+  if(listeningTranscriptAudio&&!listeningTranscriptAudio.paused)listeningTranscriptAudio.pause();
+  const btn=$("listeningPlay");
+  if(btn)btn.textContent=listeningTranscriptAudio?"▶ 继续播放":"▶ 播放录音";
+}
+function listeningResetAudio(){
+  listeningStop();
+  if(listeningTranscriptAudio){listeningTranscriptAudio.pause();listeningTranscriptAudio.removeAttribute("src");listeningTranscriptAudio.load();listeningTranscriptAudio=null;}
+  if(listeningAudioUrl){URL.revokeObjectURL(listeningAudioUrl);listeningAudioUrl=null;}
+  const btn=$("listeningPlay");if(btn)btn.textContent="▶ 播放录音";
 }
 async function listeningGenerate(){
-  listeningStop();
+  listeningResetAudio();
   const previousResultAudio=$("listeningResultAudio");if(previousResultAudio)previousResultAudio.pause();
   const btn=$("listeningGenerate");btn.disabled=true;
   $("listeningStatus").textContent="AI 正在生成听力材料和试题…";
@@ -3479,21 +3489,28 @@ async function listeningGenerate(){
 }
 async function listeningPlay(){
   if(!listeningSession)return;
-  listeningStop();
-  const btn=$("listeningPlay");btn.disabled=true;btn.textContent="正在准备语音…";
+  const btn=$("listeningPlay");
+  if(listeningTranscriptAudio){
+    if(!listeningTranscriptAudio.paused){listeningStop();return;}
+    if(listeningTranscriptAudio.ended)listeningTranscriptAudio.currentTime=0;
+    try{await listeningTranscriptAudio.play();btn.textContent="Ⅱ 暂停";}catch(e){$("listeningStatus").textContent=e.message}
+    return;
+  }
+  const request=++listeningAudioRequest;
+  btn.disabled=true;btn.textContent="正在准备语音…";
   try{
-    // Transcript is intentionally fetched only as synthesized audio, never displayed before submission.
     const res=await fetch("/api/listening/audio/"+encodeURIComponent(listeningSession.sessionId));
     if(!res.ok)throw new Error("听力音频生成失败");
     const blob=await res.blob();
-    const url=URL.createObjectURL(blob);
-    const audio=new Audio(url);listeningTranscriptAudio=audio;
-    audio.onended=()=>{URL.revokeObjectURL(url);btn.textContent="▶ 重播录音"};
-    audio.onerror=()=>{URL.revokeObjectURL(url);btn.textContent="▶ 重试播放"};
+    if(request!==listeningAudioRequest)return;
+    listeningAudioUrl=URL.createObjectURL(blob);
+    const audio=new Audio(listeningAudioUrl);listeningTranscriptAudio=audio;
+    audio.onended=()=>{btn.textContent="▶ 重播录音"};
+    audio.onerror=()=>{$("listeningStatus").textContent="音频播放失败";btn.textContent="▶ 重试播放"};
     await audio.play();
-    btn.textContent="▶ 重播录音";
-  }catch(e){$("listeningStatus").textContent=e.message}
-  finally{btn.disabled=false}
+    if(request===listeningAudioRequest)btn.textContent="Ⅱ 暂停";
+  }catch(e){if(request===listeningAudioRequest)$("listeningStatus").textContent=e.message}
+  finally{btn.disabled=false;if(request!==listeningAudioRequest&&!listeningTranscriptAudio)btn.textContent="▶ 播放录音"}
 }
 async function listeningSubmit(){
   if(!listeningSession)return;
@@ -3506,7 +3523,7 @@ async function listeningSubmit(){
   const btn=$("listeningSubmit");btn.disabled=true;
   try{
     const d=await api("/listening/grade",{method:"POST",body:JSON.stringify({sessionId:listeningSession.sessionId,answers})});
-    listeningStop();
+    listeningResetAudio();
     const completedListeningSessionId=listeningSession.sessionId;
     $("listeningResult").innerHTML='<div class="quiz-card"><h3>成绩：'+d.score+' / '+d.total+'</h3>'+
       d.results.map((r,i)=>'<p><b>'+(i+1)+'. '+(r.correct?'✅':'❌')+'</b> 你的答案：'+esc(r.submitted)+
