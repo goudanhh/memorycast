@@ -3580,7 +3580,7 @@ async function listeningSubmit(){
 
 
 let listeningTrainingAudio=null,listeningRecognition=null;
-function listeningWords(text){return String(text||"").toLowerCase().replace(/[^a-z' ]/g," ").split(/\\s+/).filter(Boolean)}
+function listeningWords(text){return String(text||"").toLowerCase().replace(/[^a-z' ]/g," ").split(/\s+/).filter(Boolean)}
 function listeningSimilarity(expected,actual){
   const a=listeningWords(expected),b=listeningWords(actual),dp=Array.from({length:a.length+1},()=>Array(b.length+1).fill(0));
   for(let i=0;i<=a.length;i++)dp[i][0]=i;
