@@ -190,6 +190,7 @@
       <div class="quiz-card">
         <h3 id="listeningTitle"></h3>
         <p class="muted">先听录音，再回答下面的问题。提交前不显示原文。</p>
+        <div id="listeningTimer" role="timer" style="font-size:20px;font-weight:700;margin:12px 0;color:#1b335b">⏱ 答题用时 00:00</div>
         <button id="listeningPlay" class="ghost">▶ 播放录音</button>
         <button id="listeningStop" class="ghost">■ 停止</button>
         <div id="listeningQuestions"></div>
@@ -475,7 +476,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=listening-pause-resume-1"></script>
+<script type="module" src="/app.js?v=listening-exam-timer-1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
