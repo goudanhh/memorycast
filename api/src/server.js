@@ -1398,13 +1398,34 @@ app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
   const session=listeningExamSessions.get(String(req.body?.sessionId||""));
   if(!session||session.uid!==userId(req)||session.expires<Date.now())return res.status(404).json({error:"本次听力已过期，请重新考试。"});
   if(!session.graded)return res.status(403).json({error:"请先提交试卷。"});
-  if(session.vocabulary)return res.json({cards:session.vocabulary});
+  if(session.vocabulary)return res.json({cards:session.vocabulary,partial:Boolean(session.vocabularyPartial)});
   const provider=await featureProvider(session.uid,"ai_quiz_provider","gemini");
-  const data=await generateStructured({provider,name:"listening_vocabulary",schema:listeningVocabSchema,maxTokens:3400,
-    system:"You are an English listening vocabulary tutor. Extract 10-16 useful B1-C1 vocabulary words and collocations from BOTH the listening transcript AND all question prompts and multiple-choice options, especially academic paraphrases, synonym substitutions and distractor vocabulary in answer options. Select useful terms from question choices even if absent from transcript. Add 2-3 closely related vocabulary expressions as extra cards. Mark related='原文' only if term occurs in transcript; related='选项' if found in a question prompt or option but not in transcript; related='拓展' only for terms absent from both. Prioritize words that may affect answer comprehension. Do not claim a term came from a source it does not occur in. For each card front is English word/phrase, back is concise Chinese definition with part of speech, example is an accurate English example sentence followed by its Chinese translation. For EACH card include ipa: accurate IPA transcription for the English word or phrase (prefer standard American English, use /.../ notation; for multiword phrases transcribe the whole phrase). Never invent pronunciation from spelling; if uncertain use an empty string. For EACH card include memoryMethod (choose one of 谐音联想, 词根词缀, 拆分联想, 场景故事, 对比记忆) and memoryTip in concise vivid Chinese (max 70 Chinese characters). Prefer accurate roots and affixes when real; never invent false etymologies. For sound mnemonics clearly label them as creative association, not actual pronunciation or etymology. Link the image or story to the real meaning. Return JSON only. No duplicate fronts.",
-    user:JSON.stringify({transcript:session.transcript,topic:session.topic,questions:session.questions.map(q=>({prompt:q.prompt,choices:q.choices,answer:q.answer}))})});
+  const basePrompt="You are a thorough TOEFL listening vocabulary analyst. Extract a BROAD and inclusive list of all potentially useful content words, academic terms, phrasal verbs, collocations, paraphrases and domain-specific terminology. Do not filter out words merely because they are B1 or common. Exclude only articles, pronouns, basic auxiliary verbs and trivial function words. Include inflected forms as the actual encountered form when useful. Never invent words that do not occur in the supplied source. Return 15-35 entries when source contains enough terms; if fewer, include all meaningful terms. For each item: front English term, back Chinese meaning with part of speech, example English sentence with Chinese translation, ipa standard American IPA or empty string if uncertain, memoryMethod choose 谐音联想/词根词缀/拆分联想/场景故事/对比记忆, memoryTip a short useful accurate mnemonic. Do not invent etymology. related MUST match the given source category. Return JSON only.";
+  const tasks=[
+    {source:"原文",text:session.transcript},
+    {source:"选项",text:session.questions.map((q,i)=>"Q"+(i+1)+": "+q.prompt+"\\n"+q.choices.join("\\n")).join("\\n")}
+  ];
+  const settled=await Promise.allSettled(tasks.map(t=>generateStructured({
+    provider,name:"listening_vocabulary_"+(t.source==="原文"?"transcript":"options"),schema:listeningVocabSchema,maxTokens:6500,
+    system:basePrompt+" Set related='"+t.source+"' for every item. Analyze the ENTIRE source, not only the first paragraph or first question.",
+    user:JSON.stringify({topic:session.topic,source:t.source,text:t.text})
+  })));
   const seen=new Set();
-  session.vocabulary=(Array.isArray(data?.cards)?data.cards:[]).map(x=>({front:String(x.front||"").trim().slice(0,120),back:String(x.back||"").trim().slice(0,260),example:String(x.example||"").trim().slice(0,400),related:x.related==="拓展"?"拓展":x.related==="选项"?"选项":"原文",ipa:String(x.ipa||"").trim().slice(0,120),memoryMethod:String(x.memoryMethod||"场景故事").trim().slice(0,24),memoryTip:String(x.memoryTip||"").trim().slice(0,240)})).filter(x=>{const key=x.front.toLowerCase();if(!key||!x.back||seen.has(key))return false;seen.add(key);return true}).slice(0,20);
+  const gathered=[];
+  for(let i=0;i<settled.length;i++){
+    if(settled[i].status!=="fulfilled")continue;
+    for(const x of (Array.isArray(settled[i].value?.cards)?settled[i].value.cards:[])){
+      const item={front:String(x.front||"").trim().slice(0,120),back:String(x.back||"").trim().slice(0,260),example:String(x.example||"").trim().slice(0,400),related:tasks[i].source,ipa:String(x.ipa||"").trim().slice(0,120),memoryMethod:String(x.memoryMethod||"场景故事").trim().slice(0,24),memoryTip:String(x.memoryTip||"").trim().slice(0,240)};
+      const key=item.front.toLowerCase().replace(/\\s+/g," ");
+      if(!key||!item.back||seen.has(key))continue;
+      seen.add(key);gathered.push(item);
+    }
+  }
+  if(!gathered.length){
+    const err=new Error("词汇提取失败，请重试；两组 AI 请求均未成功。");err.statusCode=502;throw err;
+  }
+  session.vocabulary=gathered.slice(0,70);
+  session.vocabularyPartial=settled.some(x=>x.status==="rejected");
   res.json({cards:session.vocabulary});
 }));
 app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
