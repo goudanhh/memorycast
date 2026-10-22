@@ -3446,7 +3446,7 @@ $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRepeatBtn").onclick=
       if($("walkmanPlayBtn"))$("walkmanPlayBtn").textContent="▶";
     }
   }
-};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+};window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().then(()=>listeningLoadSessions()).catch(e=>{console.error(e);showLogin()});
 
 
 let listeningSession=null,listeningTranscriptAudio=null;
@@ -3757,7 +3757,6 @@ async function listeningInsights(){
   }catch(e){root.textContent="能力档案加载失败："+e.message}
 }
 $("listeningGenerate").onclick=listeningGenerate;
-listeningLoadSessions();
 listeningInsights();
 $("listeningPlay").onclick=listeningPlay;
 $("listeningStop").onclick=listeningStop;
