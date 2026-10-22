@@ -1400,7 +1400,8 @@ app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
     const content=wrong.map(r=>"题目："+r.prompt+"\\n你的答案："+r.submitted+"\\n正确答案："+r.answer+"\\n解析："+r.explanation).join("\\n\\n");
     await query("INSERT INTO notes(user_id,title,content,tags) VALUES($1,$2,$3,$4)",[session.uid,"TOEFL 听力错题 · "+new Date().toISOString().slice(0,10),"听力原文：\\n"+session.transcript+"\\n\\n"+content,["TOEFL","Listening","错题"]]);
   }
-  listeningExamSessions.delete(String(req.body.sessionId));
+  // Keep the graded session briefly so the original recording remains playable on the result page.
+  session.expires=Date.now()+30*60*1000;
   res.json({score,total:results.length,results,transcript:session.transcript,savedWrong:wrong.length});
 }));
 
