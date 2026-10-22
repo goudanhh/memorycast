@@ -491,3 +491,8 @@ body.walkman .walkman-mode{visibility:visible}
 #listeningPage #listeningQuestions input[data-listening-fill]{font-size:20px;line-height:1.6;min-height:58px;padding:14px 18px}
 #listeningPage #listeningQuestions .quiz-choice:focus-within{outline:3px solid #6484d8;outline-offset:2px}
 @media(max-width:600px){#listeningPage #listeningQuestions .quiz-card{padding:19px 16px}#listeningPage #listeningQuestions .quiz-card>b{font-size:21px}#listeningPage #listeningQuestions .quiz-choice{font-size:18px;min-height:60px;padding:14px}}
+
+#listeningPage .listening-marked-transcript{font-size:19px;line-height:1.95;white-space:pre-wrap;overflow-wrap:anywhere}
+#listeningPage .listening-evidence-mark{background:#fff0ad;color:inherit;border-radius:3px;padding:2px 0}
+#listeningPage .listening-evidence-active{background:#ffcf62;outline:2px solid #d68a15}
+#listeningPage .listening-evidence-link{margin:9px 0 3px;padding:8px 12px;border:1px solid #b7c7e3;border-radius:10px;background:#eef4ff;color:#254785;font-size:16px;cursor:pointer}
