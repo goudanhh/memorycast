@@ -3461,7 +3461,7 @@ async function listeningGenerate(){
   $("listeningExam").classList.add("hidden");$("listeningResult").classList.add("hidden");
   try{
     const d=await api("/listening/generate",{method:"POST",body:JSON.stringify({
-      level:$("listeningLevel").value,topic:$("listeningTopic").value
+      auto:true
     })});
     listeningSession=d;
     $("listeningTitle").textContent=d.title;
@@ -3513,9 +3513,24 @@ async function listeningSubmit(){
     $("listeningResult").classList.remove("hidden");
     $("listeningExam").classList.add("hidden");
     listeningSession=null;
+    await listeningInsights();
   }catch(e){alert(e.message)}finally{btn.disabled=false}
 }
+async function listeningInsights(){
+  const root=$("listeningInsights");if(!root)return;
+  try{
+    const d=await api("/listening/history");
+    const history=d.history||[];
+    const skills=Object.entries(d.bySkill||{});
+    root.innerHTML='<div class="li-head"><div><small>LISTENING INTELLIGENCE</small><h2>听力能力分析</h2></div><span class="li-pill">'+d.attempts+' 次测试</span></div>'+
+      '<div class="li-metrics"><div><small>累计正确率</small><strong>'+(d.accuracy==null?'—':d.accuracy+'%')+'</strong></div><div><small>雅思听力估计</small><strong>待校准</strong></div></div>'+
+      '<p class="muted">'+esc(d.estimateNote)+'</p>'+
+      '<h3>能力维度</h3>'+ (skills.length?skills.map(([name,v])=>'<div class="li-skill"><span>'+esc(name)+'</span><div class="li-track"><i style="width:'+Math.round(v.correct/v.total*100)+'%"></i></div><b>'+Math.round(v.correct/v.total*100)+'%</b></div>').join(""):'<p class="muted">完成考试后开始建立能力档案。</p>')+
+      '<h3>历次表现</h3><div class="li-history">'+history.slice(0,12).reverse().map(r=>'<div title="'+esc(r.level+' '+r.score+'/'+r.total)+'"><i style="height:'+Math.max(6,r.score/r.total*100)+'%"></i></div>').join("")+'</div>';
+  }catch(e){root.textContent="能力档案加载失败："+e.message}
+}
 $("listeningGenerate").onclick=listeningGenerate;
+listeningInsights();
 $("listeningPlay").onclick=listeningPlay;
 $("listeningStop").onclick=listeningStop;
 $("listeningSubmit").onclick=listeningSubmit;
