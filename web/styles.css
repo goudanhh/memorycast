@@ -479,3 +479,15 @@ body.walkman .walkman-mode{visibility:visible}
 @media(max-width:760px){
   .trend-chart{height:190px}
 }
+
+
+/* Listening exam: comfortable, accessible reading size without changing other modules. */
+#listeningPage #listeningQuestions .quiz-card{padding:28px 30px;margin:18px 0;border-radius:22px}
+#listeningPage #listeningQuestions .quiz-card>b{display:block;font-size:clamp(21px,1.7vw,27px);line-height:1.55;letter-spacing:.005em;margin-bottom:20px}
+#listeningPage #listeningQuestions .quiz-choices{gap:14px}
+#listeningPage #listeningQuestions .quiz-choice{display:flex;align-items:center;gap:14px;min-height:66px;padding:17px 20px;font-size:clamp(18px,1.25vw,21px);line-height:1.55;color:#27364c;border-radius:16px;cursor:pointer}
+#listeningPage #listeningQuestions .quiz-choice input[type=radio]{width:21px;height:21px;min-width:21px;margin:0;accent-color:#2449a6}
+#listeningPage #listeningQuestions .quiz-choice:has(input:checked){border-color:#3d65bd;background:#eef4ff;box-shadow:0 0 0 2px #3d65bd25}
+#listeningPage #listeningQuestions input[data-listening-fill]{font-size:20px;line-height:1.6;min-height:58px;padding:14px 18px}
+#listeningPage #listeningQuestions .quiz-choice:focus-within{outline:3px solid #6484d8;outline-offset:2px}
+@media(max-width:600px){#listeningPage #listeningQuestions .quiz-card{padding:19px 16px}#listeningPage #listeningQuestions .quiz-card>b{font-size:21px}#listeningPage #listeningQuestions .quiz-choice{font-size:18px;min-height:60px;padding:14px}}
