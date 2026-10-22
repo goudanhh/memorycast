@@ -1343,7 +1343,12 @@ app.get("/listening/history",requireAuth,asyncRoute(async(req,res)=>{
     const v=bySkill[skill]||(bySkill[skill]={correct:0,total:0});
     v.total++;if(x.correct)v.correct++;
   }
-  res.json({history:rows.map(({results,...r})=>r),attempts:rows.length,accuracy:total?Math.round(correct/total*100):null,bySkill,estimate:null,estimateNote:"AI 原创题未经过 IELTS 标定，暂不提供雅思分数。"});
+  const recentResults=rows.slice(0,5).flatMap(r=>r.results||[]);
+  const recentWeak=Object.entries(bySkill).filter(([,v])=>v.total>=2).sort((a,b)=>a[1].correct/a[1].total-b[1].correct/b[1].total);
+  res.json({history:rows.map(({results,...r})=>r),attempts:rows.length,accuracy:total?Math.round(correct/total*100):null,bySkill,
+    weakSkills:recentWeak.slice(0,3).map(([skill,v])=>({skill,accuracy:Math.round(100*v.correct/v.total),count:v.total})),
+    recentAccuracy:recentResults.length?Math.round(100*recentResults.filter(x=>x.correct).length/recentResults.length):null,
+    estimate:null,estimateNote:"AI 原创题未经过 IELTS 标定，暂不提供雅思分数。"});
 }));
 
 app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
@@ -1362,11 +1367,15 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
   const available=topics.filter(t=>!recentTopics.has(t));
   const pool=available.length?available:topics;
   const topic=pool[Math.floor(Math.random()*pool.length)];
+  const weak=await query("SELECT results FROM listening_exam_history WHERE user_id=$1 ORDER BY created_at DESC LIMIT 8",[uid]);
+  const tally={};
+  for(const row of weak.rows)for(const q of row.results||[]){const k=q.skill||"comprehension";const v=tally[k]||(tally[k]={ok:0,n:0});v.n++;if(q.correct)v.ok++;}
+  const weakSkill=Object.entries(tally).filter(([,v])=>v.n>=2).sort((a,b)=>a[1].ok/a[1].n-b[1].ok/b[1].n)[0]?.[0]||"";
   const provider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const data=await generateStructured({
     provider,name:"memorycast_listening_exam",schema:listeningExamSchema,maxTokens:2800,
     system:"Create an ORIGINAL TOEFL-style English listening comprehension exam at CEFR "+level+". Produce a coherent university conversation or academic lecture of 150-240 words. Generate exactly 5 questions: 5 mcq with four distinct plausible choices. Include main idea, detail, inference, speaker attitude and organization questions. All questions must be answerable from the transcript. Questions and options in English. Answers must be unambiguous. Do not reveal answers in prompts. Provide concise Chinese explanations. For EACH question include evidence: a short exact verbatim contiguous quote from the transcript (ideally one sentence) that supports the answer. Do not paraphrase evidence. Return only the requested JSON.",
-    user:JSON.stringify({topic,level})
+    user:JSON.stringify({topic,level,weakSkill,adaptation:weakSkill?"Prioritize one or two new questions testing this weak skill while retaining five distinct question types. Do not reuse previous questions.":""})
   });
   const transcript=String(data?.transcript||"").trim().slice(0,3500);
   const questions=(Array.isArray(data?.questions)?data.questions:[]).slice(0,8).map((q,i)=>({
@@ -1411,6 +1420,7 @@ app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
       submitted,answer:q.answer,explanation:q.explanation};
   });
   const score=results.filter(r=>r.correct).length;
+  const durationSeconds=Math.max(0,Math.min(7200,Number(req.body?.durationSeconds)||0));
   await ensureListeningHistory();
   await query("INSERT INTO listening_exam_history(user_id,level,topic,score,total,results) VALUES($1,$2,$3,$4,$5,$6::jsonb)",[session.uid,session.level,session.topic,score,results.length,JSON.stringify(results)]);
   const wrong=results.filter(r=>!r.correct);
@@ -1419,12 +1429,22 @@ app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
     await query("INSERT INTO notes(user_id,title,content,tags) VALUES($1,$2,$3,$4)",[session.uid,"TOEFL 听力错题 · "+new Date().toISOString().slice(0,10),"听力原文：\\n"+session.transcript+"\\n\\n"+content,["TOEFL","Listening","错题"]]);
   }
   // Keep the graded session briefly so the original recording remains playable on the result page.
+  session.durationSeconds=durationSeconds;
   session.graded=true;
   session.expires=Date.now()+30*60*1000;
-  res.json({score,total:results.length,results,transcript:session.transcript,savedWrong:wrong.length});
+  res.json({score,total:results.length,results,transcript:session.transcript,savedWrong:wrong.length,durationSeconds});
 }));
 
 
+app.get("/listening/sentence-audio/:id/:index",requireAuth,asyncRoute(async(req,res)=>{
+  const session=listeningExamSessions.get(String(req.params.id||""));
+  if(!session||session.uid!==userId(req)||session.expires<Date.now()||!session.graded)return res.status(404).json({error:"音频不可用"});
+  const sentences=session.transcript.match(/[^.!?]+[.!?]+(?:["']|$)?|[^.!?]+$/g)?.map(x=>x.trim()).filter(Boolean)||[];
+  const index=Number(req.params.index);
+  if(!Number.isInteger(index)||index<0||index>=sentences.length)return res.status(400).json({error:"句子序号无效"});
+  const result=await synthesizeTimedTts([{parts:[{text:sentences[index],language:"en-US",style:"natural",rate:1}]}],{format:"mp3"});
+  res.setHeader("Content-Type",result.mimeType||"audio/mpeg");res.setHeader("Cache-Control","private, no-store");res.send(result.audio);
+}));
 app.get("/listening/audio/:id",requireAuth,asyncRoute(async(req,res)=>{
   const session=listeningExamSessions.get(String(req.params.id||""));
   if(!session||session.uid!==userId(req)||session.expires<Date.now())
