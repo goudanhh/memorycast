@@ -3554,7 +3554,11 @@ async function listeningSubmit(){
       '<b style="display:block;margin-bottom:10px;font-size:20px">🎧 重新播放本次听力</b>'+
       '<audio id="listeningResultAudio" controls preload="none" style="width:100%;max-width:780px"></audio>'+
       '<p id="listeningResultAudioStatus" class="muted">点击播放，复听完整原文。</p></div>'+
-      '<h3>听力原文（答案依据已标注）</h3><div id="listeningMarkedTranscript" class="listening-marked-transcript"></div></div>';
+      '<h3>听力原文（答案依据已标注）</h3><div id="listeningMarkedTranscript" class="listening-marked-transcript"></div>'+
+      '<section id="listeningVocabulary" style="margin-top:28px;border-top:1px solid #dbe3ef;padding-top:22px">'+
+      '<h3>📚 听力重点词汇与拓展词汇</h3><p class="muted">自动整理释义、例句及相关表达；勾选后批量加入 MemoryCast 复习卡片。</p>'+
+      '<div id="listeningVocabularyStatus">正在提取重点词汇…</div><div id="listeningVocabularyList"></div>'+
+      '<button type="button" id="listeningVocabImport" class="btn dark" disabled>一键导入选中卡片</button></section></div>';
     renderListeningEvidence(d.transcript,d.results);
     const resultAudio=$("listeningResultAudio");
     resultAudio.src="/api/listening/audio/"+encodeURIComponent(completedListeningSessionId);
@@ -3563,9 +3567,51 @@ async function listeningSubmit(){
     });
     $("listeningResult").classList.remove("hidden");
     $("listeningExam").classList.add("hidden");
+    loadListeningVocabulary(completedListeningSessionId);
     listeningSession=null;
     await listeningInsights();
   }catch(e){alert(e.message)}finally{btn.disabled=false}
+}
+
+
+let listeningVocabCards=[];
+async function loadListeningVocabulary(sessionId){
+  const status=$("listeningVocabularyStatus"),list=$("listeningVocabularyList"),importBtn=$("listeningVocabImport");
+  if(!status||!list)return;
+  listeningVocabCards=[];
+  try{
+    const result=await api("/listening/vocabulary",{method:"POST",body:JSON.stringify({sessionId})});
+    listeningVocabCards=result.cards||[];
+    if(!listeningVocabCards.length){status.textContent="未提取到词汇，可重新生成试卷。";return;}
+    const known=new Set(cards.map(c=>String(c.front||"").trim().toLowerCase()));
+    list.innerHTML=listeningVocabCards.map((v,i)=>{
+      const exists=known.has(v.front.toLowerCase());
+      return '<label style="display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e1e7ef;border-radius:12px;margin:10px 0;cursor:pointer">'+
+        '<input type="checkbox" data-listening-vocab="'+i+'" '+(exists?'disabled':'checked')+' style="width:20px;height:20px;margin-top:4px;flex-shrink:0">'+
+        '<span><strong style="font-size:19px">'+esc(v.front)+'</strong> <small>'+esc(v.related)+(exists?' · 已在知识库':'')+'</small>'+
+        '<div style="font-size:17px;line-height:1.65">'+esc(v.back)+'</div><div class="muted">'+esc(v.example)+'</div></span></label>';
+    }).join("");
+    status.textContent="共整理 "+listeningVocabCards.length+" 个词汇；已存在的卡片不会重复导入。";
+    importBtn.disabled=false;
+    importBtn.onclick=importListeningVocabulary;
+  }catch(e){status.textContent="词汇整理失败："+e.message+"。";const retry=document.createElement("button");retry.textContent="重试提取";retry.type="button";retry.className="ghost";retry.onclick=()=>loadListeningVocabulary(sessionId);status.appendChild(retry)}
+}
+async function importListeningVocabulary(){
+  const btn=$("listeningVocabImport"),status=$("listeningVocabularyStatus");
+  const selected=[...document.querySelectorAll("[data-listening-vocab]:checked")].map(el=>listeningVocabCards[Number(el.dataset.listeningVocab)]).filter(Boolean);
+  if(!selected.length){status.textContent="请先勾选要导入的词汇。";return}
+  btn.disabled=true;btn.textContent="正在导入…";
+  try{
+    const known=new Set(cards.map(c=>String(c.front||"").trim().toLowerCase()));
+    const fresh=selected.filter(c=>!known.has(c.front.toLowerCase()));
+    if(!fresh.length){status.textContent="选中词汇已经存在于知识库。";return}
+    const result=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:fresh.map(c=>({front:c.front,back:c.back,example:c.example,tags:["英语","听力",c.related]}))})});
+    await Promise.all([loadCards(),loadDue()]);
+    const saved=new Set((result.cards||[]).map(c=>String(c.front||"").trim().toLowerCase()));
+    document.querySelectorAll("[data-listening-vocab]").forEach(el=>{const card=listeningVocabCards[Number(el.dataset.listeningVocab)];if(card&&saved.has(card.front.toLowerCase())){el.checked=false;el.disabled=true;}});
+    status.textContent="已成功导入 "+(result.cards||[]).length+" 张卡片，进入现有复习系统。";
+  }catch(e){status.textContent="导入失败："+e.message}
+  finally{btn.disabled=false;btn.textContent="一键导入选中卡片"}
 }
 
 function renderListeningEvidence(transcript,results){
