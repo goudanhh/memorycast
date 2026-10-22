@@ -56,7 +56,7 @@ function showApp(){$("loginScreen").classList.add("hidden");$("app").classList.r
 function go(id){
   document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));$(id).classList.add("active");
   document.querySelectorAll(".nav button").forEach(x=>x.classList.toggle("active",x.dataset.page===id));
-  const t={homePage:"首页",todayPage:"今日复习",importPage:"AI 整理笔记",notesPage:"笔记库",quizPage:"AI 测试",feynmanPage:"费曼模式",libraryPage:"知识库",statsPage:"学习统计",settingsPage:"设置"};
+  const t={homePage:"首页",todayPage:"今日复习",importPage:"AI 整理笔记",notesPage:"笔记库",quizPage:"AI 测试",listeningPage:"AI 听力考试",feynmanPage:"费曼模式",libraryPage:"知识库",statsPage:"学习统计",settingsPage:"设置"};
   $("pageTitle").textContent=t[id]||"MemoryCast";if(id==="statsPage")loadStats();if(id==="notesPage")loadNotes();if(id==="feynmanPage"&&!$("feynmanTopic").value)loadRandomFeynmanTopic();
 }
 async function init(){
@@ -3447,3 +3447,75 @@ $("walkmanPlayBtn").onclick=toggleWalkmanPlayback;$("walkmanRepeatBtn").onclick=
     }
   }
 };window.addEventListener("popstate",()=>{if(document.body.classList.contains("walkman"))exitWalkmanMode()});window.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.body.classList.contains("walkman"))exitWalkmanMode()});$("retryConnectBtn").onclick=()=>init().catch(e=>console.error("Reconnect failed:",e));refreshVoices();speechSynthesis.onvoiceschanged=refreshVoices;setupFeynmanRecognition();init().catch(e=>{console.error(e);showLogin()});
+
+
+let listeningSession=null,listeningTranscriptAudio=null;
+function listeningStop(){
+  if(listeningTranscriptAudio){listeningTranscriptAudio.pause();listeningTranscriptAudio.src="";listeningTranscriptAudio=null;}
+  try{speechSynthesis.cancel()}catch{}
+}
+async function listeningGenerate(){
+  listeningStop();
+  const btn=$("listeningGenerate");btn.disabled=true;
+  $("listeningStatus").textContent="AI 正在生成听力材料和试题…";
+  $("listeningExam").classList.add("hidden");$("listeningResult").classList.add("hidden");
+  try{
+    const d=await api("/listening/generate",{method:"POST",body:JSON.stringify({
+      level:$("listeningLevel").value,topic:$("listeningTopic").value
+    })});
+    listeningSession=d;
+    $("listeningTitle").textContent=d.title;
+    $("listeningQuestions").innerHTML=d.questions.map((q,i)=>
+      '<div class="quiz-card"><b>'+(i+1)+'. '+esc(q.prompt)+'</b>'+
+      (q.type==="mcq"?'<div class="quiz-choices">'+q.choices.map((c,j)=>
+        '<label class="quiz-choice"><input type="radio" name="listening-q'+i+'" value="'+esc(c)+'" style="width:auto"> '+String.fromCharCode(65+j)+'. '+esc(c)+'</label>').join("")+'</div>':
+        '<input data-listening-fill="'+i+'" placeholder="输入英文答案" autocomplete="off">')+'</div>'
+    ).join("");
+    $("listeningStatus").textContent="试卷已生成，请播放录音后答题。";
+    $("listeningExam").classList.remove("hidden");
+  }catch(e){$("listeningStatus").textContent=e.message}
+  finally{btn.disabled=false}
+}
+async function listeningPlay(){
+  if(!listeningSession)return;
+  listeningStop();
+  const btn=$("listeningPlay");btn.disabled=true;btn.textContent="正在准备语音…";
+  try{
+    // Transcript is intentionally fetched only as synthesized audio, never displayed before submission.
+    const res=await fetch("/api/listening/audio/"+encodeURIComponent(listeningSession.sessionId));
+    if(!res.ok)throw new Error("听力音频生成失败");
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    const audio=new Audio(url);listeningTranscriptAudio=audio;
+    audio.onended=()=>{URL.revokeObjectURL(url);btn.textContent="▶ 重播录音"};
+    audio.onerror=()=>{URL.revokeObjectURL(url);btn.textContent="▶ 重试播放"};
+    await audio.play();
+    btn.textContent="▶ 重播录音";
+  }catch(e){$("listeningStatus").textContent=e.message}
+  finally{btn.disabled=false}
+}
+async function listeningSubmit(){
+  if(!listeningSession)return;
+  const answers={};
+  listeningSession.questions.forEach((q,i)=>{
+    answers[q.id]=q.type==="mcq"?(document.querySelector('input[name="listening-q'+i+'"]:checked')?.value||""):
+      (document.querySelector('[data-listening-fill="'+i+'"]')?.value||"");
+  });
+  if(Object.values(answers).some(x=>!String(x).trim()))return alert("请先完成全部题目");
+  const btn=$("listeningSubmit");btn.disabled=true;
+  try{
+    const d=await api("/listening/grade",{method:"POST",body:JSON.stringify({sessionId:listeningSession.sessionId,answers})});
+    listeningStop();
+    $("listeningResult").innerHTML='<div class="quiz-card"><h3>成绩：'+d.score+' / '+d.total+'</h3>'+
+      d.results.map((r,i)=>'<p><b>'+(i+1)+'. '+(r.correct?'✅':'❌')+'</b> 你的答案：'+esc(r.submitted)+
+      '<br>正确答案：'+esc(r.answer)+'<br>'+esc(r.explanation)+'</p>').join("")+
+      '<h3>听力原文</h3><p style="white-space:pre-wrap">'+esc(d.transcript)+'</p></div>';
+    $("listeningResult").classList.remove("hidden");
+    $("listeningExam").classList.add("hidden");
+    listeningSession=null;
+  }catch(e){alert(e.message)}finally{btn.disabled=false}
+}
+$("listeningGenerate").onclick=listeningGenerate;
+$("listeningPlay").onclick=listeningPlay;
+$("listeningStop").onclick=listeningStop;
+$("listeningSubmit").onclick=listeningSubmit;
