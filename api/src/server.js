@@ -1319,14 +1319,52 @@ const listeningExamSchema={
   required:["title","transcript","questions"],additionalProperties:false
 };
 const listeningExamSessions=new Map();
+async function ensureListeningHistory(){
+  await query(`CREATE TABLE IF NOT EXISTS listening_exam_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    level TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    results JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await query("CREATE INDEX IF NOT EXISTS idx_listening_exam_history_user_time ON listening_exam_history(user_id,created_at DESC)");
+}
+app.get("/listening/history",requireAuth,asyncRoute(async(req,res)=>{
+  await ensureListeningHistory();
+  const {rows}=await query("SELECT level,topic,score,total,results,created_at FROM listening_exam_history WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100",[userId(req)]);
+  const total=rows.reduce((n,r)=>n+r.total,0),correct=rows.reduce((n,r)=>n+r.score,0);
+  const bySkill={};
+  for(const r of rows)for(const x of r.results){
+    const skill=x.skill||"comprehension";
+    const v=bySkill[skill]||(bySkill[skill]={correct:0,total:0});
+    v.total++;if(x.correct)v.correct++;
+  }
+  res.json({history:rows.map(({results,...r})=>r),attempts:rows.length,accuracy:total?Math.round(correct/total*100):null,bySkill,estimate:null,estimateNote:"AI 原创题未经过 IELTS 标定，暂不提供雅思分数。"});
+}));
+
 app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
   const uid=userId(req);
-  const level=["A2","B1","B2","C1"].includes(req.body?.level)?req.body.level:"B1";
-  const topic=String(req.body?.topic||"everyday conversation").slice(0,100);
+  await ensureListeningHistory();
+  const {rows:recent}=await query("SELECT level,score,total,topic FROM listening_exam_history WHERE user_id=$1 ORDER BY created_at DESC LIMIT 8",[uid]);
+  const levels=["A2","B1","B2","C1"];
+  let level="B1";
+  if(recent.length>=2){
+    const ratio=recent.reduce((a,r)=>a+r.score,0)/Math.max(1,recent.reduce((a,r)=>a+r.total,0));
+    const current=levels.indexOf(recent[0].level);
+    level=levels[Math.max(0,Math.min(3,current+(ratio>=0.8?1:ratio<0.5?-1:0)))];
+  }
+  const topics=["campus conversation","university lecture on biology","academic lecture on geology","student services conversation","academic lecture on history","campus housing discussion","academic lecture on astronomy"];
+  const recentTopics=new Set(recent.slice(0,3).map(r=>r.topic));
+  const available=topics.filter(t=>!recentTopics.has(t));
+  const pool=available.length?available:topics;
+  const topic=pool[Math.floor(Math.random()*pool.length)];
   const provider=await featureProvider(uid,"ai_quiz_provider","gemini");
   const data=await generateStructured({
     provider,name:"memorycast_listening_exam",schema:listeningExamSchema,maxTokens:2800,
-    system:"Create an ORIGINAL English listening comprehension exam at CEFR "+level+". Produce a coherent spoken English dialogue or monologue of 90-160 words. Generate exactly 5 questions: 3 mcq with four distinct plausible choices and 2 fill with empty choices. All questions must be answerable only from the transcript. Questions and options in English. Answers must be unambiguous. For fill questions require one or two words found verbatim in the transcript. Do not reveal answers in prompts. Provide concise Chinese explanations. Return only the requested JSON.",
+    system:"Create an ORIGINAL TOEFL-style English listening comprehension exam at CEFR "+level+". Produce a coherent university conversation or academic lecture of 150-240 words. Generate exactly 5 questions: 5 mcq with four distinct plausible choices. Include main idea, detail, inference, speaker attitude and organization questions. All questions must be answerable from the transcript. Questions and options in English. Answers must be unambiguous. Do not reveal answers in prompts. Provide concise Chinese explanations. Return only the requested JSON.",
     user:JSON.stringify({topic,level})
   });
   const transcript=String(data?.transcript||"").trim().slice(0,3500);
@@ -1335,15 +1373,15 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
     choices:q.type==="fill"?[]:(Array.isArray(q.choices)?q.choices.map(String).slice(0,4):[]),
     answer:String(q.answer||"").trim(),explanation:String(q.explanation||"").slice(0,600)
   }));
-  if(!transcript||questions.length!==5||questions.some(q=>!q.prompt||!q.answer||(q.type==="mcq"&&(q.choices.length!==4||!q.choices.includes(q.answer)))))
+  if(!transcript||questions.length!==5||questions.some(q=>!q.prompt||!q.answer||q.type!=="mcq"||q.choices.length!==4||!q.choices.includes(q.answer)))
     return res.status(502).json({error:"AI 生成的听力试卷不完整，请重新生成。"});
   const id=crypto.randomUUID();
   for(const [key,value] of listeningExamSessions)if(value.expires<Date.now())listeningExamSessions.delete(key);
-  listeningExamSessions.set(id,{uid,transcript,questions,expires:Date.now()+3600000});
+  listeningExamSessions.set(id,{uid,transcript,questions,level,topic,expires:Date.now()+3600000});
   res.json({sessionId:id,title:String(data.title||"Listening Exam").slice(0,100),transcriptLength:transcript.length,
     questions:questions.map(({answer,explanation,...safe})=>safe)});
 }));
-app.post("/listening/grade",requireAuth,(req,res)=>{
+app.post("/listening/grade",requireAuth,asyncRoute(async(req,res)=>{
   const session=listeningExamSessions.get(String(req.body?.sessionId||""));
   if(!session||session.uid!==userId(req)||session.expires<Date.now())
     return res.status(404).json({error:"考试已过期，请重新生成。"});
@@ -1351,12 +1389,20 @@ app.post("/listening/grade",requireAuth,(req,res)=>{
   const normalize=x=>String(x||"").trim().toLowerCase().replace(/[.,!?;:]/g,"").replace(/\\s+/g," ");
   const results=session.questions.map(q=>{
     const submitted=String(answers[q.id]||"");
-    return {id:q.id,correct:normalize(submitted)===normalize(q.answer),
+    return {id:q.id,skill:["main idea","detail","inference","attitude","organization"][Number(q.id)-1]||"comprehension",prompt:q.prompt,correct:normalize(submitted)===normalize(q.answer),
       submitted,answer:q.answer,explanation:q.explanation};
   });
+  const score=results.filter(r=>r.correct).length;
+  await ensureListeningHistory();
+  await query("INSERT INTO listening_exam_history(user_id,level,topic,score,total,results) VALUES($1,$2,$3,$4,$5,$6::jsonb)",[session.uid,session.level,session.topic,score,results.length,JSON.stringify(results)]);
+  const wrong=results.filter(r=>!r.correct);
+  if(wrong.length){
+    const content=wrong.map(r=>"题目："+r.prompt+"\\n你的答案："+r.submitted+"\\n正确答案："+r.answer+"\\n解析："+r.explanation).join("\\n\\n");
+    await query("INSERT INTO notes(user_id,title,content,tags) VALUES($1,$2,$3,$4)",[session.uid,"TOEFL 听力错题 · "+new Date().toISOString().slice(0,10),"听力原文：\\n"+session.transcript+"\\n\\n"+content,["TOEFL","Listening","错题"]]);
+  }
   listeningExamSessions.delete(String(req.body.sessionId));
-  res.json({score:results.filter(r=>r.correct).length,total:results.length,results,transcript:session.transcript});
-});
+  res.json({score,total:results.length,results,transcript:session.transcript,savedWrong:wrong.length});
+}));
 
 
 app.get("/listening/audio/:id",requireAuth,asyncRoute(async(req,res)=>{
