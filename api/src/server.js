@@ -1297,6 +1297,78 @@ app.post("/ai/organize/save", requireAuth, asyncRoute(async(req,res)=>{
   res.status(201).json({cards:saved});
 }));
 
+
+const listeningExamSchema={
+  type:"object",
+  properties:{
+    title:{type:"string"},
+    transcript:{type:"string"},
+    questions:{type:"array",minItems:3,maxItems:8,items:{
+      type:"object",
+      properties:{
+        type:{type:"string",enum:["mcq","fill"]},
+        prompt:{type:"string"},
+        choices:{type:"array",items:{type:"string"},maxItems:4},
+        answer:{type:"string"},
+        explanation:{type:"string"}
+      },
+      required:["type","prompt","choices","answer","explanation"],
+      additionalProperties:false
+    }}
+  },
+  required:["title","transcript","questions"],additionalProperties:false
+};
+const listeningExamSessions=new Map();
+app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const level=["A2","B1","B2","C1"].includes(req.body?.level)?req.body.level:"B1";
+  const topic=String(req.body?.topic||"everyday conversation").slice(0,100);
+  const provider=await featureProvider(uid,"ai_quiz_provider","gemini");
+  const data=await generateStructured({
+    provider,name:"memorycast_listening_exam",schema:listeningExamSchema,maxTokens:2800,
+    system:"Create an ORIGINAL English listening comprehension exam at CEFR "+level+". Produce a coherent spoken English dialogue or monologue of 90-160 words. Generate exactly 5 questions: 3 mcq with four distinct plausible choices and 2 fill with empty choices. All questions must be answerable only from the transcript. Questions and options in English. Answers must be unambiguous. For fill questions require one or two words found verbatim in the transcript. Do not reveal answers in prompts. Provide concise Chinese explanations. Return only the requested JSON.",
+    user:JSON.stringify({topic,level})
+  });
+  const transcript=String(data?.transcript||"").trim().slice(0,3500);
+  const questions=(Array.isArray(data?.questions)?data.questions:[]).slice(0,8).map((q,i)=>({
+    id:String(i+1),type:q.type==="fill"?"fill":"mcq",prompt:String(q.prompt||"").slice(0,350),
+    choices:q.type==="fill"?[]:(Array.isArray(q.choices)?q.choices.map(String).slice(0,4):[]),
+    answer:String(q.answer||"").trim(),explanation:String(q.explanation||"").slice(0,600)
+  }));
+  if(!transcript||questions.length!==5||questions.some(q=>!q.prompt||!q.answer||(q.type==="mcq"&&(q.choices.length!==4||!q.choices.includes(q.answer)))))
+    return res.status(502).json({error:"AI 生成的听力试卷不完整，请重新生成。"});
+  const id=crypto.randomUUID();
+  for(const [key,value] of listeningExamSessions)if(value.expires<Date.now())listeningExamSessions.delete(key);
+  listeningExamSessions.set(id,{uid,transcript,questions,expires:Date.now()+3600000});
+  res.json({sessionId:id,title:String(data.title||"Listening Exam").slice(0,100),transcriptLength:transcript.length,
+    questions:questions.map(({answer,explanation,...safe})=>safe)});
+}));
+app.post("/listening/grade",requireAuth,(req,res)=>{
+  const session=listeningExamSessions.get(String(req.body?.sessionId||""));
+  if(!session||session.uid!==userId(req)||session.expires<Date.now())
+    return res.status(404).json({error:"考试已过期，请重新生成。"});
+  const answers=req.body?.answers||{};
+  const normalize=x=>String(x||"").trim().toLowerCase().replace(/[.,!?;:]/g,"").replace(/\\s+/g," ");
+  const results=session.questions.map(q=>{
+    const submitted=String(answers[q.id]||"");
+    return {id:q.id,correct:normalize(submitted)===normalize(q.answer),
+      submitted,answer:q.answer,explanation:q.explanation};
+  });
+  listeningExamSessions.delete(String(req.body.sessionId));
+  res.json({score:results.filter(r=>r.correct).length,total:results.length,results,transcript:session.transcript});
+});
+
+
+app.get("/listening/audio/:id",requireAuth,asyncRoute(async(req,res)=>{
+  const session=listeningExamSessions.get(String(req.params.id||""));
+  if(!session||session.uid!==userId(req)||session.expires<Date.now())
+    return res.status(404).json({error:"听力试卷已过期"});
+  const result=await synthesizeTimedTts([{parts:[{text:session.transcript,language:"en-US",style:"natural",rate:1}]}],{format:"mp3"});
+  res.setHeader("Content-Type",result.mimeType||"audio/mpeg");
+  res.setHeader("Cache-Control","private, no-store");
+  res.send(result.audio);
+}));
+
 const quizSchema={
   type:"object",
   properties:{
