@@ -1333,11 +1333,15 @@ async function ensureListeningSessions(){
     results JSONB,
     vocabulary JSONB,
     vocabulary_partial BOOLEAN NOT NULL DEFAULT FALSE,
+    audio_data BYTEA,
+    audio_mime TEXT,
     duration_seconds INTEGER NOT NULL DEFAULT 0,
     graded BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await query("ALTER TABLE listening_exam_sessions ADD COLUMN IF NOT EXISTS audio_data BYTEA");
+  await query("ALTER TABLE listening_exam_sessions ADD COLUMN IF NOT EXISTS audio_mime TEXT");
   await query("CREATE INDEX IF NOT EXISTS idx_listening_sessions_user_time ON listening_exam_sessions(user_id, created_at DESC)");
 }
 async function getListeningSession(id,uid){
@@ -1520,8 +1524,18 @@ app.get("/listening/sentence-audio/:id/:index",requireAuth,asyncRoute(async(req,
 app.get("/listening/audio/:id",requireAuth,asyncRoute(async(req,res)=>{
   const session=await getListeningSession(String(req.params.id||""),userId(req));
   if(!session)return res.status(404).json({error:"听力记录不存在"});
+  // Cache the first successful synthesis so historical recordings work even if TTS is later unavailable.
+  const cached=await query("SELECT audio_data,audio_mime FROM listening_exam_sessions WHERE id=$1 AND user_id=$2",[session.id,session.uid]);
+  const saved=cached.rows[0];
+  if(saved?.audio_data){
+    res.setHeader("Content-Type",saved.audio_mime||"audio/mpeg");
+    res.setHeader("Cache-Control","private, no-store");
+    return res.send(saved.audio_data);
+  }
   const result=await synthesizeTimedTts([{parts:[{text:session.transcript,language:"en-US",style:"natural",rate:1}]}],{format:"mp3"});
-  res.setHeader("Content-Type",result.mimeType||"audio/mpeg");
+  const mime=result.mimeType||"audio/mpeg";
+  await query("UPDATE listening_exam_sessions SET audio_data=$3,audio_mime=$4 WHERE id=$1 AND user_id=$2 AND audio_data IS NULL",[session.id,session.uid,result.audio,mime]);
+  res.setHeader("Content-Type",mime);
   res.setHeader("Cache-Control","private, no-store");
   res.send(result.audio);
 }));
