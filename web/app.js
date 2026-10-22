@@ -3642,7 +3642,7 @@ async function loadListeningVocabulary(sessionId){
       const exists=known.has(v.front.toLowerCase());
       return '<label style="display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e1e7ef;border-radius:12px;margin:10px 0;cursor:pointer">'+
         '<input type="checkbox" data-listening-vocab="'+i+'" '+(exists?'disabled':'')+' style="width:20px;height:20px;margin-top:4px;flex-shrink:0">'+
-        '<span><strong style="font-size:19px">'+esc(v.front)+'</strong> <small>'+esc(v.related)+(exists?' · 已在知识库':'')+'</small>'+
+        '<span><strong style="font-size:19px">'+esc(v.front)+'</strong> '+(v.ipa?'<span style="font-size:16px;color:#63758a;font-weight:500;margin-left:8px">'+esc(v.ipa)+'</span> ':'')+'<small>'+esc(v.related)+(exists?' · 已在知识库':'')+'</small>'+
         '<div style="font-size:17px;line-height:1.65">'+esc(v.back)+'</div><div class="muted">'+esc(v.example)+'</div>'+
         (v.memoryTip?'<div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff7e6;color:#654313;font-size:16px;line-height:1.6">🧠 '+esc(v.memoryMethod)+'：'+esc(v.memoryTip)+'</div>':'')+'</span></label>';
     }).join("");
@@ -3660,7 +3660,7 @@ async function importListeningVocabulary(){
     const known=new Set(cards.map(c=>String(c.front||"").trim().toLowerCase()));
     const fresh=selected.filter(c=>!known.has(c.front.toLowerCase()));
     if(!fresh.length){status.textContent="选中词汇已经存在于知识库。";return}
-    const result=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:fresh.map(c=>({front:c.front,back:c.back,example:c.example+(c.memoryTip?"\n🧠 "+c.memoryMethod+"："+c.memoryTip:""),tags:["英语","听力",c.related]}))})});
+    const result=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:fresh.map(c=>({front:c.front,back:c.back,example:(c.ipa?"🔊 音标："+c.ipa+"\n":"")+c.example+(c.memoryTip?"\n🧠 "+c.memoryMethod+"："+c.memoryTip:""),tags:["英语","听力",c.related]}))})});
     await Promise.all([loadCards(),loadDue()]);
     const saved=new Set((result.cards||[]).map(c=>String(c.front||"").trim().toLowerCase()));
     document.querySelectorAll("[data-listening-vocab]").forEach(el=>{const card=listeningVocabCards[Number(el.dataset.listeningVocab)];if(card&&saved.has(card.front.toLowerCase())){el.checked=false;el.disabled=true;}});
