@@ -3646,7 +3646,7 @@ async function loadListeningVocabulary(sessionId){
         '<div style="font-size:17px;line-height:1.65">'+esc(v.back)+'</div><div class="muted">'+esc(v.example)+'</div>'+
         (v.memoryTip?'<div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff7e6;color:#654313;font-size:16px;line-height:1.6">🧠 '+esc(v.memoryMethod)+'：'+esc(v.memoryTip)+'</div>':'')+'</span></label>';
     }).join("");
-    status.textContent="共整理 "+listeningVocabCards.length+" 个词汇。默认不导入，勾选真正需要记忆的词汇；已存在的卡片不会重复导入。";
+    status.textContent="从听力原文和题目选项共整理 "+listeningVocabCards.length+" 个词汇（原文 "+listeningVocabCards.filter(x=>x.related==="原文").length+"，选项 "+listeningVocabCards.filter(x=>x.related==="选项").length+"）。"+(result.partial?"部分来源提取失败，本次结果可能不完整。":"")+"勾选需要记忆的词汇，已存在的卡片不会重复导入。";
     importBtn.disabled=false;
     importBtn.onclick=importListeningVocabulary;
   }catch(e){status.textContent="词汇整理失败："+e.message+"。";const retry=document.createElement("button");retry.textContent="重试提取";retry.type="button";retry.className="ghost";retry.onclick=()=>loadListeningVocabulary(sessionId);status.appendChild(retry)}
