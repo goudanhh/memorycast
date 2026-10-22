@@ -242,11 +242,18 @@ export async function generateStructured({ system, user, schema, name, model, ma
   // Fast failover for free providers. Gemini is tried first, OpenRouter second
   // because it is usually a better structured-output fallback than Cloudflare.
   const order=["gemini","openrouter","cloudflare"];
+  // Feature-specific callers may request a longer timeout without changing other AI features.
+  // Keep default failover short for ordinary calls.
+  const requestedTimeout=Number(timeoutMs);
   const autoTimeouts={
     gemini:Number(process.env.AI_AUTO_GEMINI_TIMEOUT_MS||15000),
     openrouter:Number(process.env.AI_AUTO_OPENROUTER_TIMEOUT_MS||18000),
     cloudflare:Number(process.env.AI_AUTO_CLOUDFLARE_TIMEOUT_MS||15000)
   };
+  if(Number.isFinite(requestedTimeout)&&requestedTimeout>0){
+    for(const key of Object.keys(autoTimeouts))
+      autoTimeouts[key]=Math.max(autoTimeouts[key],Math.min(60000,requestedTimeout));
+  }
 
   const failures=[];
   for(const chosen of order){
