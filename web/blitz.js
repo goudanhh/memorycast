@@ -114,6 +114,9 @@ async function begin(){
     // never render it before grading.
     fetchSpeechFallback().catch(()=>{});
     warmNext();
+    // Try autoplay while user activation from Start remains; native browsers
+    // that block it can still use the prominent Play button.
+    void play();
   }catch(err){inform("开始失败："+err.message,true)}
   finally{setLoading(false)}
 }
