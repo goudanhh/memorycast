@@ -17,6 +17,11 @@ async function api(path,options={}){
   return data;
 }
 
+function lobbyStatus(message,bad=false){
+  const el=$("gameLobbyStatus");
+  el.textContent=message||"";
+  el.style.color=bad?"#b45309":"#64748b";
+}
 function notify(message,bad=false){
   const el=$("gameNotice");
   el.textContent=message||"";
@@ -44,7 +49,7 @@ async function openGames(){
   if(loading)return;
   loading=true;
   try{await Promise.all([refreshPool(),refreshStats()])}
-  catch(err){notify("载入卡片失败："+err.message,true)}
+  catch(err){lobbyStatus("载入卡片失败："+err.message,true)}
   finally{loading=false}
 }
 
@@ -61,11 +66,16 @@ async function startGame(mode){
   if(!names[mode]||loading)return;
   loading=true;
   notify("");
+  lobbyStatus("");
   try{
     await refreshPool();
+    if(mode==="listen" && (!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined")){
+      lobbyStatus("当前浏览器没有系统语音能力，可以使用其他三个游戏。",true);
+      return;
+    }
     const available=mode==="spell"?pool.filter(isSpellingCard):pool;
     if(available.length<(mode==="match"||mode==="listen"?4:1)){
-      notify(mode==="spell"?"还没有可用于拼写的英文词汇卡片。":"至少需要 4 张正反面不同的卡片才能开始这个游戏。",true);
+      lobbyStatus(mode==="spell"?"还没有可用于拼写的英文词汇卡片。":"至少需要 4 张正反面不同的卡片才能开始这个游戏。",true);
       return;
     }
     stopGame();
@@ -84,7 +94,7 @@ async function startGame(mode){
     else renderQuestion();
     updateHud();
     $("gameStage").scrollIntoView({behavior:"smooth",block:"start"});
-  }catch(err){notify("开始游戏失败："+err.message,true)}
+  }catch(err){lobbyStatus("开始游戏失败："+err.message,true);notify("开始游戏失败："+err.message,true)}
   finally{loading=false}
 }
 
@@ -262,7 +272,8 @@ function advanceGame(){
 
 async function pauseCurrentCard(){
   const s=game;
-  if(!s||s.finished||s.answered)return;
+  if(!s||s.finished||s.answered||s.busy)return;
+  s.busy=true;
   const c=s.queue[s.idx];
   try{
     await api("/cards/"+encodeURIComponent(c.id)+"/snooze",{method:"POST",body:JSON.stringify({days:7})});
@@ -273,7 +284,9 @@ async function pauseCurrentCard(){
     notify("已暂停7天，并从当前游戏队列中移除。");
     renderQuestion();
     $("gameAvailable").textContent="知识库中有 "+pool.length+" 张适合游戏的卡片（已排除近期不出现）";
+    lobbyStatus(pool.length?"选择一个游戏开始吧。":"暂时没有适合的卡片。请先从知识库中添加正反面知识卡片。",!pool.length);
   }catch(err){notify("暂停失败："+err.message,true)}
+  finally{s.busy=false}
 }
 
 async function finishGame(){
