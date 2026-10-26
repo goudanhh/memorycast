@@ -8,7 +8,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
-<link rel="stylesheet" href="/games.css?v=memory-arcade-1">
+<link rel="stylesheet" href="/games.css?v=challenge-20261026">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -80,7 +80,7 @@
   <article class="game-home-teaser">
     <div><strong>🎮 今天换一种方式记忆</strong>
       <p>不用重新录入单词，直接用知识卡片玩配对、听音、拼写和回忆闯关。</p></div>
-    <button class="btn dark" type="button" data-go="gamesPage">开始记忆游戏 →</button>
+    <button class="btn dark" type="button" data-go="gamesPage">开启挑战 →</button>
   </article>
 </section>
 
@@ -249,51 +249,73 @@
 
 <section id="gamesPage" class="page">
   <header class="game-hero">
-    <div class="eyebrow">MEMORY ARCADE</div>
-    <h1>🎮 记忆竞技场</h1>
-    <p>玩着学，而不只是刷题。自动挑选待复习、容易遗忘的知识卡片；不打乱 FSRS 记忆曲线，暂停的卡片也不会出现。</p>
+    <div class="game-orbit">✦</div>
+    <div class="eyebrow">MEMORYCAST · ARCADE 2.0</div>
+    <h1>⚡ 记忆挑战场</h1>
+    <p>有倒计时、有连击，也有真正的主动回忆。优先挑战薄弱与到期知识点，不靠反复猜选项通关。</p>
+    <div class="game-hero-meta"><span>⚡ 极限反应</span><span>🛡️ 错题攻坚</span><span>🧠 深度回忆</span></div>
   </header>
   <div class="game-summary" aria-label="游戏学习统计">
-    <article><span>累计训练次数</span><strong id="gameStatTotal">—</strong></article>
+    <article><span>累计答题</span><strong id="gameStatTotal">—</strong></article>
     <article><span>历史正确率</span><strong id="gameStatAccuracy">—</strong></article>
-    <article><span>近7天训练</span><strong id="gameStatWeek">—</strong></article>
-    <article><span>练过的知识点</span><strong id="gameStatCards">—</strong></article>
+    <article><span>7天练习量</span><strong id="gameStatWeek">—</strong></article>
+    <article><span>覆盖知识点</span><strong id="gameStatCards">—</strong></article>
   </div>
   <div class="game-section-title">
-    <h2>选择你的挑战</h2>
-    <span id="gameAvailable" class="muted">打开本页后载入卡片…</span>
+    <h2>选择挑战模式</h2>
+    <span id="gameAvailable" class="muted">正在载入你的知识卡…</span>
   </div>
   <div id="gameLobbyStatus" role="status"></div>
   <div id="gameModes" class="game-mode-grid">
     <button type="button" class="game-mode-card" data-game-mode="match">
-      <span class="game-emoji">🧩</span><strong>词义配对</strong>
-      <span>从左右两列快速找出对应的知识点与释义。适合建立关联，至少需要4张卡片。</span>
-    </button>
-    <button type="button" class="game-mode-card" data-game-mode="listen">
-      <span class="game-emoji">🎧</span><strong>听音辨义</strong>
-      <span>只听发音选择释义，不先显示文字。练英语听辨与快速反应。</span>
-    </button>
-    <button type="button" class="game-mode-card" data-game-mode="spell">
-      <span class="game-emoji">⌨️</span><strong>拼写挑战</strong>
-      <span>看中文释义回忆并拼写英文词语，支持首字母提示。<b id="gameSpellCount">—</b></span>
+      <span class="game-mode-top"><span class="game-emoji">⚡</span><span class="game-mode-difficulty">60 秒 · 3 颗心</span></span>
+      <strong>闪电生存战</strong>
+      <span>在倒计时里连续作答，答错掉心。每隔几题切换为真正的拼写回忆，不能全靠猜。</span>
+      <span class="game-mode-enter">进入战场 ↗</span>
     </button>
     <button type="button" class="game-mode-card" data-game-mode="recall">
-      <span class="game-emoji">🧠</span><strong>回忆闯关</strong>
-      <span>先尝试回忆答案，再翻牌自评。遗忘的卡片会在本局末尾重新出现。</span>
+      <span class="game-mode-top"><span class="game-emoji">🛡️</span><span class="game-mode-difficulty">薄弱点 · 无硬时限</span></span>
+      <strong>错题 Boss 战</strong>
+      <span>先写出你的理解，再核对答案。每掌握一个知识点就击破一层护盾，错题会在后面再次出现。</span>
+      <span class="game-mode-enter">开始攻坚 ↗</span>
+    </button>
+    <button type="button" class="game-mode-card" data-game-mode="listen">
+      <span class="game-mode-top"><span class="game-emoji">🎧</span><span class="game-mode-difficulty">18 秒/题 · 3 颗心</span></span>
+      <strong>音速追击</strong>
+      <span>只听声音，不看原词。按 1–4 快速选择释义，连续正确可以提升积分倍率。</span>
+      <span class="game-mode-enter">开启追击 ↗</span>
+    </button>
+    <button type="button" class="game-mode-card" data-game-mode="spell">
+      <span class="game-mode-top"><span class="game-emoji">⌨️</span><span class="game-mode-difficulty">17 秒/题 · 3 颗心</span></span>
+      <strong>极限拼写</strong>
+      <span>看到释义立刻拼出英文。支持首字母提示，但使用提示会减少得分。<b id="gameSpellCount">—</b></span>
+      <span class="game-mode-enter">开启冲刺 ↗</span>
     </button>
   </div>
   <article id="gameStage" class="panel game-stage hidden">
     <div class="game-stage-head">
-      <div><div class="eyebrow">CHALLENGE IN PROGRESS</div><h2 id="gameStageTitle">记忆挑战</h2></div>
-      <button id="gameExit" type="button" class="ghost">退出本局</button>
+      <div><div class="eyebrow" id="gameChallengeType">CHALLENGE IN PROGRESS</div>
+        <h2 id="gameStageTitle">挑战模式</h2>
+      </div>
+      <div class="game-stage-controls"><button id="gameSoundToggle" type="button" class="game-exit" aria-pressed="false">🔇 音效关</button><button id="gameExit" type="button" class="game-exit">退出挑战</button></div>
     </div>
     <div class="game-hud">
       <span>进度 <b id="gameStep">0 / 0</b></span>
-      <span>积分 <b id="gameScore">0</b></span>
-      <span>成功回忆 <b id="gameCombo">0</b></span>
-      <span>用时 <b id="gameClock">0:00</b></span>
+      <span>得分 <b id="gameScore">0</b></span>
+      <span>连击 <b id="gameCombo">0</b></span>
+      <span><span id="gameClockLabel">本局用时</span> <b id="gameClock">0:00</b></span>
+      <span id="gameLivesWrap">生命 <b id="gameLives">❤❤❤</b></span>
+      <span id="gameRoundTimerWrap">本题倒计时 <b id="gameRoundTimer">—</b></span>
     </div>
-    <div class="game-progress" aria-label="本局完成进度"><div id="gameBar" style="width:0"></div></div>
+    <div class="game-progress" aria-label="完成进度"><div id="gameBar" style="width:0"></div></div>
+    <div class="game-round-progress"><div id="gameRoundBar" style="width:0"></div></div>
+    <div id="gameBossPanel" class="game-boss-panel hidden">
+      <div class="game-boss-avatar">🛡️</div>
+      <div class="game-boss-health">
+        <div class="game-boss-info"><strong>薄弱知识护盾</strong><span id="gameBossText">等待开始</span></div>
+        <div class="game-boss-track"><div id="gameBossBar" style="width:100%"></div></div>
+      </div>
+    </div>
     <div id="gameBoard" class="game-board"></div>
     <p id="gameNotice" class="game-notice" role="status" aria-live="polite"></p>
   </article>
@@ -458,7 +480,7 @@
 </div>
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
-<script type="module" src="/games.js?v=memory-arcade-1"></script>
+<script type="module" src="/games.js?v=challenge-20261026"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
