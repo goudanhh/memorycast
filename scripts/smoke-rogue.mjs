@@ -88,6 +88,29 @@ try{
   console.log("Browser smoke PASS: navigation, profile, paid upgrade, Canvas arena, tower build, keyboard move, dash, enemy wave.");
   console.log("Screenshot:",location);
   await page.close();
+
+  // Mobile viewport is narrow and has a hidden slide-out sidebar.
+  const mobile=await browser.newPage({
+    viewport:{width:390,height:844},deviceScaleFactor:2,isMobile:true,hasTouch:true
+  });
+  const mobileErrors=[];
+  mobile.on("pageerror",err=>mobileErrors.push(err.message));
+  await mobile.goto("http://127.0.0.1:"+port+"/",{waitUntil:"load"});
+  await mobile.evaluate(()=>document.querySelector('[data-page="gamesPage"]').click());
+  await mobile.locator("#rogueSectors [data-sector='1']").waitFor({state:"visible"});
+  await mobile.locator("#rogueSectors [data-sector='1']").tap();
+  await mobile.locator("#rogueCanvas").waitFor({state:"visible"});
+  assert.equal(await mobile.locator(".rogue-mobile-pad").isVisible(),true);
+  await mobile.locator('[data-rogue-dir="right"]').tap();
+  await mobile.locator("#rogueDash").tap();
+  await mobile.locator("#rogueBuild").tap();
+  await mobile.waitForFunction(()=>document.getElementById("rogueGold")?.textContent==="15",null,{timeout:8000});
+  assert.equal(mobileErrors.length,0,"Unexpected mobile browser errors:\n"+mobileErrors.join("\n"));
+  const mobileScreenshot=resolve(import.meta.dirname,"../artifacts/rogue-mobile-gameplay.png");
+  await mobile.screenshot({path:mobileScreenshot,fullPage:true,animations:"disabled"});
+  console.log("Mobile Chromium smoke PASS: responsive arena, touchscreen movement, dash, tower placement.");
+  console.log("Mobile screenshot:",mobileScreenshot);
+  await mobile.close();
 }finally{
   if(browser)await browser.close();
   await new Promise(done=>server.close(done));
