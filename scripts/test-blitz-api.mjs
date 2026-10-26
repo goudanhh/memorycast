@@ -13,7 +13,7 @@ const app=spawn(process.execPath,["src/server.js"],{
 });
 let logs="";app.stdout.on("data",c=>logs+=c);app.stderr.on("data",c=>logs+=c);
 const req=async(path,body,method=body===undefined?"GET":"POST")=>{
- const r=await fetch(base+path,{method,headers:{"Content-Type":"application/json"},
+ const r=await fetch(base+path.replace(/^\/api(?=\/)/,""),{method,headers:{"Content-Type":"application/json"},
  ...(body!==undefined?{body:JSON.stringify(body)}:{})});
  let data={};try{data=await r.json()}catch{}
  return {status:r.status,data};
