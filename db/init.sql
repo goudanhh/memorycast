@@ -172,3 +172,17 @@ CREATE TABLE IF NOT EXISTS adventure_progress (
   completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY(user_id,level)
 );
+
+
+-- Persistent hybrid arcade equipment and unlocked worlds; no FSRS changes.
+CREATE TABLE IF NOT EXISTS arcade_profiles (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  coins INTEGER NOT NULL DEFAULT 0 CHECK(coins>=0),
+  total_xp INTEGER NOT NULL DEFAULT 0 CHECK(total_xp>=0),
+  runs INTEGER NOT NULL DEFAULT 0,
+  best_wave INTEGER NOT NULL DEFAULT 0,
+  highest_sector INTEGER NOT NULL DEFAULT 1 CHECK(highest_sector BETWEEN 1 AND 3),
+  wins INTEGER NOT NULL DEFAULT 0,
+  upgrades JSONB NOT NULL DEFAULT '{"power":0,"armor":0,"magnet":0}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
