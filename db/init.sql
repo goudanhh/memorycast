@@ -162,3 +162,13 @@ ALTER TABLE cards
 
 
 
+
+-- Story campaign progress. Preserve previous cards and game attempts.
+CREATE TABLE IF NOT EXISTS adventure_progress (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 8),
+  stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 3),
+  best_seconds INTEGER NOT NULL CHECK (best_seconds BETWEEN 1 AND 3600),
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(user_id,level)
+);

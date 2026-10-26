@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
 <link rel="stylesheet" href="/games.css?v=challenge-20261026">
+<link rel="stylesheet" href="/adventure.css?v=story-1">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -34,7 +35,7 @@
     <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="quizPage">📝 AI 测试</button>
-    <button data-page="gamesPage">🎮 记忆游戏</button>
+    <button data-page="gamesPage">🗺️ 记忆冒险</button>
     <button data-page="listeningPage">🎧 AI 听力考试</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="libraryPage">📚 知识库</button>
@@ -248,6 +249,74 @@
 </section>
 
 <section id="gamesPage" class="page">
+  <div id="adventureShell" class="adventure-shell">
+    <header class="adventure-heading">
+      <div class="adventure-heading-copy">
+        <span class="adventure-kicker">MEMORYCAST · STORY ADVENTURE</span>
+        <h1>🌌 记忆冒险：失落的知识之光</h1>
+        <p>移动角色探索世界，躲避巡逻影子，找齐知识水晶，打败守卫，解锁下一张地图。你的知识卡片决定能否通关。</p>
+      </div>
+      <div class="adventure-hero-crystal" aria-hidden="true">💎</div>
+    </header>
+    <div id="adventureCampaign" class="adventure-campaign">
+      <div class="adventure-campaign-head">
+        <div><span class="adventure-kicker">CHAPTER SELECT</span><h2>选择冒险关卡</h2></div>
+        <button id="adventureReload" class="adventure-secondary" type="button">↻ 刷新进度</button>
+      </div>
+      <div class="adventure-progress-meta">
+        <span id="adventureUnlocked">载入中…</span>
+        <span id="adventureTotalStars">—</span>
+        <span id="adventureLibraryCount">正在读取知识库…</span>
+      </div>
+      <div id="adventureChapters" class="adventure-chapters" aria-label="关卡地图"></div>
+      <div class="adventure-campaign-tip">🔒 按顺序解锁 · 每关收集三枚水晶 · 答错会损失生命 · 通关最多三星</div>
+    </div>
+    <section id="adventureWorldPanel" class="adventure-world-panel hidden" data-world="0">
+      <div class="adventure-world-header">
+        <div><span class="adventure-kicker">NOW EXPLORING</span><h2 id="adventureName">探险地图</h2><p id="adventureStory"></p></div>
+        <button id="adventureBack" class="adventure-secondary" type="button">← 返回关卡地图</button>
+      </div>
+      <div id="adventureWorldContent">
+        <div class="adventure-hud">
+          <div>生命 <b id="adventureHearts">❤️❤️❤️</b></div>
+          <div>水晶 <b id="adventureCrystals">0 / 3</b></div>
+          <div>Boss 护盾 <b id="adventureBossProgress">0 / 1</b></div>
+          <div>探索时间 <b id="adventureElapsed">0s</b></div>
+        </div>
+        <div id="adventureMotto" class="adventure-motto"></div>
+        <div class="adventure-map-shell">
+          <div id="adventureMap" class="adventure-map" aria-label="冒险地图，使用键盘或屏幕方向键移动角色"></div>
+        </div>
+        <div class="adventure-guide">
+          <span>🧑‍🚀 角色</span><span>💎 知识水晶</span><span>👾 巡逻敌人</span><span>🌀 关底出口</span><span>🪨 障碍</span>
+        </div>
+        <div class="adventure-movement">
+          <div class="adventure-movement-help">电脑：方向键 / WASD　手机：点击方向按钮移动</div>
+          <div class="adventure-dpad" aria-label="移动控制">
+            <button type="button" data-adventure-move="up" aria-label="向上">▲</button>
+            <div>
+              <button type="button" data-adventure-move="left" aria-label="向左">◀</button>
+              <button type="button" data-adventure-move="down" aria-label="向下">▼</button>
+              <button type="button" data-adventure-move="right" aria-label="向右">▶</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="adventureEndScreen" class="adventure-end hidden"></div>
+      <div id="adventureQuest" class="adventure-quest hidden" role="dialog" aria-modal="true" aria-labelledby="adventureQuestTitle">
+        <div class="adventure-quest-card">
+          <span class="adventure-kicker">KNOWLEDGE CHALLENGE</span>
+          <h3 id="adventureQuestTitle">知识机关</h3>
+          <p id="adventureQuestSubtitle"></p>
+          <div class="adventure-question-text" id="adventureQuestionPrompt"></div>
+          <div id="adventureAnswers"></div>
+        </div>
+      </div>
+    </section>
+    <div id="adventureNotice" class="adventure-notice" role="status" aria-live="polite">进入冒险地图，寻找知识水晶。</div>
+  </div>
+  <details class="adventure-classic">
+    <summary>⚡ 经典限时练习 <span>展开旧版小游戏</span></summary>
   <header class="game-hero">
     <div class="game-orbit">✦</div>
     <div class="eyebrow">MEMORYCAST · ARCADE 2.0</div>
@@ -319,6 +388,7 @@
     <div id="gameBoard" class="game-board"></div>
     <p id="gameNotice" class="game-notice" role="status" aria-live="polite"></p>
   </article>
+  </details>
 </section>
 
 <section id="libraryPage" class="page">
@@ -481,6 +551,7 @@
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
 <script type="module" src="/games.js?v=challenge-20261026"></script>
+<script type="module" src="/adventure.js?v=story-1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">

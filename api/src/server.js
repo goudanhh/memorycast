@@ -156,6 +156,16 @@ await query(`
 await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_user_time ON game_attempts(user_id,created_at DESC)`);
 await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_card_time ON game_attempts(card_id,created_at DESC)`);
 await query(`
+  CREATE TABLE IF NOT EXISTS adventure_progress (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 8),
+    stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 3),
+    best_seconds INTEGER NOT NULL CHECK (best_seconds BETWEEN 1 AND 3600),
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(user_id,level)
+  )
+`);
+await query(`
   UPDATE cards
   SET tags = ARRAY[
     TO_CHAR(created_at AT TIME ZONE 'UTC','YYYY-MM-DD'),
@@ -886,6 +896,39 @@ app.post("/games/attempt", requireAuth, asyncRoute(async(req,res)=>{
   `,[userId(req),cardId,mode,correct,ms]);
   if(!rows.length)return res.status(404).json({error:"Card not found or paused"});
   res.status(201).json({ok:true});
+}));
+
+// The adventure stores completed levels separately from individual practice
+// attempts. Existing FSRS scheduling is deliberately unchanged.
+app.get("/adventure/progress",requireAuth,asyncRoute(async(req,res)=>{
+  const {rows}=await query(
+    "SELECT level,stars,best_seconds,completed_at FROM adventure_progress WHERE user_id=$1 ORDER BY level",
+    [userId(req)]
+  );
+  res.json({levels:rows,highestCompleted:rows.reduce((max,row)=>Math.max(max,row.level),0)});
+}));
+
+app.post("/adventure/complete",requireAuth,asyncRoute(async(req,res)=>{
+  const level=Number(req.body?.level),stars=Number(req.body?.stars),seconds=Number(req.body?.seconds);
+  if(!Number.isInteger(level)||level<1||level>8||
+     !Number.isInteger(stars)||stars<1||stars>3||
+     !Number.isInteger(seconds)||seconds<1||seconds>3600){
+    return res.status(400).json({error:"Invalid adventure completion"});
+  }
+  // The previous level must be completed on this same user account.
+  const {rows}=await query(`
+    INSERT INTO adventure_progress(user_id,level,stars,best_seconds)
+    SELECT $1,$2,$3,$4 WHERE $2=1 OR EXISTS(
+      SELECT 1 FROM adventure_progress WHERE user_id=$1 AND level=$2-1
+    )
+    ON CONFLICT(user_id,level)
+    DO UPDATE SET
+      stars=GREATEST(adventure_progress.stars,EXCLUDED.stars),
+      best_seconds=LEAST(adventure_progress.best_seconds,EXCLUDED.best_seconds)
+    RETURNING level,stars,best_seconds,completed_at
+  `,[userId(req),level,stars,seconds]);
+  if(!rows.length)return res.status(409).json({error:"请先通关上一关"});
+  res.json({ok:true,record:rows[0],unlocked:Math.min(8,level+1)});
 }));
 
 app.get("/games/stats", requireAuth, asyncRoute(async(req,res)=>{

@@ -23,3 +23,5 @@ jobs:
         run: node scripts/check-games.mjs
       - name: Verify retired Feynman feature is removed
         run: node scripts/check-remove-feynman.mjs
+      - name: Test knowledge adventure levels and progression
+        run: node scripts/check-adventure.mjs
