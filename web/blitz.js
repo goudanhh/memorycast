@@ -7,6 +7,8 @@ const PAGES=["blitzWelcome","blitzWorkout","blitzResults"];
 let duration=45,statsDays=7,current=null,loading=false,localPlays=0,
   ttsText=null,ttsLoading=null,ownSpeech=null,audioError=false,result=null,startTime=0;
 const audio=$("blitzAudio");
+const resultAudio=$("blitzResultAudio");
+let replayMode="idle",replayBusy=false,replayAudioFailed=false;
 const api=async(path,options={})=>{
   const res=await fetch("/api"+path,{
     ...options,headers:{"Content-Type":"application/json",...(options.headers||{})}
@@ -20,9 +22,30 @@ function inform(message="",bad=false){
   $("blitzStatus").textContent=message;
   $("blitzStatus").classList.toggle("error",bad);
 }
+function setReplayState(kind,message){
+  const button=$("blitzTranscriptReplay");
+  button.textContent=kind==="playing"?"⏸ 暂停复听":
+    kind==="paused"?"▶ 继续复听":"🔊 复听原文";
+  button.disabled=kind==="loading";
+  button.setAttribute("aria-label",button.textContent);
+  $("blitzReplayStatus").textContent=message;
+  $("blitzReplayStatus").classList.toggle("error",kind==="error");
+}
+function stopReplay(){
+  // A completed replay is not another test attempt. No /blitz/play call.
+  replayMode="idle";replayBusy=false;
+  resultAudio.pause();
+  try{resultAudio.currentTime=0}catch{}
+  resultAudio.removeAttribute("src");
+  if(ownSpeech){
+    ownSpeech=null;
+    if("speechSynthesis" in window)try{speechSynthesis.cancel()}catch{}
+  }
+  setReplayState("idle","点击按钮复听本组音频，不影响已保存的首听成绩。");
+}
 function stopAudio(){
   audio.pause();audio.currentTime=0;
-  if(ownSpeech){speechSynthesis.cancel();ownSpeech=null}
+  stopReplay();
 }
 function setLoading(active){
   loading=active;
@@ -83,7 +106,7 @@ async function begin(){
   stopAudio();setLoading(true);inform("正在取出一段全新的听力…");
   try{
     const x=await api("/blitz/start",{method:"POST",body:JSON.stringify({duration})});
-    current=x;result=null;localPlays=0;ttsText=null;ttsLoading=null;audioError=false;
+    current=x;result=null;localPlays=0;ttsText=null;ttsLoading=null;audioError=false;replayAudioFailed=false;
     startTime=performance.now();
     audio.removeAttribute("src");audio.load();
     $("blitzWorkoutTitle").textContent=x.title;
@@ -179,6 +202,106 @@ async function play(){
 }
 audio.addEventListener("ended",()=>{$("blitzAudioState").textContent="音频结束。可以作答，或按需要重新播放。"});
 audio.addEventListener("error",()=>{audioError=true;});
+
+resultAudio.addEventListener("ended",()=>{
+  if(replayMode==="audio"){
+    replayMode="idle";
+    setReplayState("idle","原音频播放完毕，可以再次复听。");
+  }
+});
+resultAudio.addEventListener("error",()=>{replayAudioFailed=true;});
+function speakTranscript(){
+  if(!result?.transcript)return;
+  if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance!=="function"){
+    return setReplayState("error","音频服务暂不可用，此浏览器也不支持语音朗读。");
+  }
+  const synth=window.speechSynthesis;
+  try{
+    // Do not cancel a previously completed utterance: cancel() immediately
+    // followed by speak() can silently fail on iOS Safari.
+    if(synth.speaking||synth.pending)synth.cancel();
+    const utterance=new SpeechSynthesisUtterance(result.transcript);
+    utterance.lang="en-US";utterance.rate=1;utterance.pitch=1;utterance.volume=1;
+    const voices=synth.getVoices().filter(v=>v.lang.toLowerCase().startsWith("en"));
+    utterance.voice=voices.find(v=>v.lang==="en-US")||voices[0]||null;
+    let started=false;
+    utterance.onstart=()=>{
+      if(ownSpeech!==utterance)return;
+      started=true;replayMode="speech";
+      setReplayState("playing","正在使用 iPhone / 浏览器的英语语音朗读原文…");
+    };
+    utterance.onend=()=>{
+      if(ownSpeech!==utterance)return;
+      ownSpeech=null;replayMode="idle";
+      setReplayState("idle","英语朗读结束，可以再次复听。");
+    };
+    utterance.onerror=e=>{
+      if(ownSpeech!==utterance)return;
+      ownSpeech=null;replayMode="idle";
+      setReplayState("error","系统语音播放失败（"+(e.error||"未知错误")+"）。请检查媒体音量后再试。");
+    };
+    ownSpeech=utterance;replayMode="speech";
+    setReplayState("loading","正在启动手机英语语音…");
+    // speak() runs synchronously within the button tap's user activation.
+    synth.speak(utterance);
+    // Safari sometimes silently ignores speak(): show an actionable state
+    // rather than leaving the button apparently inert.
+    setTimeout(()=>{
+      if(ownSpeech!==utterance||started)return;
+      ownSpeech=null;replayMode="idle";
+      try{synth.cancel()}catch{}
+      setReplayState("error","手机语音没有启动。请检查媒体音量或 iOS 英语语音设置，再点击重试。");
+    },5000);
+  }catch(e){
+    ownSpeech=null;replayMode="idle";
+    setReplayState("error","无法启动手机语音："+e.message);
+  }
+}
+function replayTranscript(){
+  if(!result?.transcript||!current?.audioUrl){
+    return setReplayState("error","当前听力音频不可用，请返回重新开始一组。");
+  }
+  if(replayBusy)return;
+  if(replayMode==="audio"){
+    resultAudio.pause();replayMode="audio-paused";
+    return setReplayState("paused","已暂停，点击继续播放。");
+  }
+  if(replayMode==="speech"){
+    try{
+      speechSynthesis.pause();replayMode="speech-paused";
+      setReplayState("paused","系统语音已暂停，点击继续。");
+    }catch(e){setReplayState("error","暂停失败："+e.message)}
+    return;
+  }
+  if(replayMode==="speech-paused"){
+    try{
+      speechSynthesis.resume();replayMode="speech";
+      setReplayState("playing","正在继续朗读原文…");
+    }catch(e){setReplayState("error","继续播放失败："+e.message)}
+    return;
+  }
+  if(audioError||replayAudioFailed){
+    // This branch stays entirely inside the user's click event, which
+    // preserves Safari's gesture requirement for speechSynthesis.
+    speakTranscript();
+    return;
+  }
+  replayBusy=true;
+  const resume=replayMode==="audio-paused";
+  setReplayState("loading",resume?"正在继续播放…":"正在加载原音频…");
+  if(!resume){
+    resultAudio.src=current.audioUrl;
+    resultAudio.currentTime=0;
+  }
+  resultAudio.play().then(()=>{
+    replayMode="audio";
+    setReplayState("playing","正在播放本次听力原音频；再次点击可暂停。");
+  }).catch(()=>{
+    replayAudioFailed=true;replayMode="idle";
+    setReplayState("idle","原音频暂时无法播放，请再次点击，改用手机英语语音朗读。");
+  }).finally(()=>{replayBusy=false});
+}
+
 function readAnswers(){
   return Object.fromEntries(current.questions.map(q=>{
     const field=$("blitzAnswers").querySelector('[data-fill="'+q.id+'"]');
@@ -212,6 +335,7 @@ async function submit(){
     $("blitzReplayTotal").textContent=result.playCount+" 次";
     $("blitzDoneNote").textContent="首听结果、重听次数和错误类型均已保存。新素材会优先覆盖你的薄弱技能；这不是官方 TOEFL/IELTS 分数。";
     show("blitzResults");
+    setReplayState("idle","点击按钮复听本组音频，不影响已保存的首听成绩。");
     inform("已保存本次结果。");
     loadInsights();
   }catch(err){inform("提交未成功："+err.message,true)}
@@ -234,9 +358,7 @@ $("blitzBack").onclick=()=>{
   loadInsights();
 };
 $("blitzNext").onclick=()=>{current=null;show("blitzWelcome");begin();};
-$("blitzTranscriptReplay").onclick=()=>{
-  if(result?.transcript)try{browserSpeak(result.transcript,1)}catch(e){inform(e.message,true)}
-};
+$("blitzTranscriptReplay").onclick=replayTranscript;
 document.querySelectorAll("[data-blitz-duration]").forEach(button=>
   button.addEventListener("click",()=>{
     duration=Number(button.dataset.blitzDuration);
