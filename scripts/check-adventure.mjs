@@ -53,6 +53,9 @@ for(let level=1;level<=ADVENTURE_LEVEL_COUNT;level++){
   collected.add(a.crystals[0].id);
   assert.equal(findTokenAt(a,a.crystals[0].x,a.crystals[0].y,collected),null);
   for(const enemy of a.enemies){
+    for(const place of enemy.route){
+      assert.ok(!a.crystals.some(c=>c.x===place.x&&c.y===place.y),"Enemy would camp on a crystal");
+    }
     for(let t=0;t<enemy.route.length*2;t++){
       const p=enemyPosition(enemy,t);
       assert.ok(isWalkable(a,p.x,p.y),"Enemy patrol enters blocked tile");
