@@ -8,6 +8,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
+<link rel="stylesheet" href="/blitz.css?v=1">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -33,6 +34,7 @@
     <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="quizPage">📝 AI 测试</button>
+    <button data-page="blitzPage">⚡ 听力闪击</button>
     <button data-page="listeningPage">🎧 AI 听力考试</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="libraryPage">📚 知识库</button>
@@ -75,6 +77,11 @@
     <article class="panel"><div class="eyebrow">AI</div><h2>✨ 整理笔记</h2><p class="muted">粘贴长笔记，自动拆成知识卡。</p><button class="btn dark" data-go="importPage">整理笔记</button></article>
     <article class="panel"><div class="eyebrow">QUIZ</div><h2>📝 AI 测试</h2><p class="muted">选择、填空、简答、听力。</p><button class="btn dark" data-go="quizPage">开始测试</button></article>
   </div>
+  <article class="blitz-home-shortcut">
+    <div><strong>⚡ 45 秒 · 听力闪击</strong>
+      <p>打开就听英文，回答两道小题，立即查看首听成绩与漏听细节。</p></div>
+    <button class="btn dark" type="button" data-go="blitzPage">立即听一组 →</button>
+  </article>
 </section>
 
 <section id="todayPage" class="page">
@@ -201,6 +208,108 @@
     <div id="listeningResult" class="hidden"></div><div id="listeningInsights" class="listening-insights"></div>
   </article>
 </section>
+<section id="blitzPage" class="page">
+  <div class="blitz-shell" id="blitzShell">
+    <header class="blitz-hero">
+      <div><span class="blitz-eyebrow">LISTENING BLITZ · MICRO PRACTICE</span>
+        <h1>⚡ 听力闪击</h1>
+        <p>利用碎片时间高频磨耳朵。先盲听，再答题，交卷后解锁逐题解析。首听与重听成绩分开统计，下一轮优先练薄弱能力。</p>
+      </div>
+      <span class="blitz-hero-symbol" aria-hidden="true">🎧</span>
+    </header>
+    <section id="blitzWelcome" class="blitz-main">
+      <article class="blitz-panel">
+        <span class="blitz-section-label">ONE-TAP TRAINING</span>
+        <div class="blitz-header-line"><h2>现在开始一组短听力</h2><small id="blitzTiming">2 题 · 标准闪击</small></div>
+        <div class="blitz-duration-grid" aria-label="推荐训练长度">
+          <button type="button" data-blitz-duration="20" class="blitz-duration"><strong>20 秒</strong><span>快速辨音</span><small>1 题</small></button>
+          <button type="button" data-blitz-duration="45" class="blitz-duration active"><strong>45 秒</strong><span>标准闪击</span><small>2 题 · 推荐</small></button>
+          <button type="button" data-blitz-duration="90" class="blitz-duration"><strong>90 秒</strong><span>短对话</span><small>3 题</small></button>
+        </div>
+        <p class="blitz-lead">按下开始即抽取新材料，建议第一次只听一遍。时长是练习目标，不是强制倒计时；重听不会被当作首听正确。</p>
+        <button id="blitzStart" class="blitz-primary" type="button" style="width:100%">▶ 开始闪击</button>
+        <div class="blitz-cue"><span>默认无字幕</span><span>自动换主题</span><span>错误技能加权</span><span>新内容优先</span></div>
+        <div class="blitz-weak-focus"><small>下次优先突破</small><strong id="blitzFocus">读取记录中…</strong></div>
+      </article>
+      <article class="blitz-panel">
+        <span class="blitz-section-label">PROGRESS ANALYTICS</span>
+        <div class="blitz-header-line"><h2>我的听力表现</h2>
+          <div class="blitz-period-switch" aria-label="训练统计时间范围">
+            <button type="button" data-blitz-days="7" class="active" aria-pressed="true">7 天</button>
+            <button type="button" data-blitz-days="30" aria-pressed="false">30 天</button>
+            <button type="button" data-blitz-days="90" aria-pressed="false">90 天</button>
+          </div>
+        </div>
+        <div class="blitz-mini-metrics">
+          <div><small>完成的闪击</small><strong id="blitzSessionCount">—</strong></div>
+          <div><small>首听正确率</small><strong id="blitzFirstAccuracy">—</strong></div>
+          <div><small>总体正确率</small><strong id="blitzTotalAccuracy">—</strong></div>
+          <div><small>已测试题目</small><strong id="blitzQuestionCount">—</strong></div>
+        </div>
+        <h3>听力技能分布</h3>
+        <div id="blitzSkills" class="blitz-skill-list"><p class="blitz-empty">加载中…</p></div>
+        <h3>每日正确率趋势</h3>
+        <div id="blitzTrend" class="blitz-chart"></div>
+        <h3>最近训练</h3>
+        <div id="blitzRecent" class="blitz-recent"></div>
+      </article>
+    </section>
+
+    <section id="blitzWorkout" class="blitz-panel hidden">
+      <div class="blitz-work-header"><div>
+        <span class="blitz-section-label">AUDIO FIRST</span>
+        <h2 id="blitzWorkoutTitle">听力闪击中</h2>
+        <p id="blitzWorkoutMeta">约 45 秒 · 2 题</p>
+      </div><div class="blitz-work-focus" id="blitzWorkoutFocus">细节捕捉</div></div>
+      <div class="blitz-listen-box">
+        <div class="blitz-audio-glyph" aria-hidden="true">🎧</div>
+        <h3>先听声音，再理解</h3>
+        <p id="blitzAudioState">先播放声音，暂不显示文字。</p>
+        <div class="blitz-wave" aria-hidden="true">
+          <i style="--b:1"></i><i style="--b:.5"></i><i style="--b:1.2"></i>
+          <i style="--b:.8"></i><i style="--b:1.5"></i><i style="--b:.6"></i>
+          <i style="--b:1.4"></i><i style="--b:.7"></i><i style="--b:1.1"></i>
+        </div>
+        <div class="blitz-listen-actions">
+          <button id="blitzPlay" class="blitz-play" type="button">▶ 播放 / 重听</button>
+          <select id="blitzRate" aria-label="英语播放语速">
+            <option value=".9">0.9×</option><option value="1" selected>1.0×</option>
+            <option value="1.1">1.1×</option><option value="1.2">1.2×</option>
+          </select>
+          <span class="blitz-play-count">播放 <strong id="blitzPlayCount">0 次</strong></span>
+        </div>
+        <small id="blitzSource">精选短听力</small>
+        <audio id="blitzAudio" preload="none"></audio>
+      </div>
+      <div class="blitz-quiz-head"><h3>现在回答问题</h3><small>答案和原文在交卷前隐藏</small></div>
+      <div id="blitzAnswers"></div>
+      <div class="blitz-submit-row">
+        <small>想不起来也可以重听，但系统会分开记录掌握程度。</small>
+        <button id="blitzSubmit" type="button" class="blitz-primary" disabled>提交并评分 →</button>
+      </div>
+    </section>
+
+    <section id="blitzResults" class="blitz-panel hidden">
+      <div class="blitz-result-hero"><span>🎯</span><h2 id="blitzScore">0 / 2</h2>
+        <p id="blitzScoringType">首听完成</p>
+      </div>
+      <h3>每道题的答案与原文依据</h3>
+      <div id="blitzExplanation"></div>
+      <h3>英文原文（提交后解锁）</h3>
+      <div id="blitzTranscript" class="blitz-transcript"></div>
+      <div class="blitz-cue"><span>本组播放 <b id="blitzReplayTotal">1 次</b></span>
+        <button type="button" class="blitz-secondary" id="blitzTranscriptReplay">🔊 复听原文</button></div>
+      <p class="blitz-footnote" id="blitzDoneNote"></p>
+      <div class="blitz-results-actions">
+        <button type="button" class="blitz-secondary" id="blitzBack">查看能力报告</button>
+        <button type="button" class="blitz-primary" id="blitzNext">⚡ 下一次闪击 →</button>
+      </div>
+    </section>
+    <p id="blitzStatus" class="blitz-status" role="status" aria-live="polite">准备好了就开始，一次只听几十秒。</p>
+    <button type="button" class="hidden" id="blitzRetry" aria-hidden="true" tabindex="-1">重新开始</button>
+  </div>
+</section>
+
 <section id="quizPage" class="page">
   <article class="panel">
     <div class="panel-head">
@@ -399,6 +508,7 @@
 </div>
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
+<script type="module" src="/blitz.js?v=1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
