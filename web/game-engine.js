@@ -50,3 +50,45 @@ export function scoreForResult(mode, correct, elapsedMs=0, usedHint=false) {
   const base = mode==="spell"?16:mode==="listen"?12:10;
   return Math.max(1, base - (usedHint?5:0) - Math.min(4,Math.floor(Math.max(0,elapsedMs)/12000)));
 }
+
+
+// Keep the persisted mode identifiers for backward-compatible game history.
+export const CHALLENGES = Object.freeze({
+  match:{title:"闪电生存战",limit:60,lives:3,round:11,count:15},
+  listen:{title:"音速追击",limit:0,lives:3,round:18,count:10},
+  spell:{title:"极限拼写",limit:0,lives:3,round:17,count:10},
+  recall:{title:"错题 Boss 战",limit:0,lives:0,round:0,count:6}
+});
+
+// Priority-biased variety: pick primarily weak/due cards without always
+// choosing the identical top-N entries at every start.
+export function chooseChallengeCards(cards, count, random=Math.random) {
+  const ordered=uniqueGameCards(cards).sort((a,b)=>Number(b.priority||0)-Number(a.priority||0));
+  const window=ordered.slice(0,Math.min(ordered.length,Math.max(count*3,12)));
+  const top=window.slice(0,Math.min(count,window.length));
+  const variety=window.slice(top.length);
+  // At most 1/3 of the round comes from outside the highest-priority bucket.
+  const replacements=Math.min(Math.floor(count/3),variety.length);
+  const selected=shuffle(top,random).slice(replacements)
+    .concat(shuffle(variety,random).slice(0,replacements));
+  return shuffle(selected,random);
+}
+
+export function challengeKind(mode,card,index) {
+  if(mode==="spell")return "type";
+  if(mode==="recall")return "recall";
+  if(mode==="listen")return "audio";
+  // Every third survival question requires actual typed recall,
+  // not simply recognizing a multiple-choice option.
+  return index%3===2 && isSpellingCard(card)?"type":"choice";
+}
+export function comboMultiplier(streak) {
+  return Math.min(4,1+Math.floor(Math.max(0,streak)/3));
+}
+export function secondsLeft(end, now) {
+  return Math.max(0,Math.ceil((end-now)/1000));
+}
+export function isAudioEligible(card){
+  const front=String(card?.front||"");
+  return /[a-z]/i.test(front) && !/[\u3400-\u9fff]/.test(front) && front.length<=90;
+}
