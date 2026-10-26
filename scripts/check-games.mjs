@@ -45,9 +45,10 @@ const html=read("web/index.html");
 for(const id of ["gamesPage","gameBoard","gameStage","gameModes","gameClock","gameSpellCount","gameLobbyStatus"]){
   assert.ok(html.includes('id="'+id+'"'),"Missing element "+id);
 }
-for(const path of ["game-engine.mjs","games.js","games.css"]){
+for(const path of ["games.js","games.css"]){
   assert.ok(html.includes(path),"Missing game asset link "+path);
 }
+assert.ok(read("web/games.js").includes("game-engine.mjs"),"Missing game-engine import");
 const game=read("web/games.js");
 for(const token of ["startGame(mode)","renderMatch()","renderQuestion()","finishGame()","pauseCurrentCard()","/games/attempt"]){
   assert.ok(game.includes(token),"Missing game client behavior "+token);
