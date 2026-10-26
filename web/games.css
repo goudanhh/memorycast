@@ -1,0 +1,78 @@
+/* MemoryCast study arcade — isolated from listening and watch layouts. */
+.game-hero{position:relative;overflow:hidden;border-radius:26px;padding:28px 30px;background:linear-gradient(120deg,#172554 0%,#3730a3 60%,#0f766e 130%);color:white;box-shadow:0 20px 60px #1e3a8a25}
+.game-hero:after{content:"✦";position:absolute;right:24px;top:-42px;font-size:180px;opacity:.08;pointer-events:none}
+.game-hero .eyebrow{color:#c7d2fe}
+.game-hero h1{font-size:clamp(29px,4vw,43px);letter-spacing:-.04em;margin:12px 0}
+.game-hero p{margin:0;max-width:650px;color:#dbeafe;line-height:1.8}
+.game-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:15px 0 24px}
+.game-summary article{display:flex;flex-direction:column;gap:8px;border:1px solid #e3e8f5;background:#fff;border-radius:18px;padding:17px}
+.game-summary span{font-size:13px;color:#64748b}
+.game-summary strong{font-size:27px;font-variant-numeric:tabular-nums;color:#1e293b}
+.game-section-title{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:4px 0 13px}
+.game-section-title h2{font-size:21px;margin:0}
+.game-mode-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.game-mode-card{display:flex;flex-direction:column;align-items:flex-start;min-height:176px;text-align:left;gap:10px;padding:23px;cursor:pointer;border:1px solid #dfe5f2;border-radius:22px;background:#fff;transition:transform .15s,border-color .15s,box-shadow .15s}
+.game-mode-card:hover,.game-mode-card:focus-visible{transform:translateY(-2px);border-color:#7c83db;box-shadow:0 16px 35px #232c6620;outline:none}
+.game-mode-card .game-emoji{font-size:27px;width:44px;height:44px;border-radius:13px;background:#edf2ff;display:grid;place-items:center}
+.game-mode-card strong{font-size:19px;color:#172554}
+.game-mode-card span:last-child{font-size:13px;color:#64748b;line-height:1.65}
+.game-stage{margin:14px 0 0;padding:24px!important}
+.game-stage-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.game-stage-head h2{font-size:23px;margin:5px 0}
+.game-stage-head .eyebrow{color:#6366f1}
+.game-hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin:19px 0 12px}
+.game-hud span{font-size:13px;color:#64748b}
+.game-hud b{font-weight:800;color:#27345c;font-variant-numeric:tabular-nums}
+.game-progress{height:9px;border-radius:999px;background:#e7eaf4;overflow:hidden}
+.game-progress div{height:100%;background:linear-gradient(90deg,#6366f1,#06b6d4);border-radius:999px;transition:width .25s ease}
+.game-board{padding-top:24px;min-height:280px}
+.game-instruction{margin:0 0 16px;font-size:14px;color:#475569}
+.game-match-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.game-match-column{display:flex;flex-direction:column;gap:11px}
+.game-tile{width:100%;min-height:73px;border:1.5px solid #cbd5e1;background:#f8fafc;color:#1e293b;cursor:pointer;border-radius:16px;text-align:center;padding:12px;overflow-wrap:anywhere;white-space:normal;font-size:15px;font-weight:650;transition:background .15s,border .15s,transform .15s}
+.game-tile:hover{background:#eaf0ff;border-color:#818cf8}
+.game-tile-selected{background:#e0e7ff!important;border-color:#4f46e5!important;box-shadow:0 0 0 2px #c7d2fe}
+.game-tile-done,.game-tile-done:hover{background:#dcfce7!important;border-color:#86efac!important;color:#166534;opacity:.65;cursor:default}
+.game-notice{min-height:24px;padding:14px 0 2px;color:#166534;font-size:13px;line-height:1.5}
+.game-notice-bad{color:#b45309}
+.game-question{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;max-width:750px;margin:auto;text-align:center}
+.game-prompt{border-radius:20px;background:linear-gradient(145deg,#f1f5ff,#f8f9ff);border:1px solid #e3e8fa;padding:30px 20px}
+.game-prompt small{font-size:12px;letter-spacing:.04em;color:#64748b}
+.game-prompt h2{font-size:clamp(24px,3vw,34px);overflow-wrap:anywhere;color:#172554;line-height:1.5;margin:15px 0 22px}
+.game-answer{border-top:1px solid #dbe3f2;padding:18px 8px 0;margin:18px auto 0;font-size:17px;line-height:1.65;color:#334155;overflow-wrap:anywhere}
+.game-answer .muted{margin-top:8px}
+.game-hint{font-size:15px;color:#6366f1;font-weight:750;margin-bottom:12px}
+.game-answer-area{display:grid;justify-items:center;gap:13px}
+.game-answer-area>.ghost,.game-answer-area>.btn{max-width:100%;width:max-content}
+.game-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;width:100%}
+.game-choice{border-radius:14px;background:white;border:1px solid #cbd5e1;min-height:62px;padding:13px;text-align:center;font-size:16px;line-height:1.5;color:#1e293b;cursor:pointer;overflow-wrap:anywhere}
+.game-choice:hover:not(:disabled){border-color:#6366f1;background:#eef2ff}
+.game-choice:disabled{opacity:.65;cursor:default}
+.game-spell-form{display:flex;flex-wrap:wrap;gap:10px;width:100%;align-items:center}
+.game-spell-form input{flex:1 1 200px;min-width:0;font-size:18px}
+.game-spell-form button{flex:0 0 auto}
+.game-recall-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+.game-feedback{border-radius:14px;padding:16px 18px;line-height:1.7;font-weight:700;width:100%;overflow-wrap:anywhere}
+.game-feedback div{font-weight:500;font-size:14px;margin-top:6px}
+.game-feedback-ok{background:#ecfdf5;color:#166534}
+.game-feedback-retry{background:#fff7ed;color:#9a3412}
+.game-pause{font-size:13px!important;color:#64748b!important;background:transparent!important;margin-top:8px}
+.game-finish{display:grid;justify-items:center;text-align:center;gap:14px;padding:13px 0 23px}
+.game-finish-symbol{font-size:48px}
+.game-finish h2{margin:0;font-size:29px}
+.game-finish p{color:#64748b;line-height:1.7;margin:0}
+.game-results{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;width:min(100%,530px);margin:8px 0}
+.game-results>div{display:grid;gap:6px;background:#f5f7ff;border:1px solid #e2e8f0;padding:17px 8px;border-radius:16px}
+.game-results strong{color:#312e81;font-size:27px}
+.game-results span{color:#64748b;font-size:12px}
+.game-finish-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+#gameLobbyStatus{font-size:13px;min-height:20px;color:#64748b;margin:5px 0 15px}
+@media(max-width:680px){
+ .game-hero{padding:24px 20px}.game-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .game-mode-grid{grid-template-columns:1fr;gap:10px}.game-mode-card{min-height:140px;padding:18px}
+ .game-stage{padding:16px!important}.game-match-columns{gap:8px}
+ .game-tile{min-height:63px;font-size:13px;padding:9px 7px}
+ .game-prompt{padding:23px 12px}.game-options{gap:8px}
+ .game-choice{font-size:14px;min-height:57px;padding:10px}
+ .game-hud{gap:7px}.game-hud span{font-size:12px}
+}
