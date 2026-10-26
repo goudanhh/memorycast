@@ -23,4 +23,6 @@ jobs:
         run: node scripts/check-remove-feynman.mjs
       - name: Ensure removed memory training leaves no broken references
         run: node scripts/check-remove-memory.mjs
+      - name: Validate listening blitz, protected answers and adaptive stats
+        run: node scripts/check-blitz.mjs
 
