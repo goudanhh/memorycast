@@ -1471,20 +1471,47 @@ app.post("/listening/generate",requireAuth,asyncRoute(async(req,res)=>{
     questions:questions.map(({answer,explanation,...safe})=>safe)});
 }));
 
-const listeningVocabSchema={type:"object",properties:{cards:{type:"array",items:{type:"object",properties:{front:{type:"string"},back:{type:"string"},example:{type:"string"},related:{type:"string"},ipa:{type:"string"},memoryMethod:{type:"string"},memoryTip:{type:"string"}},required:["front","lemma","inflection","back","example","related","ipa","memoryMethod","memoryTip"],additionalProperties:false}}},required:["cards"],additionalProperties:false};
+const listeningVocabSchema={
+  type:"object",
+  properties:{
+    cards:{type:"array",items:{
+      type:"object",
+      properties:{
+        front:{type:"string"},
+        lemma:{type:"string"},
+        inflection:{type:"string"},
+        back:{type:"string"},
+        example:{type:"string"},
+        related:{type:"string"},
+        ipa:{type:"string"},
+        memoryMethod:{type:"string"},
+        memoryTip:{type:"string"},
+        commonUsages:{type:"array",minItems:1,maxItems:3,items:{
+          type:"object",properties:{phrase:{type:"string"},meaning:{type:"string"}},
+          required:["phrase","meaning"],additionalProperties:false
+        }},
+        bestExample:{type:"string"},
+        bestExampleZh:{type:"string"}
+      },
+      required:["front","lemma","inflection","back","example","related","ipa","memoryMethod","memoryTip","commonUsages","bestExample","bestExampleZh"],
+      additionalProperties:false
+    }}
+  },
+  required:["cards"],additionalProperties:false
+};
 app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
   const session=await getListeningSession(String(req.body?.sessionId||""),userId(req));
   if(!session)return res.status(404).json({error:"听力记录不存在。"});
   if(!session.graded)return res.status(403).json({error:"请先提交试卷。"});
-  if(session.vocabulary)return res.json({cards:session.vocabulary,partial:Boolean(session.vocabularyPartial)});
+  if(session.vocabulary && req.body?.refresh!==true)return res.json({cards:session.vocabulary,partial:Boolean(session.vocabularyPartial)});
   const provider=await featureProvider(session.uid,"ai_quiz_provider","gemini");
-  const basePrompt="You are a thorough TOEFL listening vocabulary analyst. Extract a BROAD and inclusive list of all potentially useful content words, academic terms, phrasal verbs, collocations, paraphrases and domain-specific terminology. Do not filter out words merely because they are B1 or common. Exclude only articles, pronouns, basic auxiliary verbs and trivial function words. Include inflected forms as the actual encountered form when useful. Never invent words that do not occur in the supplied source. Return 15-35 entries when source contains enough terms; if fewer, include all meaningful terms. For each item: front EXACT English term as encountered in source, lemma dictionary headword/base form (verb infinitive without to; singular noun; positive adjective, or same as front if already base), inflection short accurate Chinese grammar explanation (e.g. 过去式/过去分词/现在分词/复数/比较级; empty if base form), back Chinese meaning with part of speech, example English sentence with Chinese translation, ipa standard American IPA or empty string if uncertain, memoryMethod choose 谐音联想/词根词缀/拆分联想/场景故事/对比记忆, memoryTip a short useful accurate mnemonic. Do not invent etymology. related MUST match the given source category. Return JSON only.";
+  const basePrompt="You are a thorough TOEFL listening vocabulary analyst. Extract a BROAD and inclusive list of useful content words, academic terms, phrasal verbs, collocations, paraphrases and domain-specific terminology. Do not filter out terms merely because they are B1 or common. Exclude only articles, pronouns, basic auxiliaries and trivial function words. Never invent extracted terms absent from the supplied source. Return 15-35 entries if the source has enough terms; otherwise include all meaningful terms. For EVERY item: front is the EXACT term as encountered; lemma is dictionary base form (verb infinitive without to, singular noun, positive adjective); inflection is a short accurate Chinese explanation or empty for base forms; back is Chinese meaning and part of speech; example quotes a natural English sentence from the supplied source, followed by Chinese translation when possible; ipa is standard American IPA or empty if unsure; memoryMethod is 谐音联想/词根词缀/拆分联想/场景故事/对比记忆 and memoryTip is a concise accurate mnemonic (never invent etymology); commonUsages lists preferably 2-3 genuinely common, idiomatic collocations or patterns for the main meaning, each with a short Chinese meaning (use 1 only if no others are reliably common, do not fabricate frequencies); bestExample is ONE NEW memorable, natural, grammatically correct English sentence (ideally 8-16 words), not copied from the source, that demonstrates the most useful meaning and a common collocation in an academic or everyday context; bestExampleZh is an accurate natural Chinese translation of that new sentence. Prefer simple, concrete, reusable sentences; avoid forced vocabulary and overly long sentences. related MUST match source category. Keep usage text concise. Return JSON only.";
   const tasks=[
     {source:"原文",text:session.transcript},
     {source:"选项",text:session.questions.map((q,i)=>"Q"+(i+1)+": "+q.prompt+"\\n"+q.choices.join("\\n")).join("\\n")}
   ];
   const settled=await Promise.allSettled(tasks.map(t=>generateStructured({
-    provider,name:"listening_vocabulary_"+(t.source==="原文"?"transcript":"options"),schema:listeningVocabSchema,maxTokens:6500,
+    provider,name:"listening_vocabulary_"+(t.source==="原文"?"transcript":"options"),schema:listeningVocabSchema,maxTokens:11000,
     system:basePrompt+" Set related='"+t.source+"' for every item. Analyze the ENTIRE source, not only the first paragraph or first question.",
     user:JSON.stringify({topic:session.topic,source:t.source,text:t.text})
   })));
@@ -1493,7 +1520,24 @@ app.post("/listening/vocabulary",requireAuth,asyncRoute(async(req,res)=>{
   for(let i=0;i<settled.length;i++){
     if(settled[i].status!=="fulfilled")continue;
     for(const x of (Array.isArray(settled[i].value?.cards)?settled[i].value.cards:[])){
-      const item={front:String(x.front||"").trim().slice(0,120),lemma:String(x.lemma||x.front||"").trim().slice(0,120),inflection:String(x.inflection||"").trim().slice(0,100),back:String(x.back||"").trim().slice(0,260),example:String(x.example||"").trim().slice(0,400),related:tasks[i].source,ipa:String(x.ipa||"").trim().slice(0,120),memoryMethod:String(x.memoryMethod||"场景故事").trim().slice(0,24),memoryTip:String(x.memoryTip||"").trim().slice(0,240)};
+      const usages=Array.isArray(x.commonUsages)?x.commonUsages.slice(0,3).map(u=>({
+        phrase:String(u?.phrase||"").trim().slice(0,120),
+        meaning:String(u?.meaning||"").trim().slice(0,160)
+      })).filter(u=>u.phrase&&u.meaning):[];
+      const item={
+        front:String(x.front||"").trim().slice(0,120),
+        lemma:String(x.lemma||x.front||"").trim().slice(0,120),
+        inflection:String(x.inflection||"").trim().slice(0,100),
+        back:String(x.back||"").trim().slice(0,260),
+        example:String(x.example||"").trim().slice(0,400),
+        related:tasks[i].source,
+        ipa:String(x.ipa||"").trim().slice(0,120),
+        memoryMethod:String(x.memoryMethod||"场景故事").trim().slice(0,24),
+        memoryTip:String(x.memoryTip||"").trim().slice(0,240),
+        commonUsages:usages,
+        bestExample:String(x.bestExample||"").trim().slice(0,300),
+        bestExampleZh:String(x.bestExampleZh||"").trim().slice(0,300)
+      };
       const key=item.front.toLowerCase().replace(/\\s+/g," ");
       if(!key||!item.back||seen.has(key))continue;
       seen.add(key);gathered.push(item);
