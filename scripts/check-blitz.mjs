@@ -67,7 +67,11 @@ for(const id of ["blitzPage","blitzStart","blitzWelcome","blitzWorkout","blitzRe
   "blitzRecent","blitzFocus"]){
  assert.ok(html.includes('id="'+id+'"'),"Blitz UI missing id "+id);
 }
-assert.ok(html.includes('/blitz.js?v=1')&&html.includes('/blitz.css?v=1'));
+assert.ok(html.includes('/blitz.js?v=2')&&html.includes('/blitz.css?v=1'));
+assert.ok(html.includes('id="blitzResultAudio"')&&html.includes('id="blitzReplayStatus"'));
+assert.ok(client.includes("resultAudio.play().then(")&&client.includes("speakTranscript()"));
+assert.ok(client.includes("onclick=replayTranscript")&&!client.includes("onclick=()=>{\n  if(result?.transcript)try{browserSpeak"));
+assert.ok(client.includes("stopReplay()")&&client.includes("audioError||replayAudioFailed"));
 for(const path of ['"/blitz/prepare"','"/blitz/start"','"/blitz/play/:id"',
   '"/blitz/audio/:id"','"/blitz/browser-speech/:id"',
   '"/blitz/submit/:id"','"/blitz/insights"']){
