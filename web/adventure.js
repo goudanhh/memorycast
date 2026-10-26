@@ -210,7 +210,7 @@ function playWord(s){
   }catch{note("浏览器语音播放失败，可以选择其他挑战。",true)}
 }
 function renderQuestion(s){
-  if(s!==run||!s.question)return;
+  if(s!==run||s.finished||!s.question)return;
   const q=s.question,card=q.card;
   const boss=q.target.kind==="boss";
   $("adventureQuest").classList.remove("hidden");
