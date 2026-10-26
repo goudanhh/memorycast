@@ -3611,9 +3611,9 @@ function listeningRenderResult(sessionId,d){
       '<h3>听力原文（答案依据已标注）</h3><div id="listeningMarkedTranscript" class="listening-marked-transcript"></div>'+
       '<section id="listeningTraining" style="margin:24px 0;border-top:1px solid #dbe3ef;padding-top:20px"></section>'+
       '<section id="listeningVocabulary" style="margin-top:28px;border-top:1px solid #dbe3ef;padding-top:22px">'+
-      '<h3>📚 听力重点词汇与拓展词汇</h3><p class="muted">自动整理释义、例句及相关表达；勾选后批量加入 MemoryCast 复习卡片。</p>'+
+      '<h3>📚 听力重点词汇与拓展词汇</h3><p class="muted">自动整理音标、原形、高频搭配、听力原句、精选例句及记忆方法；勾选后可完整导入复习卡片。</p>'+
       '<div id="listeningVocabularyStatus">正在提取重点词汇…</div><div id="listeningVocabularyList"></div>'+
-      '<button type="button" id="listeningVocabImport" class="btn dark" disabled>一键导入选中卡片</button></section></div>';
+      '<div class="row" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px"><button type="button" id="listeningVocabImport" class="btn dark" disabled>一键导入选中卡片</button><button type="button" id="listeningVocabRefresh" class="ghost">🔄 重新生成词汇与例句</button></div></section></div>';
     renderListeningEvidence(d.transcript,d.results);
     renderListeningTraining(sessionId,d.transcript,d.results);
     const resultAudio=$("listeningResultAudio");
@@ -3678,27 +3678,49 @@ function renderListeningTraining(sessionId,transcript,results){
 }
 
 let listeningVocabCards=[];
-async function loadListeningVocabulary(sessionId){
-  const status=$("listeningVocabularyStatus"),list=$("listeningVocabularyList"),importBtn=$("listeningVocabImport");
+async function loadListeningVocabulary(sessionId,refresh=false){
+  const status=$("listeningVocabularyStatus"),list=$("listeningVocabularyList"),importBtn=$("listeningVocabImport"),refreshBtn=$("listeningVocabRefresh");
   if(!status||!list)return;
   listeningVocabCards=[];
+  if(refreshBtn){refreshBtn.disabled=true;refreshBtn.textContent=refresh?"正在重新生成词汇…":"🔄 重新生成词汇与例句";}
+  if(refresh)status.textContent="正在重新提取词汇、常用搭配和精选例句…";
   try{
-    const result=await api("/listening/vocabulary",{method:"POST",body:JSON.stringify({sessionId})});
+    const result=await api("/listening/vocabulary",{method:"POST",body:JSON.stringify({sessionId,refresh})});
     listeningVocabCards=result.cards||[];
     if(!listeningVocabCards.length){status.textContent="未提取到词汇，可重新生成试卷。";return;}
     const known=new Set(cards.map(c=>String(c.front||"").trim().toLowerCase()));
     list.innerHTML=listeningVocabCards.map((v,i)=>{
       const exists=known.has(v.front.toLowerCase());
+      const uses=Array.isArray(v.commonUsages)?v.commonUsages.filter(u=>u&&u.phrase&&u.meaning).slice(0,3):[];
+      const usageHtml=uses.length?'<div style="margin-top:9px;padding:10px 12px;border-radius:10px;background:#eef5ff;color:#243e68;line-height:1.6">'+
+        '<strong>📌 高频用法 / 常见搭配</strong>'+
+        uses.map(u=>'<div style="margin-top:3px">• <b>'+esc(u.phrase)+'</b> — '+esc(u.meaning)+'</div>').join('')+
+        '</div>':'';
+      const bestHtml=v.bestExample?'<div style="margin-top:9px;padding:10px 12px;border-radius:10px;background:#edf9f2;color:#20523b;line-height:1.65">'+
+        '<strong>⭐ 精选例句</strong><div>'+esc(v.bestExample)+'</div>'+
+        (v.bestExampleZh?'<div style="font-size:14px;opacity:.86">'+esc(v.bestExampleZh)+'</div>':'')+'</div>':'';
       return '<label style="display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e1e7ef;border-radius:12px;margin:10px 0;cursor:pointer">'+
         '<input type="checkbox" data-listening-vocab="'+i+'" '+(exists?'disabled':'')+' style="width:20px;height:20px;margin-top:4px;flex-shrink:0">'+
-        '<span><strong style="font-size:19px">'+esc(v.front)+'</strong> '+(v.lemma&&v.lemma.toLowerCase()!==v.front.toLowerCase()?'<span style="font-size:15px;color:#526c87;margin-left:6px">→ 原形 '+esc(v.lemma)+(v.inflection?'（'+esc(v.inflection)+'）':'')+'</span> ':'') +(v.ipa?'<span style="font-size:16px;color:#63758a;font-weight:500;margin-left:8px">'+esc(v.ipa)+'</span> ':'')+'<small>'+esc(v.related)+(exists?' · 已在知识库':'')+'</small>'+
-        '<div style="font-size:17px;line-height:1.65">'+esc(v.back)+'</div><div class="muted">'+esc(v.example)+'</div>'+
-        (v.memoryTip?'<div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff7e6;color:#654313;font-size:16px;line-height:1.6">🧠 '+esc(v.memoryMethod)+'：'+esc(v.memoryTip)+'</div>':'')+'</span></label>';
+        '<span style="min-width:0;flex:1"><strong style="font-size:19px">'+esc(v.front)+'</strong> '+
+        (v.lemma&&v.lemma.toLowerCase()!==v.front.toLowerCase()?'<span style="font-size:15px;color:#526c87;margin-left:6px">→ 原形 '+esc(v.lemma)+(v.inflection?'（'+esc(v.inflection)+'）':'')+'</span> ':'')+
+        (v.ipa?'<span style="font-size:16px;color:#63758a;font-weight:500;margin-left:8px">'+esc(v.ipa)+'</span> ':'')+
+        '<small>'+esc(v.related)+(exists?' · 已在知识库':'')+'</small>'+
+        '<div style="font-size:17px;line-height:1.65">'+esc(v.back)+'</div>'+
+        (v.example?'<div class="muted" style="margin-top:3px">📖 听力原句：'+esc(v.example)+'</div>':'')+
+        usageHtml+bestHtml+
+        (v.memoryTip?'<div style="margin-top:9px;padding:10px 12px;border-radius:10px;background:#fff7e6;color:#654313;font-size:16px;line-height:1.6">🧠 '+esc(v.memoryMethod)+'：'+esc(v.memoryTip)+'</div>':'')+
+        '</span></label>';
     }).join("");
-    status.textContent="从听力原文和题目选项共整理 "+listeningVocabCards.length+" 个词汇（原文 "+listeningVocabCards.filter(x=>x.related==="原文").length+"，选项 "+listeningVocabCards.filter(x=>x.related==="选项").length+"）。"+(result.partial?"部分来源提取失败，本次结果可能不完整。":"")+"勾选需要记忆的词汇，已存在的卡片不会重复导入。";
+    const hasOlderCards=listeningVocabCards.some(v=>!Array.isArray(v.commonUsages)||!v.bestExample);
+    status.textContent="从听力原文和题目选项共整理 "+listeningVocabCards.length+" 个词汇（原文 "+listeningVocabCards.filter(x=>x.related==="原文").length+"，选项 "+listeningVocabCards.filter(x=>x.related==="选项").length+"）。"+
+      (result.partial?"部分来源提取失败，本次结果可能不完整。":"")+
+      (hasOlderCards?"这些词汇可能是旧版缓存，点击“重新生成词汇与例句”补充高频用法。":"")+
+      "勾选需要记忆的词汇，已存在的卡片不会重复导入。";
+    if(refreshBtn){refreshBtn.disabled=false;refreshBtn.textContent="🔄 重新生成词汇与例句";refreshBtn.onclick=()=>loadListeningVocabulary(sessionId,true);}
     importBtn.disabled=false;
     importBtn.onclick=importListeningVocabulary;
-  }catch(e){status.textContent="词汇整理失败："+e.message+"。";const retry=document.createElement("button");retry.textContent="重试提取";retry.type="button";retry.className="ghost";retry.onclick=()=>loadListeningVocabulary(sessionId);status.appendChild(retry)}
+  }catch(e){status.textContent="词汇整理失败："+e.message+"。";const retry=document.createElement("button");retry.textContent="重试提取";retry.type="button";retry.className="ghost";retry.onclick=()=>loadListeningVocabulary(sessionId,refresh);status.appendChild(retry)}
+  finally{if(refreshBtn){refreshBtn.disabled=false;refreshBtn.textContent="🔄 重新生成词汇与例句";refreshBtn.onclick=()=>loadListeningVocabulary(sessionId,true);}}
 }
 async function importListeningVocabulary(){
   const btn=$("listeningVocabImport"),status=$("listeningVocabularyStatus");
@@ -3709,11 +3731,27 @@ async function importListeningVocabulary(){
     const known=new Set(cards.map(c=>String(c.front||"").trim().toLowerCase()));
     const fresh=selected.filter(c=>!known.has(c.front.toLowerCase()));
     if(!fresh.length){status.textContent="选中词汇已经存在于知识库。";return}
-    const result=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:fresh.map(c=>({front:c.front,back:c.back,example:(c.lemma&&c.lemma.toLowerCase()!==c.front.toLowerCase()?"📖 原形："+c.lemma+(c.inflection?"（"+c.inflection+"）":"")+"\n":"")+(c.ipa?"🔊 音标："+c.ipa+"\n":"")+c.example+(c.memoryTip?"\n🧠 "+c.memoryMethod+"："+c.memoryTip:""),tags:["英语","听力",c.related]}))})});
+    const prepared=fresh.map(c=>{
+      const parts=[];
+      if(c.lemma&&c.lemma.toLowerCase()!==c.front.toLowerCase())parts.push("📖 原形："+c.lemma+(c.inflection?"（"+c.inflection+"）":""));
+      if(c.ipa)parts.push("🔊 音标："+c.ipa);
+      if(c.example)parts.push("📖 听力原句："+c.example);
+      const uses=Array.isArray(c.commonUsages)?c.commonUsages.filter(u=>u&&u.phrase&&u.meaning).slice(0,3):[];
+      if(uses.length)parts.push("📌 高频用法：\n"+uses.map(u=>"• "+u.phrase+" — "+u.meaning).join("\n"));
+      if(c.bestExample)parts.push("⭐ 精选例句："+c.bestExample+(c.bestExampleZh?"\n"+c.bestExampleZh:""));
+      if(c.memoryTip)parts.push("🧠 "+c.memoryMethod+"："+c.memoryTip);
+      return {front:c.front,back:c.back,example:parts.join("\n"),tags:["英语","听力",c.related]};
+    });
+    const imported=[];
+    // The save API accepts up to 30 cards per call. Split larger vocabulary selections.
+    for(let start=0;start<prepared.length;start+=30){
+      const result=await api("/ai/organize/save",{method:"POST",body:JSON.stringify({cards:prepared.slice(start,start+30)})});
+      imported.push(...(result.cards||[]));
+    }
     await Promise.all([loadCards(),loadDue()]);
-    const saved=new Set((result.cards||[]).map(c=>String(c.front||"").trim().toLowerCase()));
+    const saved=new Set(imported.map(c=>String(c.front||"").trim().toLowerCase()));
     document.querySelectorAll("[data-listening-vocab]").forEach(el=>{const card=listeningVocabCards[Number(el.dataset.listeningVocab)];if(card&&saved.has(card.front.toLowerCase())){el.checked=false;el.disabled=true;}});
-    status.textContent="已成功导入 "+(result.cards||[]).length+" 张卡片，进入现有复习系统。";
+    status.textContent="已成功导入 "+imported.length+" 张卡片（包含高频用法与精选例句），进入现有复习系统。";
   }catch(e){status.textContent="导入失败："+e.message}
   finally{btn.disabled=false;btn.textContent="一键导入选中卡片"}
 }
