@@ -27,6 +27,18 @@ struct APIClient {
         return try JSONDecoder().decode(WalkmanResponse.self, from: data).cards
     }
 
+    func snoozeCard(id: String, days: Int = 7) async throws {
+        let url = AppConfig.apiBaseURL.appendingPathComponent("cards")
+            .appendingPathComponent(id).appendingPathComponent("snooze")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["days": days])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidData }
+        guard (200..<300).contains(http.statusCode) else { throw APIError.badResponse(http.statusCode) }
+    }
+
     func fetchTimedTTS(lines: [String], rate: Double = 1.0) async throws -> TimedTTSResult {
         let url = AppConfig.apiBaseURL.appendingPathComponent("tts/timed")
         var request = URLRequest(url: url)
