@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_quiz_provider TEXT NOT NULL DEFAULT 'gemini',
   ai_grade_provider TEXT NOT NULL DEFAULT 'gemini',
   stt_provider TEXT NOT NULL DEFAULT 'cloudflare',
-  ocr_provider TEXT NOT NULL DEFAULT 'gemini',,
+  ocr_provider TEXT NOT NULL DEFAULT 'gemini',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -146,3 +146,20 @@ ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_source_note_id_fkey;
 ALTER TABLE cards
   ADD CONSTRAINT cards_source_note_id_fkey
   FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE;
+
+-- High-frequency audio listening drills, independent of FSRS reviews and TOEFL exams.
+CREATE TABLE IF NOT EXISTS blitz_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content JSONB NOT NULL,
+  topic TEXT NOT NULL,
+  level TEXT NOT NULL,
+  duration_seconds SMALLINT NOT NULL CHECK(duration_seconds IN (20,45,90)),
+  origin TEXT NOT NULL,
+  plays INTEGER NOT NULL DEFAULT 0,
+  audio_data BYTEA,
+  result JSONB,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_blitz_sessions_user_time ON blitz_sessions(user_id,started_at DESC);
