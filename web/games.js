@@ -1,4 +1,4 @@
-import {normalizeAnswer,isSpellingCard,shuffle,uniqueGameCards,makeListeningOptions,scoreForResult} from "./game-engine.mjs?v=1";
+import {normalizeAnswer,isSpellingCard,shuffle,uniqueGameCards,makeListeningOptions,scoreForResult} from "./game-engine.js?v=1";
 
 const $=id=>document.getElementById(id);
 const names={match:"词义配对",listen:"听音辨义",spell:"拼写挑战",recall:"回忆闯关"};
