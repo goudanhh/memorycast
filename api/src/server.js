@@ -862,7 +862,7 @@ app.get("/memory/overview",requireAuth,asyncRoute(async(req,res)=>{
   res.json({sessions:sessions.rows[0],attempts:attempts.rows[0],weak:weak.rows});
 }));
 app.post("/memory/sessions",requireAuth,asyncRoute(async(req,res)=>{
-  const uid=userId(req),count=Number(req.body?.count??6);
+  const uid=userId(req),count=Number(req.body?.count??6),focus=req.body?.focus==="weak"?"weak":"all";
   if(!Number.isInteger(count)||count<1||count>8)
     return res.status(400).json({error:"请选择 1–8 个知识点"});
   const {rows}=await query(`
@@ -896,10 +896,11 @@ app.post("/memory/sessions",requireAuth,asyncRoute(async(req,res)=>{
         SELECT 1 FROM notes n WHERE n.id=c.source_note_id
           AND n.user_id=$1 AND n.study_enabled=TRUE
       ))
+      AND ($2 <> 'weak' OR COALESCE(p.misses,0)>0)
       AND LENGTH(TRIM(c.front)) BETWEEN 1 AND 120
       AND LENGTH(TRIM(c.back)) BETWEEN 1 AND 500
     ORDER BY priority DESC,RANDOM() LIMIT 32
-  `,[uid]);
+  `,[uid,focus]);
   const seenFront=new Set(),seenBack=new Set(),cards=[];
   for(const row of rows){
     const front=row.front.trim().toLowerCase(),back=row.back.trim().toLowerCase();
