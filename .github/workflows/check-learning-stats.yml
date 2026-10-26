@@ -19,8 +19,8 @@ jobs:
           node-version: '22'
       - name: Check JavaScript syntax and dashboard contracts
         run: node scripts/check-learning-stats.mjs
-      - name: Verify real retrieval practice rules and API contracts
-        run: node scripts/check-memory.mjs
       - name: Verify retired Feynman feature is removed
         run: node scripts/check-remove-feynman.mjs
+      - name: Ensure removed memory training leaves no broken references
+        run: node scripts/check-remove-memory.mjs
 

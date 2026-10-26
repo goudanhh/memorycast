@@ -8,7 +8,6 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
-<link rel="stylesheet" href="/memory-gym.css?v=recall-1">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -34,7 +33,6 @@
     <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="quizPage">📝 AI 测试</button>
-    <button data-page="gamesPage">🧠 记忆训练</button>
     <button data-page="listeningPage">🎧 AI 听力考试</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="libraryPage">📚 知识库</button>
@@ -77,11 +75,6 @@
     <article class="panel"><div class="eyebrow">AI</div><h2>✨ 整理笔记</h2><p class="muted">粘贴长笔记，自动拆成知识卡。</p><button class="btn dark" data-go="importPage">整理笔记</button></article>
     <article class="panel"><div class="eyebrow">QUIZ</div><h2>📝 AI 测试</h2><p class="muted">选择、填空、简答、听力。</p><button class="btn dark" data-go="quizPage">开始测试</button></article>
   </div>
-  <article class="memory-home-teaser">
-    <div><strong>🧠 记忆训练场 · 真正记住知识</strong>
-      <p>将知识卡变成三轮主动回忆训练：先写出答案，再交错复测，专门攻克容易遗忘的内容。</p></div>
-    <button class="btn dark" type="button" data-go="gamesPage">开始记忆训练 →</button>
-  </article>
 </section>
 
 <section id="todayPage" class="page">
@@ -247,107 +240,6 @@
   </article>
 </section>
 
-<section id="gamesPage" class="page">
-<div id="memoryGym" class="memory-gym">
-  <header class="memory-hero">
-    <div class="memory-eyebrow">MEMORYCAST / ACTIVE RETRIEVAL</div>
-    <h1>🧠 记忆训练场</h1>
-    <p>不是比手速，也不是反复认选项，而是真正检验“离开答案后还能不能自己想起来”。使用你已有的知识卡，三轮交错提取，重点强化薄弱项。</p>
-    <div class="memory-hero-tags"><span>先回忆，再看答案</span><span>交错练习</span><span>延迟复测</span><span>错题优先</span></div>
-  </header>
-  <section id="memoryWelcome" class="memory-panel">
-    <div class="memory-summary-strip">
-      <div><small>已完成训练</small><strong id="memorySessions">—</strong></div>
-      <div><small>最近 7 天</small><strong id="memorySessionsWeek">—</strong></div>
-      <div><small>终局完全正确率</small><strong id="memoryAccuracy">—</strong></div>
-      <div><small>累计回忆次数</small><strong id="memoryTrials">—</strong></div>
-    </div>
-    <div class="memory-section-head"><div><span class="memory-eyebrow">START A SESSION</span><h2>每次只练一小组，真正记住</h2></div></div>
-    <div class="memory-stage-guide">
-      <div><span>01</span><b>观察与编码</b><small>先认真理解 4–8 个知识点</small></div>
-      <div><span>02</span><b>主动回忆</b><small>遮住答案，自己写出内容</small></div>
-      <div><span>03</span><b>交错提取</b><small>打乱题序，穿插反向回忆</small></div>
-      <div><span>04</span><b>延迟复测</b><small>再提取一次，找出薄弱项</small></div>
-    </div>
-    <div class="memory-start-box">
-      <label for="memoryCount">本次训练知识点数量</label>
-      <select id="memoryCount" aria-label="训练知识点数量"><option value="4">4 个 · 快速训练</option><option value="6" selected>6 个 · 推荐</option><option value="8">8 个 · 深度训练</option></select>
-      <button id="memoryStart" type="button" class="memory-main-btn">开始记忆训练 →</button>
-    </div>
-    <div class="memory-weak-section">
-      <div class="memory-section-head"><div><span class="memory-eyebrow">AREAS TO IMPROVE</span><h3>之前容易忘记的知识点</h3></div>
-        <button id="memoryStartWeak" type="button" class="memory-secondary" disabled>针对薄弱项训练</button></div>
-      <div id="memoryWeakList" class="memory-weak-list"><span>正在读取历史记录…</span></div>
-    </div>
-    <p class="memory-footnote">这是一组短时回忆练习。真正的长期记忆仍需隔天、隔周按 FSRS 计划复习；这里的训练成绩不会自动延后你原来的复习日期。</p>
-  </section>
-  <section id="memoryPreview" class="memory-panel hidden">
-    <div class="memory-section-head"><div><span class="memory-eyebrow">ENCODE / 学习准备</span><h2>先建立清晰的记忆线索</h2></div><span id="memoryPreviewCount" class="memory-pill">6 个知识点</span></div>
-    <p class="memory-guidance">理解含义，试着自己复述一次。准备好后关闭答案，直接进入正式回忆。这里不计分，不催促。</p>
-    <div id="memoryPreviewCards" class="memory-preview-cards"></div>
-    <div class="memory-actions">
-      <button id="memoryPreviewBack" class="memory-secondary" type="button">返回</button>
-      <button id="memoryBeginRecall" class="memory-main-btn" type="button">我准备好了 · 遮住答案 →</button>
-    </div>
-  </section>
-  <section id="memoryTrainer" class="memory-panel hidden">
-    <div class="memory-practice-head">
-      <div><span class="memory-eyebrow">RETRIEVAL SESSION</span><h2 id="memoryPhase">第一轮 · 主动回忆</h2><p id="memoryPhaseNote">不要看答案，先自己想。</p></div>
-      <button id="memoryExit" type="button" class="memory-secondary">结束训练</button>
-    </div>
-    <div class="memory-progress-row"><span id="memoryPosition">1 / 6</span><span id="memoryTotalCount">0 / 18</span></div>
-    <div class="memory-meter"><div id="memoryMeterBar" style="width:0"></div></div>
-    <div id="memoryInterlude" class="memory-interlude hidden">
-      <div id="memoryInterludeIcon" class="memory-interlude-icon">🔀</div>
-      <h3 id="memoryInterludeTitle">交错提取</h3>
-      <p id="memoryInterludeText">换一种顺序继续回忆。</p>
-      <button id="memoryContinuePhase" class="memory-main-btn" type="button">继续下一轮 →</button>
-    </div>
-    <div id="memoryTrainerMain">
-      <div class="memory-question"><span id="memoryDirection">根据知识点回答</span><h2 id="memoryPrompt">知识点</h2></div>
-      <div id="memoryInputArea">
-        <label for="memoryResponse">把你真正能回忆起来的内容写下来</label>
-        <textarea id="memoryResponse" rows="4" maxlength="500" placeholder="在这里输入你的回忆…"></textarea>
-        <div id="memoryHintText" class="memory-hint-text" aria-live="polite"></div>
-        <div class="memory-actions">
-          <button id="memoryForgot" class="memory-secondary" type="button">完全想不起来</button>
-          <button id="memoryHint" class="memory-secondary" type="button">💡 给我提示</button>
-          <button id="memoryReveal" class="memory-main-btn" type="button">核对答案 →</button>
-        </div>
-      </div>
-      <div id="memoryRevealArea" class="memory-reveal hidden">
-        <div class="memory-compare">
-          <div><small>你的回忆</small><p id="memoryMyAnswer"></p></div>
-          <div><small>知识卡答案</small><p id="memoryCorrectAnswer"></p><small id="memoryExample"></small></div>
-        </div>
-        <p id="memoryMatchHint" class="memory-guidance"></p>
-        <div class="memory-grade-actions">
-          <button data-memory-grade="0" type="button"><strong>↺ 没想起</strong><small>错了 / 无法解释</small></button>
-          <button data-memory-grade="1" type="button"><strong>◐ 部分正确</strong><small>关键点有遗漏</small></button>
-          <button data-memory-grade="2" type="button"><strong>✓ 完全正确</strong><small>意思和要点准确</small></button>
-        </div>
-      </div>
-    </div>
-  </section>
-  <section id="memoryFinish" class="memory-panel hidden">
-    <div class="memory-finish-heading"><span>🏁</span><h2>这一组回忆完成了</h2><p id="memoryFinishMessage">正在保存训练结果…</p></div>
-    <div class="memory-finish-metrics">
-      <div><strong id="memoryFinishScore">0</strong><span>回忆积分</span></div>
-      <div><strong id="memoryFinishRetained">0 / 0</strong><span>最终完全正确</span></div>
-      <div><strong id="memoryFinishTrials">0</strong><span>回忆尝试次数</span></div>
-    </div>
-    <div class="memory-section-head"><h3>三轮回忆表现</h3></div>
-    <div id="memoryPhaseResults" class="memory-phase-results"></div>
-    <div class="memory-weak-section"><h3>还没真正记住的内容</h3><div id="memoryFinishWeak" class="memory-weak-list"></div></div>
-    <div id="memoryFinishActions" class="memory-actions hidden">
-      <button id="memoryFinishRetry" class="memory-secondary hidden" type="button">重新保存结果</button>
-      <button id="memoryAnother" class="memory-main-btn" type="button">开始下一组训练 →</button>
-    </div>
-  </section>
-  <p id="memoryStatus" class="memory-status" role="status" aria-live="polite"></p>
-</div>
-</section>
-
 <section id="libraryPage" class="page">
   <article class="panel">
     <div class="panel-head">
@@ -507,7 +399,6 @@
 </div>
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
-<script type="module" src="/memory-gym.js?v=recall-1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">

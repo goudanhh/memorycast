@@ -55,7 +55,7 @@ function showApp(){$("loginScreen").classList.add("hidden");$("app").classList.r
 function go(id){
   document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));$(id).classList.add("active");
   document.querySelectorAll(".nav button").forEach(x=>x.classList.toggle("active",x.dataset.page===id));
-  const t={homePage:"首页",todayPage:"今日复习",importPage:"AI 整理笔记",notesPage:"笔记库",quizPage:"AI 测试",listeningPage:"AI 听力考试",gamesPage:"记忆训练",libraryPage:"知识库",statsPage:"学习统计",settingsPage:"设置"};
+  const t={homePage:"首页",todayPage:"今日复习",importPage:"AI 整理笔记",notesPage:"笔记库",quizPage:"AI 测试",listeningPage:"AI 听力考试",libraryPage:"知识库",statsPage:"学习统计",settingsPage:"设置"};
   $("pageTitle").textContent=t[id]||"MemoryCast";if(id==="statsPage")loadStats();if(id==="notesPage")loadNotes();
 }
 async function init(){
