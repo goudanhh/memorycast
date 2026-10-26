@@ -142,44 +142,37 @@ Return only schema-valid JSON.`,
 }
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS hidden_until TIMESTAMPTZ`);
+// Old game tables are intentionally not dropped: preserve historical rows,
+// but remove every old game endpoint and stop initializing those features.
 await query(`
-  CREATE TABLE IF NOT EXISTS game_attempts (
+  CREATE TABLE IF NOT EXISTS memory_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    card_ids UUID[] NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+  )
+`);
+await query(`
+  CREATE TABLE IF NOT EXISTS memory_attempts (
     id BIGSERIAL PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
     card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-    mode TEXT NOT NULL CHECK (mode IN ('match','listen','spell','recall')),
-    correct BOOLEAN NOT NULL,
+    phase TEXT NOT NULL CHECK(phase IN ('retrieve','interleave','delayed')),
+    direction TEXT NOT NULL CHECK(direction IN ('front-to-back','back-to-front')),
+    response TEXT NOT NULL DEFAULT '',
+    grade SMALLINT NOT NULL CHECK(grade BETWEEN 0 AND 2),
+    hinted BOOLEAN NOT NULL DEFAULT FALSE,
     elapsed_ms INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(session_id,card_id,phase)
   )
 `);
-await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_user_time ON game_attempts(user_id,created_at DESC)`);
-await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_card_time ON game_attempts(card_id,created_at DESC)`);
-
-await query(`
-  CREATE TABLE IF NOT EXISTS arcade_profiles (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    coins INTEGER NOT NULL DEFAULT 0 CHECK(coins>=0),
-    total_xp INTEGER NOT NULL DEFAULT 0 CHECK(total_xp>=0),
-    runs INTEGER NOT NULL DEFAULT 0,
-    best_wave INTEGER NOT NULL DEFAULT 0,
-    highest_sector INTEGER NOT NULL DEFAULT 1 CHECK(highest_sector BETWEEN 1 AND 3),
-    wins INTEGER NOT NULL DEFAULT 0,
-    upgrades JSONB NOT NULL DEFAULT '{"power":0,"armor":0,"magnet":0}'::jsonb,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )
-`);
-
-await query(`
-  CREATE TABLE IF NOT EXISTS adventure_progress (
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 8),
-    stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 3),
-    best_seconds INTEGER NOT NULL CHECK (best_seconds BETWEEN 1 AND 3600),
-    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY(user_id,level)
-  )
-`);
+await query(`CREATE INDEX IF NOT EXISTS idx_memory_attempts_user_time
+  ON memory_attempts(user_id,created_at DESC)`);
+await query(`CREATE INDEX IF NOT EXISTS idx_memory_attempts_card_time
+  ON memory_attempts(card_id,created_at DESC)`);
 await query(`
   UPDATE cards
   SET tags = ARRAY[
@@ -843,190 +836,126 @@ app.get("/due", requireAuth, asyncRoute(async(req,res)=>{
   res.json({cards:rows.map(normalizeCardRow)});
 }));
 
-// Game practice is tracked separately from FSRS to avoid distorting due dates
-// when learners repeat a game many times within the same day.
-app.get("/games/cards", requireAuth, asyncRoute(async(req,res)=>{
+// New memory training: three interleaved retrieval rounds with typed recall.
+// Session data stays separate from FSRS and never alters cards.due.
+const MEMORY_PHASES=new Set(["retrieve","interleave","delayed"]);
+const MEMORY_UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+app.get("/memory/overview",requireAuth,asyncRoute(async(req,res)=>{
   const uid=userId(req);
+  const [sessions,attempts,weak]=await Promise.all([
+    query(`SELECT COUNT(*)::int AS completed,
+      COUNT(*) FILTER(WHERE completed_at>=NOW()-INTERVAL '7 days')::int AS last7
+      FROM memory_sessions WHERE user_id=$1 AND completed_at IS NOT NULL`,[uid]),
+    query(`SELECT COUNT(*)::int AS trials,
+       COUNT(*) FILTER(WHERE grade=2)::int AS successful,
+       COUNT(*) FILTER(WHERE phase='delayed' AND grade=2)::int AS delayed_correct,
+       COUNT(*) FILTER(WHERE phase='delayed')::int AS delayed_total
+       FROM memory_attempts WHERE user_id=$1`,[uid]),
+    query(`SELECT c.id,c.front,c.back,
+       MAX(a.created_at) AS last_attempt,
+       COUNT(*) FILTER(WHERE a.grade<2 AND a.created_at>=NOW()-INTERVAL '30 days')::int AS mistakes
+       FROM memory_attempts a JOIN cards c ON c.id=a.card_id AND c.user_id=a.user_id
+       WHERE a.user_id=$1
+       GROUP BY c.id,c.front,c.back HAVING COUNT(*) FILTER(WHERE a.grade<2)>0
+       ORDER BY mistakes DESC,last_attempt DESC LIMIT 6`,[uid])
+  ]);
+  res.json({sessions:sessions.rows[0],attempts:attempts.rows[0],weak:weak.rows});
+}));
+app.post("/memory/sessions",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req),count=Number(req.body?.count??6);
+  if(!Number.isInteger(count)||count<1||count>8)
+    return res.status(400).json({error:"请选择 1–8 个知识点"});
   const {rows}=await query(`
     WITH practice AS (
       SELECT card_id,
-        COUNT(*) FILTER (WHERE NOT correct AND created_at>=NOW()-INTERVAL '30 days')::int AS recent_mistakes,
-        COUNT(*) FILTER (WHERE correct AND created_at>=NOW()-INTERVAL '7 days')::int AS recent_correct,
-        MAX(created_at) FILTER (WHERE correct) AS last_correct_at,
-        MAX(created_at) FILTER (WHERE NOT correct) AS last_wrong_at
-      FROM game_attempts WHERE user_id=$1 GROUP BY card_id
-    ),
-    last_review AS (
-      SELECT DISTINCT ON (card_id) card_id,rating,verdict
-      FROM reviews WHERE user_id=$1 ORDER BY card_id,reviewed_at DESC
+        COUNT(*) FILTER(WHERE grade<2 AND created_at>=NOW()-INTERVAL '30 days')::int AS misses,
+        COUNT(*) FILTER(WHERE grade=2 AND created_at>=NOW()-INTERVAL '7 days')::int AS successes,
+        MAX(created_at) FILTER(WHERE grade=2) AS last_success,
+        MAX(created_at) FILTER(WHERE grade<2) AS last_miss
+      FROM memory_attempts WHERE user_id=$1 GROUP BY card_id
+    ), last_review AS (
+      SELECT DISTINCT ON (card_id) card_id,rating,verdict FROM reviews
+      WHERE user_id=$1 ORDER BY card_id,reviewed_at DESC
     )
     SELECT c.id,c.front,c.back,c.example,c.due,
-      (
-        CASE WHEN c.due<=NOW() THEN 85 ELSE 5 END
-        + CASE WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 65 ELSE 0 END
-        + CASE WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 32 ELSE 0 END
-        + LEAST(90,COALESCE(p.recent_mistakes,0)*18)
-        - LEAST(60,COALESCE(p.recent_correct,0)*9)
-        - CASE WHEN p.last_correct_at>=NOW()-INTERVAL '24 hours'
-                 AND p.last_correct_at>COALESCE(p.last_wrong_at,TIMESTAMPTZ '1970-01-01')
-               THEN 125 ELSE 0 END
-        + LEAST(20,COALESCE((c.fsrs->>'difficulty')::numeric,0)*2)
+      (CASE WHEN c.due<=NOW() THEN 80 ELSE 10 END
+       + CASE WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 65 ELSE 0 END
+       + CASE WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 34 ELSE 0 END
+       + LEAST(100,COALESCE(p.misses,0)*22)
+       - LEAST(60,COALESCE(p.successes,0)*12)
+       - CASE WHEN p.last_success>=NOW()-INTERVAL '24 hours'
+               AND p.last_success>COALESCE(p.last_miss,TIMESTAMPTZ '1970-01-01')
+              THEN 90 ELSE 0 END
       ) AS priority
     FROM cards c
     LEFT JOIN practice p ON p.card_id=c.id
     LEFT JOIN last_review lr ON lr.card_id=c.id
     WHERE c.user_id=$1
       AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
-      AND (c.source_note_id IS NULL OR EXISTS (
-        SELECT 1 FROM notes n
-        WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+      AND (c.source_note_id IS NULL OR EXISTS(
+        SELECT 1 FROM notes n WHERE n.id=c.source_note_id
+          AND n.user_id=$1 AND n.study_enabled=TRUE
       ))
-      AND LENGTH(TRIM(c.front)) BETWEEN 1 AND 90
-      AND LENGTH(TRIM(c.back)) BETWEEN 1 AND 160
-    ORDER BY priority DESC, RANDOM()
-    LIMIT 100
+      AND LENGTH(TRIM(c.front)) BETWEEN 1 AND 120
+      AND LENGTH(TRIM(c.back)) BETWEEN 1 AND 500
+    ORDER BY priority DESC,RANDOM() LIMIT 32
   `,[uid]);
-  res.json({cards:rows.map(c=>({
-    id:c.id,front:c.front,back:c.back,example:c.example,due:c.due,
-    priority:Number(c.priority||0)
-  }))});
+  const seenFront=new Set(),seenBack=new Set(),cards=[];
+  for(const row of rows){
+    const front=row.front.trim().toLowerCase(),back=row.back.trim().toLowerCase();
+    if(!front||!back||front===back||seenFront.has(front)||seenBack.has(back))continue;
+    seenFront.add(front);seenBack.add(back);
+    cards.push(row);if(cards.length>=count)break;
+  }
+  if(!cards.length)return res.status(409).json({error:"知识库暂无可训练卡片，请先添加知识点"});
+  const {rows:session}=await query(`
+    INSERT INTO memory_sessions(user_id,card_ids) VALUES($1,$2::uuid[]) RETURNING id,started_at
+  `,[uid,cards.map(c=>c.id)]);
+  res.status(201).json({sessionId:session[0].id,startedAt:session[0].started_at,
+    cards:cards.map(c=>({id:c.id,front:c.front,back:c.back,example:c.example,priority:Number(c.priority)||0}))});
 }));
-
-app.post("/games/attempt", requireAuth, asyncRoute(async(req,res)=>{
-  const {cardId,mode,correct,elapsedMs=0}=req.body||{};
-  const ms=Number(elapsedMs);
-  if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(cardId||"")) ||
-     !["match","listen","spell","recall"].includes(mode) ||
-     typeof correct!=="boolean" || !Number.isFinite(ms) ||
-     !Number.isInteger(ms) || ms<0 || ms>600000)
-    return res.status(400).json({error:"Invalid game attempt"});
+app.post("/memory/attempts",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const {sessionId,cardId,phase,direction,response="",grade,hinted=false,elapsedMs=0}=req.body||{};
+  if(!MEMORY_UUID.test(String(sessionId))||!MEMORY_UUID.test(String(cardId))||
+     !MEMORY_PHASES.has(phase)||!["front-to-back","back-to-front"].includes(direction)||
+     !Number.isInteger(grade)||grade<0||grade>2||
+     typeof response!=="string"||response.length>500||
+     typeof hinted!=="boolean"||!Number.isInteger(elapsedMs)||elapsedMs<0||elapsedMs>600000||
+     (grade>0&&!response.trim())){
+    return res.status(400).json({error:"无效的回忆记录"});
+  }
   const {rows}=await query(`
-    INSERT INTO game_attempts(user_id,card_id,mode,correct,elapsed_ms)
-    SELECT $1,c.id,$3,$4,$5 FROM cards c
-    WHERE c.user_id=$1 AND c.id=$2 AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
-      AND (c.source_note_id IS NULL OR EXISTS (
-        SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.study_enabled=TRUE
-      ))
+    INSERT INTO memory_attempts(user_id,session_id,card_id,phase,direction,response,grade,hinted,elapsed_ms)
+    SELECT $1,s.id,c.id,$4,$5,$6,$7,$8,$9
+    FROM memory_sessions s JOIN cards c ON c.id=$3 AND c.user_id=$1
+    WHERE s.user_id=$1 AND s.id=$2 AND s.completed_at IS NULL AND c.id=ANY(s.card_ids)
+    ON CONFLICT(session_id,card_id,phase) DO NOTHING
     RETURNING id
-  `,[userId(req),cardId,mode,correct,ms]);
-  if(!rows.length)return res.status(404).json({error:"Card not found or paused"});
+  `,[uid,sessionId,cardId,phase,direction,response.trim(),grade,hinted,elapsedMs]);
+  if(!rows.length)return res.status(409).json({error:"此题已保存或训练会话无效"});
   res.status(201).json({ok:true});
 }));
-
-// The adventure stores completed levels separately from individual practice
-// attempts. Existing FSRS scheduling is deliberately unchanged.
-// Roguelite account growth is independent of FSRS and adventure history.
-async function ensureArcadeProfile(uid){
-  await query("INSERT INTO arcade_profiles(user_id) VALUES($1) ON CONFLICT DO NOTHING",[uid]);
-}
-function arcadePublicProfile(p){
-  return {coins:p.coins,totalXp:p.total_xp,runs:p.runs,
-    bestWave:p.best_wave,highestSector:p.highest_sector,wins:p.wins,
-    upgrades:p.upgrades};
-}
-app.get("/arcade/profile",requireAuth,asyncRoute(async(req,res)=>{
-  const uid=userId(req);
-  await ensureArcadeProfile(uid);
-  const {rows}=await query("SELECT * FROM arcade_profiles WHERE user_id=$1",[uid]);
-  res.json({profile:arcadePublicProfile(rows[0])});
-}));
-app.post("/arcade/upgrade",requireAuth,asyncRoute(async(req,res)=>{
-  const uid=userId(req),key=String(req.body?.key||"");
-  const specs={power:[65,45],armor:[65,50],magnet:[45,35]};
-  if(!Object.hasOwn(specs,key))return res.status(400).json({error:"Unknown permanent upgrade"});
-  const [base,step]=specs[key];
-  await ensureArcadeProfile(uid);
+app.post("/memory/sessions/:id/complete",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req),sessionId=String(req.params.id);
+  if(!MEMORY_UUID.test(sessionId))return res.status(400).json({error:"Invalid session"});
   const {rows}=await query(`
-    UPDATE arcade_profiles
-    SET coins=coins-($2 + (COALESCE((upgrades->>$4)::int,0))*$3),
-        upgrades=jsonb_set(upgrades,ARRAY[$4],to_jsonb(COALESCE((upgrades->>$4)::int,0)+1),true),
-        updated_at=NOW()
-    WHERE user_id=$1 AND COALESCE((upgrades->>$4)::int,0)<5
-      AND coins>=($2 + COALESCE((upgrades->>$4)::int,0)*$3)
-    RETURNING *
-  `,[uid,base,step,key]);
-  if(!rows.length)return res.status(409).json({error:"金币不足，或装备已升至最高级"});
-  res.json({profile:arcadePublicProfile(rows[0])});
-}));
-app.post("/arcade/finish",requireAuth,asyncRoute(async(req,res)=>{
-  const uid=userId(req);
-  const sector=Number(req.body?.sector),wave=Number(req.body?.wave),
-    kills=Number(req.body?.kills),seconds=Number(req.body?.seconds),
-    won=req.body?.won===true;
-  if(!Number.isInteger(sector)||sector<1||sector>3||
-     !Number.isInteger(wave)||wave<1||wave>6||
-     !Number.isInteger(kills)||kills<0||kills>260||
-     !Number.isInteger(seconds)||seconds<1||seconds>3600||
-     (won&&wave!==6)){
-    return res.status(400).json({error:"Invalid arcade run"});
-  }
-  await ensureArcadeProfile(uid);
-  const earnedCoins=Math.min(260,Math.floor(wave*8+kills*1.4+(won?45:0)+sector*3));
-  const earnedXp=Math.min(700,Math.floor(wave*25+kills*3+(won?105:0)+sector*12));
-  const {rows}=await query(`
-    UPDATE arcade_profiles
-    SET coins=LEAST(1000000,coins+$2),
-        total_xp=LEAST(100000000,total_xp+$3),
-        runs=runs+1,best_wave=GREATEST(best_wave,$4),
-        wins=wins+CASE WHEN $5 THEN 1 ELSE 0 END,
-        highest_sector=CASE WHEN $5 THEN GREATEST(highest_sector,LEAST(3,$6+1))
-                            ELSE highest_sector END,
-        updated_at=NOW()
-    WHERE user_id=$1 AND highest_sector >= $6
-    RETURNING *
-  `,[uid,earnedCoins,earnedXp,wave,won,sector]);
-  if(!rows.length)return res.status(409).json({error:"请先解锁当前战区"});
-  res.json({ok:true,rewards:{coins:earnedCoins,xp:earnedXp},profile:arcadePublicProfile(rows[0])});
-}));
-
-app.get("/adventure/progress",requireAuth,asyncRoute(async(req,res)=>{
-  const {rows}=await query(
-    "SELECT level,stars,best_seconds,completed_at FROM adventure_progress WHERE user_id=$1 ORDER BY level",
-    [userId(req)]
-  );
-  res.json({levels:rows,highestCompleted:rows.reduce((max,row)=>Math.max(max,row.level),0)});
-}));
-
-app.post("/adventure/complete",requireAuth,asyncRoute(async(req,res)=>{
-  const level=Number(req.body?.level),stars=Number(req.body?.stars),seconds=Number(req.body?.seconds);
-  if(!Number.isInteger(level)||level<1||level>8||
-     !Number.isInteger(stars)||stars<1||stars>3||
-     !Number.isInteger(seconds)||seconds<1||seconds>3600){
-    return res.status(400).json({error:"Invalid adventure completion"});
-  }
-  // The previous level must be completed on this same user account.
-  const {rows}=await query(`
-    INSERT INTO adventure_progress(user_id,level,stars,best_seconds)
-    SELECT $1,$2,$3,$4 WHERE $2=1 OR EXISTS(
-      SELECT 1 FROM adventure_progress WHERE user_id=$1 AND level=$2-1
-    )
-    ON CONFLICT(user_id,level)
-    DO UPDATE SET
-      stars=GREATEST(adventure_progress.stars,EXCLUDED.stars),
-      best_seconds=LEAST(adventure_progress.best_seconds,EXCLUDED.best_seconds)
-    RETURNING level,stars,best_seconds,completed_at
-  `,[userId(req),level,stars,seconds]);
-  if(!rows.length)return res.status(409).json({error:"请先通关上一关"});
-  res.json({ok:true,record:rows[0],unlocked:Math.min(8,level+1)});
-}));
-
-app.get("/games/stats", requireAuth, asyncRoute(async(req,res)=>{
-  const uid=userId(req);
-  const [overall,modes]=await Promise.all([
-    query(`
-      SELECT COUNT(*)::int AS attempts,
-        COUNT(*) FILTER (WHERE correct)::int AS correct,
-        COUNT(*) FILTER (WHERE NOT correct)::int AS mistakes,
-        COUNT(*) FILTER (WHERE created_at>=NOW()-INTERVAL '7 days')::int AS last7,
-        COUNT(DISTINCT card_id)::int AS practiced_cards
-      FROM game_attempts WHERE user_id=$1
-    `,[uid]),
-    query(`
-      SELECT mode,COUNT(*)::int AS attempts,COUNT(*) FILTER (WHERE correct)::int AS correct
-      FROM game_attempts WHERE user_id=$1 GROUP BY mode ORDER BY mode
-    `,[uid])
-  ]);
-  res.json({overall:overall.rows[0],modes:modes.rows});
+    UPDATE memory_sessions s SET completed_at=NOW()
+    WHERE s.user_id=$1 AND s.id=$2 AND s.completed_at IS NULL
+      AND (SELECT COUNT(*) FROM memory_attempts a
+           WHERE a.session_id=s.id AND a.user_id=$1)=cardinality(s.card_ids)*3
+      AND NOT EXISTS (
+        SELECT 1 FROM unnest(s.card_ids) AS cid
+        CROSS JOIN (VALUES('retrieve'),('interleave'),('delayed')) AS phase(p)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM memory_attempts a WHERE a.user_id=$1 AND a.session_id=s.id
+            AND a.card_id=cid AND a.phase=phase.p
+        )
+      )
+    RETURNING id,completed_at
+  `,[uid,sessionId]);
+  if(!rows.length)return res.status(409).json({error:"所有知识点完成三轮回忆后才能结算"});
+  res.json({ok:true,completedAt:rows[0].completed_at});
 }));
 
 app.get("/walkman", requireAuth, asyncRoute(async(req,res)=>{
