@@ -826,7 +826,9 @@ app.get("/games/cards", requireAuth, asyncRoute(async(req,res)=>{
     WITH practice AS (
       SELECT card_id,
         COUNT(*) FILTER (WHERE NOT correct AND created_at>=NOW()-INTERVAL '30 days')::int AS recent_mistakes,
-        COUNT(*) FILTER (WHERE correct AND created_at>=NOW()-INTERVAL '7 days')::int AS recent_correct
+        COUNT(*) FILTER (WHERE correct AND created_at>=NOW()-INTERVAL '7 days')::int AS recent_correct,
+        MAX(created_at) FILTER (WHERE correct) AS last_correct_at,
+        MAX(created_at) FILTER (WHERE NOT correct) AS last_wrong_at
       FROM game_attempts WHERE user_id=$1 GROUP BY card_id
     ),
     last_review AS (
@@ -839,7 +841,10 @@ app.get("/games/cards", requireAuth, asyncRoute(async(req,res)=>{
         + CASE WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 65 ELSE 0 END
         + CASE WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 32 ELSE 0 END
         + LEAST(90,COALESCE(p.recent_mistakes,0)*18)
-        - LEAST(40,COALESCE(p.recent_correct,0)*5)
+        - LEAST(60,COALESCE(p.recent_correct,0)*9)
+        - CASE WHEN p.last_correct_at>=NOW()-INTERVAL '24 hours'
+                 AND p.last_correct_at>COALESCE(p.last_wrong_at,TIMESTAMPTZ '1970-01-01')
+               THEN 125 ELSE 0 END
         + LEAST(20,COALESCE((c.fsrs->>'difficulty')::numeric,0)*2)
       ) AS priority
     FROM cards c
