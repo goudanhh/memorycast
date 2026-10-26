@@ -8,7 +8,7 @@ const $=id=>document.getElementById(id);
 const escapeText=value=>String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
 const toMs=value=>Math.min(600000,Math.max(0,Math.floor(value||0)));
 const clock=value=>Math.floor(value/60)+":"+String(Math.floor(value%60)).padStart(2,"0");
-let pool=[],game=null,loading=false;
+let pool=[],game=null,loading=false,soundEnabled=false,soundContext=null;
 
 async function api(path,options={}){
   const response=await fetch("/api"+path,{
@@ -19,6 +19,37 @@ async function api(path,options={}){
   if(!response.ok)throw Error(data.error||("请求失败 HTTP "+response.status));
   return data;
 }
+// Short, opt-in synthesized feedback; never plays automatically without consent.
+function playCue(correct){
+  if(!soundEnabled)return;
+  try{
+    const Context=window.AudioContext||window.webkitAudioContext;
+    if(!Context)return;
+    if(!soundContext)soundContext=new Context();
+    if(soundContext.state==="suspended")soundContext.resume().catch(()=>{});
+    const start=soundContext.currentTime;
+    for(let i=0;i<(correct?2:1);i++){
+      const oscillator=soundContext.createOscillator();
+      const gain=soundContext.createGain();
+      oscillator.type="sine";
+      oscillator.frequency.setValueAtTime(correct?(590+i*190):260,start+i*.085);
+      gain.gain.setValueAtTime(.0001,start+i*.085);
+      gain.gain.exponentialRampToValueAtTime(.045,start+i*.085+.01);
+      gain.gain.exponentialRampToValueAtTime(.0001,start+i*.085+.11);
+      oscillator.connect(gain);gain.connect(soundContext.destination);
+      oscillator.start(start+i*.085);
+      oscillator.stop(start+i*.085+.115);
+    }
+  }catch(error){console.debug("Sound effect unavailable",error)}
+}
+function toggleGameSound(){
+  soundEnabled=!soundEnabled;
+  const button=$("gameSoundToggle");
+  button.textContent=soundEnabled?"🔊 音效开":"🔇 音效关";
+  button.setAttribute("aria-pressed",String(soundEnabled));
+  if(soundEnabled)playCue(true);
+}
+
 function notice(message="",warning=false){
   $("gameNotice").textContent=message;
   $("gameNotice").classList.toggle("game-notice-bad",warning);
@@ -321,6 +352,7 @@ function answerCurrent(s,correct,detail={}){
       "本题没答对。正确答案在下方，本局稍后再练一次。",true);
   }
   saveAttempt(s,card,correct,s.pausedAt-s.roundStarted);
+  playCue(correct);
   markEffect(s,correct);
   if(s.cfg.lives&&s.lives<=0){
     finishGame(s,"本次挑战结束 · 生命值归零");return;
@@ -430,6 +462,7 @@ document.addEventListener("visibilitychange",()=>{
 });
 
 $("gameExit").addEventListener("click",stopGame);
+$("gameSoundToggle").addEventListener("click",toggleGameSound);
 document.querySelectorAll("[data-game-mode]").forEach(btn=>
   btn.addEventListener("click",()=>startGame(btn.dataset.gameMode)));
 document.querySelector('[data-page="gamesPage"]')?.addEventListener("click",openGames);
