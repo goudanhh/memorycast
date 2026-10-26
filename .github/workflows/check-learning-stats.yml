@@ -21,3 +21,5 @@ jobs:
         run: node scripts/check-learning-stats.mjs
       - name: Check memory game logic and routes
         run: node scripts/check-games.mjs
+      - name: Verify retired Feynman feature is removed
+        run: node scripts/check-remove-feynman.mjs
