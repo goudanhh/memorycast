@@ -39,8 +39,9 @@ assert.equal(weakestSkill([{results:[{skill:"intent",correct:false},{skill:"inte
  {skill:"detail",correct:true},{skill:"detail",correct:true}]}]),"intent");
 const first=BLITZ_LIBRARY[0].questions.slice(0,2);
 const publicSet=publicQuestions(first,2);
-assert.ok(!JSON.stringify(publicSet).includes(first[0].answer),"No correct answer should leak before submit");
-assert.ok(!JSON.stringify(publicSet).includes(first[1].answer),"No accepted answer should leak before submit");
+assert.ok(publicSet.every(q=>!Object.hasOwn(q,"answer")&&!Object.hasOwn(q,"evidence")&&
+  !Object.hasOwn(q,"explanation")&&!Object.hasOwn(q,"accepted")),
+  "Server must hide answer keys, accepted variants and explanations until submission");
 assert.deepEqual(publicSet.map(x=>x.id),["q1","q2"]);
 const recorded=evaluate(first,{q1:first[0].answer,q2:"not an answer"},1);
 assert.equal(recorded.score,1);
