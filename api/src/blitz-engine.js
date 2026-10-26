@@ -27,7 +27,7 @@ export function validateLesson(x,seconds){
     typeof q.answer==="string"&&q.answer.trim()&&
     typeof q.explanation==="string"&&q.explanation.trim()&&
     typeof q.evidence==="string"&&q.evidence.trim()&&x.transcript.includes(q.evidence.trim())&&
-    (q.type==="fill"?(Array.isArray(q.accepted)&&q.accepted.length>=1&&q.accepted.length<=4&&
+    (q.type==="fill"?(Array.isArray(q.accepted)&&q.accepted.length>=1&&q.accepted.length<=8&&
       q.accepted.every(a=>typeof a==="string"&&a.trim()&&a.length<=45)):
       Array.isArray(q.choices)&&q.choices.length===4&&new Set(q.choices).size===4&&
       q.choices.every(a=>typeof a==="string"&&a.trim()&&a.length<=150)&&
