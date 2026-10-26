@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS cards (
   speak_order TEXT NOT NULL DEFAULT 'front-back-example',
   fsrs JSONB NOT NULL,
   due TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  hidden_until TIMESTAMPTZ,
   review_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS cards (
 
 CREATE INDEX IF NOT EXISTS idx_cards_user_due ON cards(user_id, due);
 CREATE INDEX IF NOT EXISTS idx_cards_user_category ON cards(user_id, category);
+CREATE INDEX IF NOT EXISTS idx_cards_user_hidden_until ON cards(user_id, hidden_until);
 
 CREATE TABLE IF NOT EXISTS reviews (
   id BIGSERIAL PRIMARY KEY,

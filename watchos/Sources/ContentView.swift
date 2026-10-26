@@ -63,6 +63,11 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
             .font(.caption2)
+
+            Button("⏳ 7天不出现") { model.snoozeCurrent() }
+                .buttonStyle(.bordered)
+                .font(.caption2)
+                .disabled(model.currentCard == nil || model.isLoading)
         }
         .padding(.horizontal, 4)
         .navigationTitle("随身听")
