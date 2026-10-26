@@ -1,11 +1,14 @@
-import {normalizeAnswer,isSpellingCard,shuffle,uniqueGameCards,makeListeningOptions,scoreForResult} from "./game-engine.js?v=1";
+import {
+  normalizeAnswer,isSpellingCard,uniqueGameCards,makeListeningOptions,
+  scoreForResult,CHALLENGES,chooseChallengeCards,challengeKind,
+  comboMultiplier,secondsLeft,isAudioEligible
+} from "./game-engine.js?v=challenge-v2";
 
 const $=id=>document.getElementById(id);
-const names={match:"词义配对",listen:"听音辨义",spell:"拼写挑战",recall:"回忆闯关"};
-let pool=[],game=null,loading=false;
 const escapeText=value=>String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
-const asMs=ms=>Math.min(600000,Math.max(0,Math.floor(ms||0)));
-const timeText=ms=>Math.floor(ms/60000)+":"+String(Math.floor(ms/1000)%60).padStart(2,"0");
+const toMs=value=>Math.min(600000,Math.max(0,Math.floor(value||0)));
+const clock=value=>Math.floor(value/60)+":"+String(Math.floor(value%60)).padStart(2,"0");
+let pool=[],game=null,loading=false;
 
 async function api(path,options={}){
   const response=await fetch("/api"+path,{
@@ -16,306 +19,418 @@ async function api(path,options={}){
   if(!response.ok)throw Error(data.error||("请求失败 HTTP "+response.status));
   return data;
 }
-
-function lobbyStatus(message,bad=false){
-  const el=$("gameLobbyStatus");
-  el.textContent=message||"";
-  el.style.color=bad?"#b45309":"#64748b";
+function notice(message="",warning=false){
+  $("gameNotice").textContent=message;
+  $("gameNotice").classList.toggle("game-notice-bad",warning);
 }
-function notify(message,bad=false){
-  const el=$("gameNotice");
-  el.textContent=message||"";
-  el.classList.toggle("game-notice-bad",Boolean(bad));
+function lobby(message="",warning=false){
+  $("gameLobbyStatus").textContent=message;
+  $("gameLobbyStatus").style.color=warning?"#fca5a5":"#94a3b8";
 }
 
 async function refreshStats(){
   try{
-    const data=await api("/games/stats");
-    const all=data.overall||{};
-    $("gameStatTotal").textContent=Number(all.attempts||0).toLocaleString();
-    const n=Number(all.attempts||0);
-    $("gameStatAccuracy").textContent=n?Math.round(Number(all.correct||0)/n*100)+"%":"—";
-    $("gameStatWeek").textContent=Number(all.last7||0).toLocaleString();
-    $("gameStatCards").textContent=Number(all.practiced_cards||0).toLocaleString();
-  }catch(err){notify("游戏统计暂时无法加载："+err.message,true)}
+    const {overall={}}=await api("/games/stats");
+    $("gameStatTotal").textContent=Number(overall.attempts||0).toLocaleString();
+    $("gameStatAccuracy").textContent=Number(overall.attempts)
+      ?Math.round(Number(overall.correct||0)/Number(overall.attempts)*100)+"%":"—";
+    $("gameStatWeek").textContent=Number(overall.last7||0).toLocaleString();
+    $("gameStatCards").textContent=Number(overall.practiced_cards||0).toLocaleString();
+  }catch(err){lobby("统计暂时无法载入："+err.message,true)}
 }
 async function refreshPool(){
   const data=await api("/games/cards");
   pool=uniqueGameCards(data.cards||[]);
-  $("gameAvailable").textContent="知识库中有 "+pool.length+" 张适合游戏的卡片（已排除近期不出现）";
-  $("gameSpellCount").textContent=pool.filter(isSpellingCard).length+" 张可练";
+  $("gameAvailable").textContent="可用知识卡 "+pool.length+" 张（已排除暂停卡片）";
+  $("gameSpellCount").textContent=pool.filter(isSpellingCard).length+" 张英文卡可练";
 }
 async function openGames(){
   if(loading)return;
   loading=true;
-  try{await Promise.all([refreshPool(),refreshStats()])}
-  catch(err){lobbyStatus("载入卡片失败："+err.message,true)}
+  try{
+    await Promise.all([refreshPool(),refreshStats()]);
+    lobby(pool.length?"挑选一种挑战。到期与薄弱知识点优先上场。":"先添加一些知识卡片，再来挑战。",!pool.length);
+  }catch(err){lobby("载入游戏失败："+err.message,true)}
   finally{loading=false}
 }
-
 function stopGame(){
   if(game?.timer)clearInterval(game.timer);
-  if(typeof speechSynthesis!=="undefined")speechSynthesis.cancel();
+  if("speechSynthesis" in window)speechSynthesis.cancel();
   game=null;
   $("gameStage").classList.add("hidden");
   $("gameModes").classList.remove("hidden");
-  $("gameNotice").textContent="";
+  $("gameStage").classList.remove("game-boost","game-damage");
+  notice();
+}
+function currentCard(s){return s.queue[s.idx]}
+function currentKind(s){return challengeKind(s.mode,currentCard(s),s.idx)}
+function saveAttempt(s,card,correct,elapsed){
+  s.writes.push(api("/games/attempt",{
+    method:"POST",body:JSON.stringify({
+      cardId:card.id,mode:s.mode,correct,elapsedMs:toMs(elapsed)
+    })
+  }).then(()=>true).catch(err=>{console.warn("Game attempt sync error",err);return false}));
 }
 
 async function startGame(mode){
-  if(!names[mode]||loading)return;
+  if(!CHALLENGES[mode]||loading)return;
   loading=true;
-  notify("");
-  lobbyStatus("");
+  lobby();
   try{
     await refreshPool();
-    if(mode==="listen" && (!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined")){
-      lobbyStatus("当前浏览器没有系统语音能力，可以使用其他三个游戏。",true);
-      return;
+    if(mode==="listen"&&(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined")){
+      lobby("当前浏览器没有语音朗读功能。请换一个浏览器，或先玩其他挑战。",true);return;
     }
-    const available=mode==="spell"?pool.filter(isSpellingCard):pool;
-    if(available.length<(mode==="match"||mode==="listen"?4:1)){
-      lobbyStatus(mode==="spell"?"还没有可用于拼写的英文词汇卡片。":"至少需要 4 张正反面不同的卡片才能开始这个游戏。",true);
+    const candidates=mode==="spell"?pool.filter(isSpellingCard)
+      :mode==="listen"?pool.filter(isAudioEligible):pool;
+    const minimum=["match","listen"].includes(mode)?4:1;
+    if(candidates.length<minimum||pool.length<(mode==="listen"?4:minimum)){
+      lobby("可用卡片不足。限时选择题需要至少 4 张不同释义的卡片；拼写挑战需要英文词汇卡。",true);
       return;
     }
     stopGame();
-    const chosen=shuffle(available.slice(0,Math.min(35,available.length))).slice(0,mode==="match"?6:10);
+    const cfg=CHALLENGES[mode];
+    const queue=chooseChallengeCards(candidates,cfg.count);
+    const now=Date.now();
     game={
-      mode,queue:chosen,idx:0,matched:new Set(),errors:new Set(),
-      first:null,options:[],answered:false,feedback:null,hintUsed:false,
-      score:0,correct:0,mistakes:0,attempts:0,started:Date.now(),
-      cardStarted:Date.now(),retry:new Set(),writes:[],timer:null,finished:false
+      mode,cfg,queue,targets:new Set(queue.map(c=>c.id)),idx:0,
+      started:now,roundStarted:now,globalDeadline:cfg.limit?now+cfg.limit*1000:0,
+      roundDeadline:mode==="listen"?0:cfg.round?now+cfg.round*1000:0,
+      lives:cfg.lives,score:0,streak:0,bestStreak:0,correct:0,mistakes:0,
+      mastered:new Set(),weak:new Map(),recovered:new Set(),retried:new Set(),
+      attempts:0,writes:[],options:[],kind:null,answered:false,reviewing:false,
+      feedback:null,typed:"",hintUsed:false,skipRecall:false,pausedAt:0,
+      timer:null,finished:false,busy:false,finishReason:"",roundToken:0
     };
-    $("gameStageTitle").textContent=names[mode];
-    $("gameModes").classList.add("hidden");
+    const s=game;
+    $("gameStageTitle").textContent=cfg.title;
+    $("gameStage").dataset.mode=mode;
     $("gameStage").classList.remove("hidden");
-    game.timer=setInterval(updateHud,1000);
-    if(mode==="match")renderMatch();
-    else renderQuestion();
-    updateHud();
+    $("gameModes").classList.add("hidden");
+    $("gameBossPanel").classList.toggle("hidden",mode!=="recall");
+    $("gameLivesWrap").classList.toggle("hidden",mode==="recall");
+    $("gameRoundTimerWrap").classList.toggle("hidden",mode==="recall");
+    s.timer=setInterval(()=>tick(s),100);
+    renderQuestion(s);
     $("gameStage").scrollIntoView({behavior:"smooth",block:"start"});
-  }catch(err){lobbyStatus("开始游戏失败："+err.message,true);notify("开始游戏失败："+err.message,true)}
+  }catch(err){lobby("挑战启动失败："+err.message,true);if(game)stopGame()}
   finally{loading=false}
 }
 
-function updateHud(){
-  if(!game)return;
-  $("gameScore").textContent=game.score;
-  $("gameClock").textContent=timeText(Date.now()-game.started);
-  $("gameCombo").textContent=game.correct;
-  const done=game.mode==="match"?game.matched.size:game.idx;
-  const total=game.queue.length;
-  $("gameStep").textContent=done+" / "+total;
-  $("gameBar").style.width=total?Math.round(done/total*100)+"%":"0%";
+function secondsForHud(s){
+  const now=s.answered&&s.pausedAt?s.pausedAt:Date.now();
+  return s.globalDeadline?secondsLeft(s.globalDeadline,now):
+    Math.floor(Math.max(0,now-s.started)/1000);
 }
-
-function saveAttempt(card,correct,elapsed){
-  const request=api("/games/attempt",{
-    method:"POST",
-    body:JSON.stringify({
-      cardId:card.id,mode:game.mode,correct,elapsedMs:asMs(elapsed)
-    })
-  }).then(()=>true).catch(err=>{console.warn("Game progress sync failed",err);return false});
-  game.writes.push(request);
-}
-
-function buildMatchSide(side){
-  const s=game;
-  return s.tiles.filter(x=>x.side===side).map(tile=>{
-    const done=s.matched.has(tile.id),active=s.first?.id===tile.id&&s.first.side===side;
-    const classes="game-tile"+(done?" game-tile-done":"")+(active?" game-tile-selected":"");
-    return '<button type="button" class="'+classes+'" data-game-id="'+escapeText(tile.id)+'" data-game-side="'+side+'" '+(done?'disabled':'')+'>'+escapeText(tile.label)+'</button>';
-  }).join("");
-}
-
-function renderMatch(){
-  const s=game;
-  if(!s.tiles){
-    s.tiles=shuffle(s.queue.map(c=>({id:c.id,label:c.front,side:"front"}))).concat(
-      shuffle(s.queue.map(c=>({id:c.id,label:c.back,side:"back"}))));
-    notify("先点左侧知识点，再点右侧含义。错配的卡片会被重点记住。");
+function updateHud(s){
+  if(s!==game)return;
+  $("gameScore").textContent=s.score.toLocaleString();
+  $("gameClock").textContent=clock(secondsForHud(s));
+  $("gameClockLabel").textContent=s.globalDeadline?"剩余时间":"本局用时";
+  $("gameCombo").textContent=s.streak+" 连击 · ×"+comboMultiplier(s.streak);
+  $("gameStep").textContent=Math.min(s.idx,s.queue.length)+" / "+s.queue.length;
+  $("gameBar").style.width=s.queue.length?Math.min(100,Math.round(s.idx/s.queue.length*100))+"%":"0%";
+  $("gameLives").textContent="❤".repeat(Math.max(0,s.lives))+"♡".repeat(Math.max(0,s.cfg.lives-s.lives));
+  if(s.mode==="recall"){
+    const remaining=Math.max(0,s.targets.size-s.mastered.size);
+    $("gameBossBar").style.width=s.targets.size?Math.round(remaining/s.targets.size*100)+"%":"0%";
+    $("gameBossText").textContent=remaining+" 道护盾未突破";
   }
-  $("gameBoard").innerHTML=
-    '<p class="game-instruction">将卡片正面与对应含义配成一对</p>'+
-    '<div class="game-match-columns"><div class="game-match-column">'+buildMatchSide("front")+
-    '</div><div class="game-match-column">'+buildMatchSide("back")+'</div></div>';
-  $("gameBoard").querySelectorAll("[data-game-id]").forEach(btn=>btn.onclick=()=>chooseMatch(btn.dataset.gameId,btn.dataset.gameSide));
-  updateHud();
+  const round=s.roundDeadline?(s.answered&&s.pausedAt?s.pausedAt:Date.now()):0;
+  $("gameRoundTimer").textContent=s.roundDeadline?secondsLeft(s.roundDeadline,round)+"s":"—";
+  const percentage=s.roundDeadline&&s.cfg.round
+    ?Math.max(0,Math.min(100,(s.roundDeadline-round)/(s.cfg.round*1000)*100)):0;
+  $("gameRoundBar").style.width=percentage+"%";
+  $("gameStage").classList.toggle("game-urgent",!!s.roundDeadline&&!s.answered&&
+    secondsLeft(s.roundDeadline,Date.now())<=5);
+}
+function tick(s){
+  if(s!==game||s.finished)return;
+  if(!s.answered&&!s.busy&&!document.hidden){
+    if(s.globalDeadline&&Date.now()>=s.globalDeadline){
+      finishGame(s,"60 秒倒计时结束");return;
+    }
+    if(s.roundDeadline&&Date.now()>=s.roundDeadline){
+      answerCurrent(s,false,{timeout:true});return;
+    }
+  }
+  updateHud(s);
+}
+function markEffect(s,correct){
+  if(s!==game)return;
+  const stage=$("gameStage"),name=correct?"game-boost":"game-damage";
+  stage.classList.remove("game-boost","game-damage");
+  // Reflow restarts feedback animation; no animation is needed for gameplay.
+  void stage.offsetWidth;
+  stage.classList.add(name);
 }
 
-function chooseMatch(id,side){
-  const s=game;
-  if(!s||s.finished||s.mode!=="match"||s.matched.has(id))return;
-  if(!s.first||s.first.side===side){
-    s.first={id,side};renderMatch();return;
-  }
-  const front=side==="front"?{id,side}:s.first;
-  const back=side==="back"?{id,side}:s.first;
-  s.first=null;
-  if(front.id!==back.id){
-    s.errors.add(front.id);
-    s.mistakes++;
-    notify("暂时没配对成功，再试一次。",true);
-    renderMatch();
-    return;
-  }
-  const card=s.queue.find(c=>c.id===id);
-  const firstTry=!s.errors.has(id);
-  s.matched.add(id);
-  s.attempts++;
-  if(firstTry)s.correct++;
-  s.score+=scoreForResult("match",firstTry,Date.now()-s.started);
-  saveAttempt(card,firstTry,Date.now()-s.started);
-  notify(firstTry?"配对成功！":"配对成功，这张卡片下次会更优先练习。");
-  if(s.matched.size===s.queue.length)finishGame();
-  else renderMatch();
-}
-
-function speakCard(text){
+function speakCard(card,s){
   if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance==="undefined"){
-    notify("当前浏览器不支持系统语音，可切换到其他游戏。",true);return;
+    notice("此浏览器暂不支持语音。",true);return;
   }
-  speechSynthesis.cancel();
-  const voice=new SpeechSynthesisUtterance(text);
-  voice.lang=/[\u3400-\u9fff]/.test(text)?"zh-CN":"en-US";
-  voice.rate=.92;
-  speechSynthesis.speak(voice);
-}
-
-function renderQuestion(){
-  const s=game;
-  if(!s||s.finished)return;
-  if(s.idx>=s.queue.length){finishGame();return}
-  const c=s.queue[s.idx];
-  const answered=s.answered;
-  const result=s.feedback;
-  let main="",controls="";
-  if(s.mode==="listen"){
-    if(!s.options.length)s.options=makeListeningOptions(c,pool);
-    main='<div class="game-prompt"><small>听音辨义 · 不先显示文字</small><h2>听发音，选择正确含义</h2>'+
-      '<button type="button" id="gameSpeak" class="btn dark">🔊 播放发音</button>'+
-      (answered?'<div class="game-answer">'+escapeText(c.front)+' · '+escapeText(c.back)+'</div>':'')+'</div>';
-    controls='<div class="game-options">'+s.options.map(option=>
-      '<button type="button" class="game-choice" data-choice-id="'+escapeText(option.id)+'" '+(answered?'disabled':'')+'>'+
-      escapeText(option.label)+'</button>').join("")+'</div>';
-  }else if(s.mode==="spell"){
-    main='<div class="game-prompt"><small>拼写挑战 · 根据释义回忆英文</small><h2>'+escapeText(c.back)+'</h2>'+
-      (s.hintUsed?'<div class="game-hint">首字母：'+escapeText(c.front.slice(0,1))+'</div>':'')+'</div>';
-    controls=answered?'':'<form id="gameSpellForm" class="game-spell-form">'+
-      '<input id="gameSpellInput" aria-label="输入英文单词或短语" placeholder="输入英文单词或短语" autocomplete="off" autocapitalize="off" spellcheck="false">'+
-      '<button class="btn dark" type="submit">提交拼写</button></form>'+
-      '<button id="gameHintBtn" type="button" class="ghost" '+(s.hintUsed?'disabled':'')+'>💡 提示首字母（少得分）</button>'+
-      '<button id="gameDontKnow" type="button" class="ghost">显示答案</button>';
-  }else{
-    main='<div class="game-prompt"><small>回忆闯关 · 先在脑中回答</small><h2>'+escapeText(c.front)+'</h2>'+
-      (s.answerRevealed?'<div class="game-answer">'+escapeText(c.back)+(c.example?'<div class="muted">'+escapeText(c.example)+'</div>':'')+'</div>':'')+'</div>';
-    controls=s.answerRevealed?
-      '<div class="game-recall-actions"><button type="button" data-game-recall="good" class="btn dark">✓ 记住了</button>'+
-      '<button type="button" data-game-recall="hard" class="ghost">≈ 模糊</button>'+
-      '<button type="button" data-game-recall="again" class="ghost">↺ 忘了</button></div>':
-      '<button id="gameFlip" type="button" class="btn dark">翻开答案</button>';
-  }
-  if(answered&&s.mode!=="recall"){
-    controls+='<div class="game-feedback '+(result?.correct?'game-feedback-ok':'game-feedback-retry')+'">'+
-      (result?.correct?'✅ 回答正确':'🔄 还需要巩固')+
-      '<div>正确答案：'+escapeText(c.front)+' — '+escapeText(c.back)+'</div></div>'+
-      '<button id="gameNext" type="button" class="btn dark">下一张 →</button>';
-  }
-  if(!answered){
-    controls+='<button id="gamePauseCard" type="button" class="ghost game-pause">⏳ 此卡片7天不出现</button>';
-  }
-  $("gameBoard").innerHTML='<div class="game-question">'+main+'<div class="game-answer-area">'+controls+'</div></div>';
-  $("gameSpeak")?.addEventListener("click",()=>speakCard(c.front));
-  $("gameBoard").querySelectorAll("[data-choice-id]").forEach(btn=>btn.addEventListener("click",()=>answerCurrent(btn.dataset.choiceId===c.id)));
-  $("gameSpellForm")?.addEventListener("submit",ev=>{ev.preventDefault();const typed=$("gameSpellInput").value; if(!typed.trim()){notify("先输入你的拼写。",true);return}answerCurrent(normalizeAnswer(typed)===normalizeAnswer(c.front))});
-  $("gameHintBtn")?.addEventListener("click",()=>{s.hintUsed=true;renderQuestion()});
-  $("gameDontKnow")?.addEventListener("click",()=>answerCurrent(false));
-  $("gameFlip")?.addEventListener("click",()=>{s.answerRevealed=true;renderQuestion()});
-  $("gameBoard").querySelectorAll("[data-game-recall]").forEach(btn=>btn.addEventListener("click",()=>answerCurrent(btn.dataset.gameRecall==="good")));
-  $("gamePauseCard")?.addEventListener("click",pauseCurrentCard);
-  $("gameNext")?.addEventListener("click",advanceGame);
-  if(s.mode==="spell"&&!answered&&!s.hintUsed)$("gameSpellInput")?.focus({preventScroll:true});
-  updateHud();
-}
-
-function answerCurrent(correct){
-  const s=game;
-  if(!s||s.finished||s.answered)return;
-  const card=s.queue[s.idx];
-  s.answered=true;
-  s.feedback={correct};
-  s.attempts++;
-  if(correct)s.correct++;else s.mistakes++;
-  s.score+=scoreForResult(s.mode,correct,Date.now()-s.cardStarted,s.hintUsed);
-  saveAttempt(card,correct,Date.now()-s.cardStarted);
-  // One more encounter with an incorrect card, not an endless loop.
-  if(!correct&&!s.retry.has(card.id)){
-    s.retry.add(card.id);s.queue.push(card);
-  }
-  if(s.mode==="recall"){advanceGame();return}
-  notify(correct?"回答正确，继续保持！":"这张卡片会在本局末尾再出现一次。",!correct);
-  renderQuestion();
-}
-
-function advanceGame(){
-  if(!game||game.finished)return;
-  game.idx++;
-  game.options=[];
-  game.answered=false;
-  game.feedback=null;
-  game.hintUsed=false;
-  game.answerRevealed=false;
-  game.cardStarted=Date.now();
-  notify("");
-  renderQuestion();
-}
-
-async function pauseCurrentCard(){
-  const s=game;
-  if(!s||s.finished||s.answered||s.busy)return;
-  s.busy=true;
-  const c=s.queue[s.idx];
   try{
-    await api("/cards/"+encodeURIComponent(c.id)+"/snooze",{method:"POST",body:JSON.stringify({days:7})});
-    pool=pool.filter(x=>x.id!==c.id);
-    s.queue=s.queue.filter(x=>x.id!==c.id);
-    s.options=[];s.answered=false;s.feedback=null;s.hintUsed=false;s.answerRevealed=false;
-    s.cardStarted=Date.now();
-    notify("已暂停7天，并从当前游戏队列中移除。");
-    renderQuestion();
-    $("gameAvailable").textContent="知识库中有 "+pool.length+" 张适合游戏的卡片（已排除近期不出现）";
-    lobbyStatus(pool.length?"选择一个游戏开始吧。":"暂时没有适合的卡片。请先从知识库中添加正反面知识卡片。",!pool.length);
-  }catch(err){notify("暂停失败："+err.message,true)}
+    speechSynthesis.cancel();
+    const utterance=new SpeechSynthesisUtterance(card.front);
+    utterance.lang=isAudioEligible(card)?"en-US":"zh-CN";
+    utterance.rate=.9;
+    speechSynthesis.speak(utterance);
+    if(s.mode==="listen"&&!s.roundDeadline){
+      const now=Date.now();
+      s.roundStarted=now;
+      s.roundDeadline=now+s.cfg.round*1000;
+      s.heard=true;
+      renderQuestion(s);
+    }
+  }catch(e){notice("语音播放失败："+e.message,true)}
+}
+function choiceButtons(s,card){
+  if(!s.options.length)s.options=makeListeningOptions(card,pool);
+  return '<div class="game-options">'+s.options.map((option,i)=>
+    '<button type="button" class="game-choice'+
+    (s.answered&&option.id===card.id?' game-correct-choice':'')+
+    '" data-game-choice="'+escapeText(option.id)+'" '+((s.answered||s.mode==="listen"&&!s.heard)?'disabled':'')+'>'+
+    '<kbd>'+String(i+1)+'</kbd><span>'+escapeText(option.label)+'</span></button>'
+  ).join("")+'</div>';
+}
+
+function renderQuestion(s){
+  if(s!==game||s.finished)return;
+  if(s.idx>=s.queue.length){finishGame(s,"挑战结束");return}
+  const card=currentCard(s);
+  if(!card){finishGame(s,"已完成全部卡片");return}
+  const kind=currentKind(s);
+  s.kind=kind;
+  $("gameChallengeType").textContent=kind==="type"?"ACTIVE RECALL / 主动拼写":
+    kind==="audio"?"LISTENING / 听力反应":
+    kind==="recall"?"BOSS BATTLE / 主动回忆":"SPEED ROUND / 极速判断";
+  const timeNotice=s.mode==="listen"&&!s.heard?"点击播放后才开始本题倒计时。":
+    s.mode==="match"?"60 秒内生存下来；每第三题可能需要真正拼写。":
+    s.mode==="recall"?"先写出你的理解，再揭晓答案并自评。":"本题限时 "+s.cfg.round+" 秒，正确才会累积连击。";
+  let face="",actions="";
+  if(kind==="audio"){
+    face='<p class="game-eyebrow">不要看单词，听到什么？</p>'+
+      '<h2 class="game-question-mark">?</h2>'+
+      '<button type="button" id="gameSpeak" class="game-primary">🔊 '+(s.heard?"再次收听":"开始播放")+'</button>'+
+      (s.answered?'<p class="game-key">原词：'+escapeText(card.front)+'</p>':'');
+    actions=choiceButtons(s,card);
+  }else if(kind==="choice"){
+    face='<p class="game-eyebrow">选出正确释义</p><h2>'+escapeText(card.front)+'</h2>';
+    actions=choiceButtons(s,card);
+  }else if(kind==="type"){
+    const prompt=s.mode==="match"?"⚡ 生存战：这关必须拼出来":"根据提示，输入正确英文";
+    face='<p class="game-eyebrow">'+prompt+'</p><h2>'+escapeText(card.back)+'</h2>'+
+      (s.hintUsed?'<p class="game-hint">首字母：'+escapeText(card.front[0])+'</p>':'');
+    actions='<form id="gameWriteForm" class="game-entry">'+
+      '<input id="gameWriteInput" type="text" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"'+
+      ' placeholder="输入英文单词 / 短语" aria-label="拼写回答" '+(s.answered?'disabled':'')+'>'+
+      (!s.answered?'<button class="game-primary" type="submit">确认答案 ↵</button>':'')+'</form>'+
+      (!s.answered?'<div class="game-support">'+
+      '<button id="gameHintBtn" type="button" '+(s.hintUsed?'disabled':'')+'>💡 首字母提示</button>'+
+      '<button id="gameGiveUp" type="button">不会，揭晓</button></div>':'');
+  }else{
+    face='<p class="game-eyebrow">第 '+(s.idx+1)+' 回合 · 用自己的话解释</p>'+
+      '<h2>'+escapeText(card.front)+'</h2>';
+    if(!s.reviewing){
+      actions='<textarea id="gameRecallDraft" rows="3" placeholder="不看答案，写下你能回忆的关键内容……"></textarea>'+
+        '<div class="game-support"><button id="gameReveal" type="button" class="game-primary">核对答案 →</button>'+
+        '<button id="gameCannotRecall" type="button">忘记了，直接揭晓</button></div>';
+    }else{
+      actions='<div class="game-reveal">'+
+        '<small>知识卡正确答案</small><div class="game-reveal-answer">'+escapeText(card.back)+'</div>'+
+        (card.example?'<p>'+escapeText(card.example)+'</p>':'')+
+        '<small>你刚才的回忆</small><div>'+escapeText(s.typed||"（未能回忆）")+'</div></div>'+
+        '<p class="game-self-note">请对照答案判断是否表达了关键意思，不需要逐字一致。</p>'+
+        '<div class="game-self-actions">'+
+        '<button data-game-self="yes" '+(s.skipRecall?'disabled':'')+'>✓ 讲清楚了</button>'+
+        '<button data-game-self="no">↺ 有遗漏 / 不会</button></div>';
+    }
+  }
+  if(s.answered){
+    actions='<div class="game-result-box '+(s.feedback?.correct?'is-correct':'is-wrong')+'">'+
+      '<strong>'+(s.feedback?.correct?"✓ 回忆成功":"↺ 需要巩固")+'</strong>'+
+      '<p>'+escapeText(card.front)+' — '+escapeText(card.back)+'</p>'+
+      (s.feedback?.timeout?'<small>本题超时</small>':'')+
+      '</div><button id="gameNext" type="button" class="game-primary">下一关 →</button>';
+  }else{
+    actions+='<button id="gamePauseCard" type="button" class="game-snooze">⏳ 这张卡 7 天不出现</button>';
+  }
+
+  $("gameBoard").innerHTML='<div class="game-arena">'+
+    '<div class="game-round-note">'+escapeText(timeNotice)+'</div>'+
+    '<div class="game-arena-face">'+face+'</div>'+
+    '<div class="game-arena-actions">'+actions+'</div></div>';
+
+  $("gameSpeak")?.addEventListener("click",()=>speakCard(card,s));
+  $("gameBoard").querySelectorAll("[data-game-choice]").forEach(btn=>
+    btn.addEventListener("click",()=>answerCurrent(s,btn.dataset.gameChoice===card.id)));
+  $("gameWriteForm")?.addEventListener("submit",e=>{
+    e.preventDefault();
+    const value=$("gameWriteInput")?.value.trim()||"";
+    if(!value){notice("先输入拼写，再提交。",true);return}
+    answerCurrent(s,normalizeAnswer(value)===normalizeAnswer(card.front),{typed:value});
+  });
+  $("gameHintBtn")?.addEventListener("click",()=>{
+    s.hintUsed=true;
+    const previous=$("gameWriteInput")?.value||"";
+    renderQuestion(s);
+    if($("gameWriteInput"))$("gameWriteInput").value=previous;
+  });
+  $("gameGiveUp")?.addEventListener("click",()=>answerCurrent(s,false,{gaveUp:true}));
+  $("gameReveal")?.addEventListener("click",()=>revealBoss(s,false));
+  $("gameCannotRecall")?.addEventListener("click",()=>revealBoss(s,true));
+  $("gameBoard").querySelectorAll("[data-game-self]").forEach(btn=>
+    btn.addEventListener("click",()=>answerCurrent(s,btn.dataset.gameSelf==="yes")));
+  $("gamePauseCard")?.addEventListener("click",()=>pauseCurrentCard(s));
+  $("gameNext")?.addEventListener("click",()=>advanceGame(s));
+  if(kind==="type"&&!s.answered)$("gameWriteInput")?.focus({preventScroll:true});
+  updateHud(s);
+}
+function revealBoss(s,skipped){
+  if(s!==game||s.answered||s.reviewing||s.busy)return;
+  const draft=$("gameRecallDraft")?.value.trim()||"";
+  if(!skipped&&!draft){notice("先写下你记得的内容；如果完全不会，点击「忘记了」。",true);return}
+  s.typed=draft;s.skipRecall=skipped;s.reviewing=true;
+  renderQuestion(s);
+}
+
+function answerCurrent(s,correct,detail={}){
+  if(s!==game||s.finished||s.answered||s.busy)return;
+  const card=currentCard(s);
+  if(!card)return;
+  s.answered=true;
+  s.pausedAt=Date.now();
+  s.feedback={correct,timeout:detail.timeout||false};
+  s.attempts++;
+  if(correct){
+    s.correct++;s.streak++;
+    s.bestStreak=Math.max(s.bestStreak,s.streak);
+    s.score+=scoreForResult(s.mode,true,s.pausedAt-s.roundStarted,s.hintUsed)
+      *comboMultiplier(s.streak);
+    if(s.mode==="recall")s.mastered.add(card.id);
+    if(s.weak.has(card.id)){s.weak.delete(card.id);s.recovered.add(card.id)}
+    notice("✓ 连击 "+s.streak+"，倍率 ×"+comboMultiplier(s.streak));
+  }else{
+    s.mistakes++;s.streak=0;s.weak.set(card.id,card);
+    if(s.cfg.lives)s.lives=Math.max(0,s.lives-1);
+    if(!s.retried.has(card.id)){
+      s.retried.add(card.id);
+      s.queue.push(card); // Re-encounter once after other cards, not an endless loop
+    }
+    notice(detail.timeout?"本题超时。正确答案已显示，后续会再练习一次。":
+      "本题没答对。正确答案在下方，本局稍后再练一次。",true);
+  }
+  saveAttempt(s,card,correct,s.pausedAt-s.roundStarted);
+  markEffect(s,correct);
+  if(s.cfg.lives&&s.lives<=0){
+    finishGame(s,"本次挑战结束 · 生命值归零");return;
+  }
+  renderQuestion(s);
+}
+function advanceGame(s){
+  if(s!==game||s.finished||!s.answered)return;
+  if(s.globalDeadline&&s.pausedAt)s.globalDeadline+=Date.now()-s.pausedAt;
+  s.idx++;
+  s.options=[];s.feedback=null;s.answered=false;s.reviewing=false;
+  s.hintUsed=false;s.skipRecall=false;s.typed="";s.heard=false;
+  s.roundStarted=Date.now();s.pausedAt=0;
+  s.roundDeadline=s.mode==="listen"?0:s.cfg.round?Date.now()+s.cfg.round*1000:0;
+  notice();
+  renderQuestion(s);
+}
+async function pauseCurrentCard(s){
+  if(s!==game||s.answered||s.busy)return;
+  s.busy=true;
+  const card=currentCard(s);
+  try{
+    await api("/cards/"+encodeURIComponent(card.id)+"/snooze",{
+      method:"POST",body:JSON.stringify({days:7})
+    });
+    if(s!==game)return;
+    pool=pool.filter(x=>x.id!==card.id);
+    const past=s.queue.slice(0,s.idx).filter(c=>c.id!==card.id);
+    const next=s.queue.slice(s.idx).filter(c=>c.id!==card.id);
+    s.idx=past.length;s.queue=past.concat(next);
+    s.targets.delete(card.id);
+    s.options=[];s.feedback=null;s.answered=false;s.reviewing=false;
+    s.hintUsed=false;s.skipRecall=false;s.heard=false;s.typed="";
+    s.roundStarted=Date.now();s.roundDeadline=s.mode==="listen"?0:s.cfg.round?Date.now()+s.cfg.round*1000:0;
+    $("gameAvailable").textContent="可用知识卡 "+pool.length+" 张（已排除暂停卡片）";
+    notice("已暂停 7 天，从当前挑战中移除。");
+    renderQuestion(s);
+  }catch(err){notice("暂停失败："+err.message,true)}
   finally{s.busy=false}
 }
-
-async function finishGame(){
-  const s=game;
-  if(!s||s.finished)return;
-  s.finished=true;
+async function finishGame(s,reason){
+  if(s!==game||s.finished)return;
+  s.finished=true;s.finishReason=reason;
   clearInterval(s.timer);
-  if(typeof speechSynthesis!=="undefined")speechSynthesis.cancel();
-  updateHud();
-  const played=s.attempts;
-  $("gameBoard").innerHTML=
-    '<div class="game-finish"><div class="game-finish-symbol">🏆</div>'+
-    '<h2>本局完成</h2><p>真正重要的是记住了什么，而不是获得多少分。</p>'+
-    '<div class="game-results"><div><strong>'+s.score+'</strong><span>本局积分</span></div>'+
-    '<div><strong>'+s.correct+'</strong><span>成功回忆</span></div>'+
-    '<div><strong>'+s.mistakes+'</strong><span>需巩固</span></div></div>'+
-    '<div class="game-finish-actions"><button id="gameAgain" type="button" class="btn dark">再来一局</button>'+
-    '<button id="gameChoose" type="button" class="ghost">换个游戏</button></div>'+
-    '<p id="gameSyncText" class="muted">正在保存游戏学习记录…</p></div>';
+  if("speechSynthesis" in window)speechSynthesis.cancel();
+  $("gameStage").classList.remove("game-urgent");
+  updateHud(s);
+  const wonBoss=s.mode==="recall"&&s.mastered.size===s.targets.size;
+  const incomplete=[...s.weak.values()];
+  const canRetry=s.mode==="recall"&&s.targets.size>0;
+  const title=s.mode==="recall"?(wonBoss?"🏆 Boss 护盾已突破":"🛡️ Boss 尚有知识缺口"):
+    reason==="挑战结束"?"🏁 挑战通关":"⚡ 本局结束";
+  $("gameBoard").innerHTML='<div class="game-finish">'+
+    '<div class="game-finish-symbol">'+(wonBoss?"🏆":"⚡")+'</div>'+
+    '<h2>'+title+'</h2><p>'+escapeText(reason||"已完成挑战")+' · '+escapeText(s.cfg.title)+'</p>'+
+    '<div class="game-results"><div><strong>'+s.score+'</strong><span>闯关得分</span></div>'+
+    '<div><strong>'+s.bestStreak+'</strong><span>最高连击</span></div>'+
+    '<div><strong>'+s.attempts+'</strong><span>主动练习次数</span></div></div>'+
+    '<div class="game-weak-panel"><b>本局需要加强的知识点</b>'+
+    (incomplete.length?'<div class="game-weak-chips">'+
+      incomplete.slice(0,10).map(c=>'<span>'+escapeText(c.front)+'</span>').join("")+
+      '</div>':'<p>这局没有未解决的知识点。继续挑战时会优先练习其他薄弱内容。</p>')+
+    (s.recovered.size?'<p>本局重新记住了 '+s.recovered.size+' 个之前答错的知识点。</p>':'')+'</div>'+
+    '<div class="game-finish-actions"><button id="gameAgain" class="game-primary" type="button">'+
+    (canRetry?"再挑战 Boss":"再来一局")+'</button>'+
+    '<button id="gameChoose" class="ghost" type="button">换个挑战</button></div>'+
+    '<p id="gameSyncText" class="muted">正在同步训练记录…</p></div>';
   $("gameAgain").onclick=()=>startGame(s.mode);
   $("gameChoose").onclick=stopGame;
-  const writes=await Promise.all(s.writes);
-  const failed=writes.filter(x=>!x).length;
-  if(game===s)$("gameSyncText").textContent=failed?failed+" 条训练记录保存失败；可以检查网络。":
-    played?("已保存 "+played+" 次训练记录；错题会在下次优先出现。"):"本局跳过了全部卡片，未产生训练记录。";
-  refreshStats().catch(()=>{});
+  notice();
+  const records=await Promise.all(s.writes);
+  if(game===s){
+    const bad=records.filter(v=>!v).length;
+    $("gameSyncText").textContent=bad?bad+" 条记录同步失败，请检查网络。":
+      s.attempts?"已同步 "+s.attempts+" 次练习；答错内容在下次游戏中会提高优先级。":"本轮没有产生练习记录。";
+    refreshStats();
+  }
 }
 
+// Keyboard 1–4 for choices; Space to replay audio. Never capture typing.
+window.addEventListener("keydown",event=>{
+  const s=game;
+  if(!s||s.finished||s.answered||s.busy||!$("gamesPage").classList.contains("active"))return;
+  if(event.ctrlKey||event.metaKey||event.altKey||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||""))return;
+  if(/^[1-4]$/.test(event.key)){
+    const option=$("gameBoard").querySelectorAll("[data-game-choice]")[Number(event.key)-1];
+    if(option&&!option.disabled){event.preventDefault();option.click()}
+  }else if(event.code==="Space"&&s.mode==="listen"){
+    event.preventDefault();$("gameSpeak")?.click();
+  }
+});
+
+// When the phone is put away mid-game, freeze countdowns instead of
+// charging the learner for an interruption.
+let hiddenAt=0;
+document.addEventListener("visibilitychange",()=>{
+  const s=game;
+  if(!s||s.finished)return;
+  if(document.hidden){hiddenAt=Date.now();return}
+  if(hiddenAt){
+    const delay=Date.now()-hiddenAt;
+    if(s.globalDeadline)s.globalDeadline+=delay;
+    if(s.roundDeadline)s.roundDeadline+=delay;
+    if(s.pausedAt)s.pausedAt+=delay;
+    hiddenAt=0;
+  }
+});
+
 $("gameExit").addEventListener("click",stopGame);
-document.querySelectorAll("[data-game-mode]").forEach(btn=>btn.addEventListener("click",()=>startGame(btn.dataset.gameMode)));
+document.querySelectorAll("[data-game-mode]").forEach(btn=>
+  btn.addEventListener("click",()=>startGame(btn.dataset.gameMode)));
 document.querySelector('[data-page="gamesPage"]')?.addEventListener("click",openGames);
 document.querySelector('[data-go="gamesPage"]')?.addEventListener("click",openGames);
