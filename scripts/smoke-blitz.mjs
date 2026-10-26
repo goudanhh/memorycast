@@ -107,9 +107,15 @@ try{
  assert.ok(!(await page.locator("#blitzWorkout").innerText()).includes(transcript),
    "Transcript should remain hidden before grading");
  assert.ok(await page.locator("#blitzSubmit").isDisabled());
- await page.locator("#blitzPlay").click();
- await page.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
-   null,{timeout:15000});
+ // Autoplay is attempted from Start. If a browser blocks it, one tap still works.
+ try{
+   await page.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
+     null,{timeout:3000});
+ }catch{
+   await page.locator("#blitzPlay").click();
+   await page.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
+     null,{timeout:15000});
+ }
  await page.locator('#blitzAnswers input[name="blitz-q1"][value="805"]').check();
  await page.locator('#blitzAnswers input[name="blitz-q2"][value="The guest is asleep."]').check();
  await page.locator("#blitzSubmit").click();
@@ -121,6 +127,28 @@ try{
  await mkdir(resolve(import.meta.dirname,"../artifacts"),{recursive:true});
  await page.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-desktop.png"),fullPage:true});
  console.log("Desktop Blitz smoke PASS: one-click start, blind listening, 2 scored questions, transcript gate, first-listen report.");
+ await page.locator("#blitzBack").click();
+ await page.locator('[data-blitz-duration="20"]').click();
+ await page.locator("#blitzStart").click();
+ await page.locator("#blitzWorkout").waitFor({state:"visible"});
+ assert.equal(await page.locator(".blitz-question").count(),1);
+ try{
+   await page.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
+     null,{timeout:3000});
+ }catch{
+   await page.locator("#blitzPlay").click();
+   await page.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
+     null,{timeout:15000});
+ }
+ await page.locator("#blitzPlay").click();
+ await page.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="2 次",
+   null,{timeout:15000});
+ await page.locator('#blitzAnswers input[name="blitz-q1"][value="805"]').check();
+ await page.locator("#blitzSubmit").click();
+ await page.locator("#blitzResults").waitFor({state:"visible"});
+ assert.ok((await page.locator("#blitzScoringType").innerText()).includes("重听"),
+   "Repeat playback must be tracked separately from first-listen accuracy");
+ console.log("Replay scoring smoke PASS: 20-second one-question mode, 2 plays, correctly labeled assisted listening.");
  await page.close();
  const mobile=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
  const mobileErrors=[];mobile.on("pageerror",e=>mobileErrors.push(e.message));
