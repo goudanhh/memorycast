@@ -133,6 +133,7 @@ async function loadCards(){const d=await api("/cards");cards=d.cards||[];$("home
 async function loadDue(){const d=await api("/due");due=d.cards||[];dueIndex=Math.min(dueIndex,Math.max(0,due.length-1));$("homeDue").textContent=due.length;renderDue()}
 function renderDue(){
   const c=due[dueIndex];
+  if($("snoozeCurrentBtn"))$("snoozeCurrentBtn").disabled=!c;
   if(!c){
     $("cardCat").textContent="DONE";
     $("cardFront").textContent="今天的复习完成了 🎉";
@@ -525,6 +526,42 @@ function renderCategories(){
   const tags=[...new Set(cards.flatMap(c=>c.tags||[]).filter(Boolean))].sort();
   $("categoryFilter").innerHTML='<option value="">全部标签</option>'+tags.map(t=>"<option>"+esc(t)+"</option>").join("");
 }
+function cardIsSnoozed(c){
+  return Boolean(c?.hiddenUntil && new Date(c.hiddenUntil).getTime()>Date.now());
+}
+async function snoozeCard(id,days=7){
+  if(!id)return;
+  const currentDue=due[dueIndex]?.id===id;
+  const currentWalkman=document.body.classList.contains("walkman") && walkmanQueue[walkmanIndex]?.id===id;
+  const currentQuiz=quizQuestions[quizIndex]?.cardId===id && !$("quizArea").classList.contains("hidden");
+  try{
+    // No FSRS change is recorded when a question is deliberately skipped.
+    await api("/cards/"+encodeURIComponent(id)+"/snooze",{method:"POST",body:JSON.stringify({days})});
+    if(currentDue){
+      autoPlay=false;isSpeaking=false;stopAllTts();
+      $("speakBtn").textContent="🔊 朗读";
+    }
+    const resumeWalkman=currentWalkman&&walkmanPlaying;
+    if(currentWalkman)stopWalkman();
+    if(days>0){
+      walkmanQueue=walkmanQueue.filter(c=>c.id!==id);
+      walkmanIndex=Math.min(walkmanIndex,Math.max(0,walkmanQueue.length-1));
+      watchPreparedFirstMedia=null;watchPreparedFirstKey="";
+      if(currentQuiz){
+        stopAllTts();
+        // Remove all outstanding adaptive variants of the paused card.
+        quizQuestions.splice(quizIndex,quizQuestions.length-quizIndex,...quizQuestions.slice(quizIndex).filter(q=>q.cardId!==id));
+        renderQuiz();
+      }
+    }
+    await Promise.all([loadCards(),loadDue(),loadStats()]);
+    if(currentWalkman){
+      const next=walkmanQueue[walkmanIndex];
+      renderWalkmanLyrics(next?walkmanSegments(next):["暂无可播放内容"],0);
+      if(resumeWalkman&&next){walkmanPlaying=true;playWalkmanCurrent()}
+    }
+  }catch(err){alert("设置近期不出现失败："+err.message)}
+}
 function renderLibrary(){
   const key=($("searchInput")?.value||"").toLowerCase(),tag=$("categoryFilter")?.value||"";
   const arr=cards.filter(c=>{
@@ -537,9 +574,13 @@ function renderLibrary(){
   const start=(libraryPage-1)*LIBRARY_PAGE_SIZE;
   const pageItems=arr.slice(start,start+LIBRARY_PAGE_SIZE);
 
-  $("libraryList").innerHTML=pageItems.map(c=>'<div class="card-item"><div><b>'+esc(c.front)+'</b><div class="muted">'+esc(c.back)+'</div><div class="muted">下次：'+new Date(c.due).toLocaleString()+'</div></div><div class="card-actions"><div>'+(c.tags||[]).map(t=>'<span class="chip">'+esc(t)+'</span>').join(" ")+'</div><button class="ghost" data-edit="'+c.id+'">编辑</button><button class="ghost" data-del="'+c.id+'">删除</button></div></div>').join("")||'<div class="muted">暂无内容。</div>';
+  $("libraryList").innerHTML=pageItems.map(c=>{
+    const paused=cardIsSnoozed(c);
+    return '<div class="card-item"><div><b>'+esc(c.front)+'</b><div class="muted">'+esc(c.back)+'</div><div class="muted">'+(paused?'近期不出现至：':'下次：')+new Date(paused?c.hiddenUntil:c.due).toLocaleString()+'</div></div><div class="card-actions"><div>'+(c.tags||[]).map(t=>'<span class="chip">'+esc(t)+'</span>').join(" ")+'</div><button class="ghost" data-snooze="'+c.id+'" data-days="'+(paused?0:7)+'">'+(paused?'恢复复习':'⏳ 7天不出现')+'</button><button class="ghost" data-edit="'+c.id+'">编辑</button><button class="ghost" data-del="'+c.id+'">删除</button></div></div>';
+  }).join("")||'<div class="muted">暂无内容。</div>';
   renderPager("library",libraryPage,totalPages,arr.length);
 
+  document.querySelectorAll("[data-snooze]").forEach(b=>b.onclick=()=>snoozeCard(b.dataset.snooze,Number(b.dataset.days)));
   document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openEdit(b.dataset.edit));
   document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>deleteCard(b.dataset.del));
 }
@@ -1307,6 +1348,7 @@ function renderQuiz(){
   selectedChoice="";
   quizConfidence="";
   $("quizProgress").textContent=(quizIndex+1)+" / "+quizQuestions.length;
+  $("quizSnoozeBtn").disabled=!q.cardId;
   const hasQuizAudio=Boolean(String(q.audioText||"").trim());
   const quizKind=hasQuizAudio&&q.type==="mcq"
     ?"听力选择题"
@@ -1463,7 +1505,7 @@ function finishQuiz(){
   $("quizArea").classList.add("hidden");
   $("quizResult").classList.remove("hidden");
 
-  const total=quizAttempts.length||quizQuestions.length||1;
+  const total=quizAttempts.length||1;
   const mastery=Math.round(
     ((quizStats.correct||0)+(quizStats.partial||0)*0.5)/total*100
   );
@@ -1473,7 +1515,7 @@ function finishQuiz(){
 
   $("quizResult").innerHTML=
     '<div class="quiz-diagnosis">'+
-      '<div class="quiz-empty"><b style="font-size:34px">'+mastery+'%</b><br>本次掌握度'+
+      '<div class="quiz-empty"><b style="font-size:34px">'+(quizAttempts.length?mastery+'%':'—')+'</b><br>本次掌握度'+
       '<br>正确 '+quizStats.correct+' · 基本正确 '+quizStats.partial+' · 错误 '+quizStats.wrong+
       '<br><span class="muted">自适应变式题 '+quizAdaptiveAdded+' 道；结果已更新 FSRS。</span></div>'+
       '<div class="quiz-diagnosis-grid">'+
@@ -3395,6 +3437,9 @@ document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go)
 $("mobileMenuBtn").onclick=toggleMobileNav;
 $("sidebarBackdrop").onclick=closeMobileNav;
 $("logoutBtn").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};$("watchBtn").onclick=enterWalkmanMode;
+$("snoozeCurrentBtn").onclick=()=>{const c=due[dueIndex];if(c)snoozeCard(c.id,7)};
+$("walkmanSnoozeBtn").onclick=()=>{const c=walkmanQueue[walkmanIndex];if(c)snoozeCard(c.id,7)};
+$("quizSnoozeBtn").onclick=()=>{const q=quizQuestions[quizIndex];if(q?.cardId)snoozeCard(q.cardId,7)};
 $("speakBtn").onclick=toggleSpeak;$("nextCardBtn").onclick=()=>{autoPlay=false;isSpeaking=false;stopAllTts();$("speakBtn").textContent="🔊 朗读";nextDue()};$("loopBtn").onclick=()=>{loop=!loop;$("loopBtn").textContent="↻ 循环："+(loop?"开":"关");if(loop)speakCurrent()};
 document.querySelectorAll("[data-rating]").forEach(b=>b.onclick=()=>grade(b.dataset.rating));
 $("searchInput").oninput=()=>{libraryPage=1;renderLibrary()};
