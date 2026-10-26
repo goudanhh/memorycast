@@ -851,13 +851,20 @@ app.get("/memory/overview",requireAuth,asyncRoute(async(req,res)=>{
        COUNT(*) FILTER(WHERE phase='delayed' AND grade=2)::int AS delayed_correct,
        COUNT(*) FILTER(WHERE phase='delayed')::int AS delayed_total
        FROM memory_attempts WHERE user_id=$1`,[uid]),
-    query(`SELECT c.id,c.front,c.back,
-       MAX(a.created_at) AS last_attempt,
-       COUNT(*) FILTER(WHERE a.grade<2 AND a.created_at>=NOW()-INTERVAL '30 days')::int AS mistakes
-       FROM memory_attempts a JOIN cards c ON c.id=a.card_id AND c.user_id=a.user_id
-       WHERE a.user_id=$1
-       GROUP BY c.id,c.front,c.back HAVING COUNT(*) FILTER(WHERE a.grade<2)>0
-       ORDER BY mistakes DESC,last_attempt DESC LIMIT 6`,[uid])
+    query(`WITH latest AS (
+         SELECT DISTINCT ON(card_id) card_id,grade,created_at
+         FROM memory_attempts WHERE user_id=$1
+         ORDER BY card_id,created_at DESC,id DESC
+       ), mistakes AS (
+         SELECT card_id,COUNT(*) FILTER(
+           WHERE grade<2 AND created_at>=NOW()-INTERVAL '30 days')::int AS misses
+         FROM memory_attempts WHERE user_id=$1 GROUP BY card_id
+       )
+       SELECT c.id,c.front,c.back,l.created_at AS last_attempt,
+         COALESCE(m.misses,0) AS mistakes
+       FROM latest l JOIN cards c ON c.id=l.card_id AND c.user_id=$1
+       LEFT JOIN mistakes m ON m.card_id=c.id
+       WHERE l.grade<2 ORDER BY mistakes DESC,last_attempt DESC LIMIT 6`,[uid])
   ]);
   res.json({sessions:sessions.rows[0],attempts:attempts.rows[0],weak:weak.rows});
 }));
@@ -873,6 +880,9 @@ app.post("/memory/sessions",requireAuth,asyncRoute(async(req,res)=>{
         MAX(created_at) FILTER(WHERE grade=2) AS last_success,
         MAX(created_at) FILTER(WHERE grade<2) AS last_miss
       FROM memory_attempts WHERE user_id=$1 GROUP BY card_id
+    ), last_memory AS (
+      SELECT DISTINCT ON (card_id) card_id,grade FROM memory_attempts
+      WHERE user_id=$1 ORDER BY card_id,created_at DESC,id DESC
     ), last_review AS (
       SELECT DISTINCT ON (card_id) card_id,rating,verdict FROM reviews
       WHERE user_id=$1 ORDER BY card_id,reviewed_at DESC
@@ -889,6 +899,7 @@ app.post("/memory/sessions",requireAuth,asyncRoute(async(req,res)=>{
       ) AS priority
     FROM cards c
     LEFT JOIN practice p ON p.card_id=c.id
+    LEFT JOIN last_memory lm ON lm.card_id=c.id
     LEFT JOIN last_review lr ON lr.card_id=c.id
     WHERE c.user_id=$1
       AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
@@ -896,7 +907,7 @@ app.post("/memory/sessions",requireAuth,asyncRoute(async(req,res)=>{
         SELECT 1 FROM notes n WHERE n.id=c.source_note_id
           AND n.user_id=$1 AND n.study_enabled=TRUE
       ))
-      AND ($2 <> 'weak' OR COALESCE(p.misses,0)>0)
+      AND ($2 <> 'weak' OR lm.grade<2)
       AND LENGTH(TRIM(c.front)) BETWEEN 1 AND 120
       AND LENGTH(TRIM(c.back)) BETWEEN 1 AND 500
     ORDER BY priority DESC,RANDOM() LIMIT 32
@@ -946,11 +957,11 @@ app.post("/memory/sessions/:id/complete",requireAuth,asyncRoute(async(req,res)=>
       AND (SELECT COUNT(*) FROM memory_attempts a
            WHERE a.session_id=s.id AND a.user_id=$1)=cardinality(s.card_ids)*3
       AND NOT EXISTS (
-        SELECT 1 FROM unnest(s.card_ids) AS cid
+        SELECT 1 FROM unnest(s.card_ids) AS wanted(card_id)
         CROSS JOIN (VALUES('retrieve'),('interleave'),('delayed')) AS phase(p)
         WHERE NOT EXISTS (
           SELECT 1 FROM memory_attempts a WHERE a.user_id=$1 AND a.session_id=s.id
-            AND a.card_id=cid AND a.phase=phase.p
+            AND a.card_id=wanted.card_id AND a.phase=phase.p
         )
       )
     RETURNING id,completed_at
