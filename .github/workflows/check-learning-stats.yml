@@ -21,4 +21,6 @@ jobs:
         run: node scripts/check-learning-stats.mjs
       - name: Verify retired Feynman feature is removed
         run: node scripts/check-remove-feynman.mjs
+      - name: Ensure removed memory training leaves no broken references
+        run: node scripts/check-remove-memory.mjs
 
