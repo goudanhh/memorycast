@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>MemoryCast</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="stylesheet" href="/styles.css?v=listening-evidence-1">
+<link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
@@ -99,6 +99,7 @@
       <div class="row">
         <button id="speakBtn" class="btn dark">▶ 连续播放</button>
         <button id="nextCardBtn" class="ghost">下一条 →</button>
+        <button id="snoozeCurrentBtn" class="ghost" type="button" disabled>⏳ 7天不出现</button>
       </div>
       <div class="ratings">
         <button data-rating="Again">忘了</button>
@@ -231,7 +232,7 @@
           <button type="button" class="ghost" data-confidence="unsure">🤔 不太确定</button>
           <button type="button" class="ghost" data-confidence="guess">❓ 猜的 / 不会</button>
         </div>
-        <button id="submitQuizBtn" class="btn dark">提交答案</button>
+        <div class="row quiz-study-actions"><button id="submitQuizBtn" class="btn dark">提交答案</button><button id="quizSnoozeBtn" class="ghost" type="button">⏳ 近期不出现（7天）</button></div>
         <div id="quizFeedback" class="feedback hidden"></div>
         <button id="nextQuizBtn" class="ghost hidden">下一题 →</button>
       </div>
@@ -477,7 +478,7 @@
   </div>
 </div>
 
-<script type="module" src="/app.js?v=listening-lemma-1"></script>
+<script type="module" src="/app.js?v=snooze-20261026"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
@@ -487,6 +488,7 @@
   <div class="walkman-controls">
     <button id="walkmanPlayBtn" class="walkman-play" type="button">▶</button>
     <button id="walkmanRepeatBtn" class="walkman-repeat" type="button" aria-pressed="false" title="当前知识点循环播放10遍">↻ ×10</button>
+    <button id="walkmanSnoozeBtn" class="walkman-snooze" type="button" title="暂停当前卡片7天">⏳ 7天不出现</button>
     <select id="walkmanRate" class="walkman-rate" aria-label="播放速率">
     <option value=".8">0.8×</option>
     <option value=".9">0.9×</option>
