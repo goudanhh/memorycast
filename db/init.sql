@@ -146,35 +146,3 @@ ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_source_note_id_fkey;
 ALTER TABLE cards
   ADD CONSTRAINT cards_source_note_id_fkey
   FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE;
-
-
-
-
-
--- One focused retrieval training module.
--- Existing legacy game tables on deployed databases are left untouched.
-CREATE TABLE IF NOT EXISTS memory_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  card_ids UUID[] NOT NULL,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_at TIMESTAMPTZ
-);
-CREATE TABLE IF NOT EXISTS memory_attempts (
-  id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  session_id UUID NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
-  card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-  phase TEXT NOT NULL CHECK(phase IN ('retrieve','interleave','delayed')),
-  direction TEXT NOT NULL CHECK(direction IN ('front-to-back','back-to-front')),
-  response TEXT NOT NULL DEFAULT '',
-  grade SMALLINT NOT NULL CHECK(grade BETWEEN 0 AND 2),
-  hinted BOOLEAN NOT NULL DEFAULT FALSE,
-  elapsed_ms INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(session_id,card_id,phase)
-);
-CREATE INDEX IF NOT EXISTS idx_memory_attempts_user_time
-  ON memory_attempts(user_id,created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_attempts_card_time
-  ON memory_attempts(card_id,created_at DESC);
