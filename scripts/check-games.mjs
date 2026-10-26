@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {execFileSync} from "node:child_process";
 import {resolve} from "node:path";
-import {normalizeAnswer,isSpellingCard,shuffle,uniqueGameCards,makeListeningOptions,scoreForResult} from "../web/game-engine.mjs";
+import {normalizeAnswer,isSpellingCard,shuffle,uniqueGameCards,makeListeningOptions,scoreForResult} from "../web/game-engine.js";
 
 const root=resolve(import.meta.dirname,"..");
 const read=name=>readFileSync(resolve(root,name),"utf8");
 
-for(const name of ["api/src/server.js","web/app.js","web/games.js","web/game-engine.mjs"]){
+for(const name of ["api/src/server.js","web/app.js","web/games.js","web/game-engine.js"]){
   execFileSync(process.execPath,["--check",resolve(root,name)],{stdio:"inherit"});
   console.log("JavaScript syntax OK:",name);
 }
@@ -48,7 +48,7 @@ for(const id of ["gamesPage","gameBoard","gameStage","gameModes","gameClock","ga
 for(const path of ["games.js","games.css"]){
   assert.ok(html.includes(path),"Missing game asset link "+path);
 }
-assert.ok(read("web/games.js").includes("game-engine.mjs"),"Missing game-engine import");
+assert.ok(read("web/games.js").includes("game-engine.js"),"Missing game-engine import");
 const game=read("web/games.js");
 for(const token of ["startGame(mode)","renderMatch()","renderQuestion()","finishGame()","pauseCurrentCard()","/games/attempt"]){
   assert.ok(game.includes(token),"Missing game client behavior "+token);
