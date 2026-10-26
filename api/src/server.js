@@ -155,6 +155,21 @@ await query(`
 `);
 await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_user_time ON game_attempts(user_id,created_at DESC)`);
 await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_card_time ON game_attempts(card_id,created_at DESC)`);
+
+await query(`
+  CREATE TABLE IF NOT EXISTS arcade_profiles (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    coins INTEGER NOT NULL DEFAULT 0 CHECK(coins>=0),
+    total_xp INTEGER NOT NULL DEFAULT 0 CHECK(total_xp>=0),
+    runs INTEGER NOT NULL DEFAULT 0,
+    best_wave INTEGER NOT NULL DEFAULT 0,
+    highest_sector INTEGER NOT NULL DEFAULT 1 CHECK(highest_sector BETWEEN 1 AND 3),
+    wins INTEGER NOT NULL DEFAULT 0,
+    upgrades JSONB NOT NULL DEFAULT '{"power":0,"armor":0,"magnet":0}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+
 await query(`
   CREATE TABLE IF NOT EXISTS adventure_progress (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -900,6 +915,70 @@ app.post("/games/attempt", requireAuth, asyncRoute(async(req,res)=>{
 
 // The adventure stores completed levels separately from individual practice
 // attempts. Existing FSRS scheduling is deliberately unchanged.
+// Roguelite account growth is independent of FSRS and adventure history.
+async function ensureArcadeProfile(uid){
+  await query("INSERT INTO arcade_profiles(user_id) VALUES($1) ON CONFLICT DO NOTHING",[uid]);
+}
+function arcadePublicProfile(p){
+  return {coins:p.coins,totalXp:p.total_xp,runs:p.runs,
+    bestWave:p.best_wave,highestSector:p.highest_sector,wins:p.wins,
+    upgrades:p.upgrades};
+}
+app.get("/arcade/profile",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  await ensureArcadeProfile(uid);
+  const {rows}=await query("SELECT * FROM arcade_profiles WHERE user_id=$1",[uid]);
+  res.json({profile:arcadePublicProfile(rows[0])});
+}));
+app.post("/arcade/upgrade",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req),key=String(req.body?.key||"");
+  const specs={power:[65,45],armor:[65,50],magnet:[45,35]};
+  if(!Object.hasOwn(specs,key))return res.status(400).json({error:"Unknown permanent upgrade"});
+  const [base,step]=specs[key];
+  await ensureArcadeProfile(uid);
+  const {rows}=await query(`
+    UPDATE arcade_profiles
+    SET coins=coins-($2 + (COALESCE((upgrades->>$4)::int,0))*$3),
+        upgrades=jsonb_set(upgrades,ARRAY[$4],to_jsonb(COALESCE((upgrades->>$4)::int,0)+1),true),
+        updated_at=NOW()
+    WHERE user_id=$1 AND COALESCE((upgrades->>$4)::int,0)<5
+      AND coins>=($2 + COALESCE((upgrades->>$4)::int,0)*$3)
+    RETURNING *
+  `,[uid,base,step,key]);
+  if(!rows.length)return res.status(409).json({error:"金币不足，或装备已升至最高级"});
+  res.json({profile:arcadePublicProfile(rows[0])});
+}));
+app.post("/arcade/finish",requireAuth,asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const sector=Number(req.body?.sector),wave=Number(req.body?.wave),
+    kills=Number(req.body?.kills),seconds=Number(req.body?.seconds),
+    won=req.body?.won===true;
+  if(!Number.isInteger(sector)||sector<1||sector>3||
+     !Number.isInteger(wave)||wave<1||wave>6||
+     !Number.isInteger(kills)||kills<0||kills>260||
+     !Number.isInteger(seconds)||seconds<1||seconds>3600||
+     (won&&wave!==6)){
+    return res.status(400).json({error:"Invalid arcade run"});
+  }
+  await ensureArcadeProfile(uid);
+  const earnedCoins=Math.min(260,Math.floor(wave*8+kills*1.4+(won?45:0)+sector*3));
+  const earnedXp=Math.min(700,Math.floor(wave*25+kills*3+(won?105:0)+sector*12));
+  const {rows}=await query(`
+    UPDATE arcade_profiles
+    SET coins=LEAST(1000000,coins+$2),
+        total_xp=LEAST(100000000,total_xp+$3),
+        runs=runs+1,best_wave=GREATEST(best_wave,$4),
+        wins=wins+CASE WHEN $5 THEN 1 ELSE 0 END,
+        highest_sector=CASE WHEN $5 THEN GREATEST(highest_sector,LEAST(3,$6+1))
+                            ELSE highest_sector END,
+        updated_at=NOW()
+    WHERE user_id=$1 AND highest_sector >= $6
+    RETURNING *
+  `,[uid,earnedCoins,earnedXp,wave,won,sector]);
+  if(!rows.length)return res.status(409).json({error:"请先解锁当前战区"});
+  res.json({ok:true,rewards:{coins:earnedCoins,xp:earnedXp},profile:arcadePublicProfile(rows[0])});
+}));
+
 app.get("/adventure/progress",requireAuth,asyncRoute(async(req,res)=>{
   const {rows}=await query(
     "SELECT level,stars,best_seconds,completed_at FROM adventure_progress WHERE user_id=$1 ORDER BY level",

@@ -25,3 +25,6 @@ jobs:
         run: node scripts/check-remove-feynman.mjs
       - name: Test knowledge adventure levels and progression
         run: node scripts/check-adventure.mjs
+      - name: Validate hybrid real-time arcade and persistence
+        run: node scripts/check-rogue.mjs
+

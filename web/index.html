@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/stats.css?v=insights-1">
 <link rel="stylesheet" href="/games.css?v=challenge-20261026">
 <link rel="stylesheet" href="/adventure.css?v=story-1">
+<link rel="stylesheet" href="/rogue.css?v=hybrid-1">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -35,7 +36,7 @@
     <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="quizPage">📝 AI 测试</button>
-    <button data-page="gamesPage">🗺️ 记忆冒险</button>
+    <button data-page="gamesPage">⚔️ 游戏世界</button>
     <button data-page="listeningPage">🎧 AI 听力考试</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="libraryPage">📚 知识库</button>
@@ -79,9 +80,9 @@
     <article class="panel"><div class="eyebrow">QUIZ</div><h2>📝 AI 测试</h2><p class="muted">选择、填空、简答、听力。</p><button class="btn dark" data-go="quizPage">开始测试</button></article>
   </div>
   <article class="game-home-teaser">
-    <div><strong>🎮 今天换一种方式记忆</strong>
-      <p>不用重新录入单词，直接用知识卡片玩配对、听音、拼写和回忆闯关。</p></div>
-    <button class="btn dark" type="button" data-go="gamesPage">开启挑战 →</button>
+    <div><strong>⚔️ 记忆守卫者：实时冒险</strong>
+      <p>操纵角色打怪、躲避 Boss 弹幕、建造防御塔与升级技能。知识符文可以提供额外战斗增益，不必一直答题。</p></div>
+    <button class="btn dark" type="button" data-go="gamesPage">进入游戏世界 →</button>
   </article>
 </section>
 
@@ -249,6 +250,87 @@
 </section>
 
 <section id="gamesPage" class="page">
+  <div class="rogue-shell" id="rogueShell">
+    <header class="rogue-hero">
+      <div>
+        <div class="rogue-eyebrow">MEMORYCAST · HYBRID SURVIVOR</div>
+        <h1>⚔️ 记忆守卫者</h1>
+        <p>实时打怪 + 躲避弹幕 + 建塔防守 + 技能进化。每次开局都能成长，知识符文提供可选的战斗增益。</p>
+        <div class="rogue-hero-tags"><span>实时生存</span><span>塔防策略</span><span>Roguelite 养成</span><span>知识魔法</span></div>
+      </div>
+      <div class="rogue-hero-icon" aria-hidden="true">🛡️</div>
+    </header>
+    <div id="rogueLobby" class="rogue-lobby">
+      <div class="rogue-profile-strip">
+        <div><small>冒险金币</small><strong id="rogueWallet">—</strong></div>
+        <div><small>累计经验</small><strong id="rogueXpTotal">—</strong></div>
+        <div><small>胜利次数</small><strong id="rogueWins">—</strong></div>
+        <div><small>出征次数</small><strong id="rogueRuns">—</strong></div>
+      </div>
+      <div class="rogue-section-head"><div><span class="rogue-eyebrow">CHOOSE YOUR ZONE</span><h2>选择战区</h2></div><span id="rogueKnowledge" class="rogue-knowledge-pill">正在读取知识卡…</span></div>
+      <div class="rogue-sectors" id="rogueSectors"><p>正在读取存档…</p></div>
+      <div class="rogue-section-head"><div><span class="rogue-eyebrow">PERMANENT UPGRADES</span><h2>基地强化</h2></div><small>装备永久保留 · 每次出战生效</small></div>
+      <div id="rogueShop" class="rogue-shop"></div>
+      <p class="rogue-footnote">每个战区 6 波怪物，最后一波有 Boss。战斗中金币用于建塔，结算获得的金币用于永久升级。游戏成长和知识复习记录独立保存。</p>
+    </div>
+
+    <section id="rogueBattle" class="rogue-battle hidden" aria-label="实时战斗">
+      <div class="rogue-battle-header">
+        <div><span class="rogue-eyebrow">LIVE DEFENSE</span><h2 id="rogueBattleTitle">实时守卫</h2><p id="rogueBattleSubtitle"></p></div>
+        <button id="rogueQuit" type="button" class="rogue-back">结束本局</button>
+      </div>
+      <div class="rogue-hud">
+        <div><small>玩家生命</small><strong id="rogueHealth">—</strong><div class="rogue-meter"><span id="rogueHealthBar" class="health"></span></div></div>
+        <div><small>核心护盾</small><strong id="rogueCore">—</strong><div class="rogue-meter"><span id="rogueCoreBar" class="core"></span></div></div>
+        <div><small>当前波次</small><strong id="rogueWave">0 / 6</strong><small id="roguePhase">准备</small></div>
+        <div><small>战场金币</small><strong id="rogueGold">50</strong><small>击败怪物获取</small></div>
+        <div><small>击杀 / Lv.</small><strong><span id="rogueKills">0</span> / <span id="rogueLevel">1</span></strong><div class="rogue-meter"><span id="rogueXpBar" class="xp"></span></div></div>
+      </div>
+      <div class="rogue-play-layout">
+        <div class="rogue-play-main">
+          <div class="rogue-canvas-border">
+            <canvas id="rogueCanvas" width="960" height="600" aria-label="战场：用 WASD、方向键或触屏控制角色移动，Space 冲刺，自动攻击怪物">你的浏览器不支持 Canvas。</canvas>
+          </div>
+          <div class="rogue-action-strip">
+            <button id="rogueDash" type="button">💨 闪避 <small id="rogueDashText">就绪</small></button>
+            <button id="rogueBuild" type="button" disabled>🏰 靠近蓝色基座</button>
+            <div class="rogue-control-guide">电脑 WASD / 方向键移动 · Space 冲刺 · E 建塔 · 触屏可拖动画面移动</div>
+          </div>
+          <div class="rogue-mobile-pad" aria-label="手机方向控制">
+            <button type="button" data-rogue-dir="up" aria-label="向上移动">▲</button>
+            <div><button type="button" data-rogue-dir="left" aria-label="向左移动">◀</button><button type="button" data-rogue-dir="down" aria-label="向下移动">▼</button><button type="button" data-rogue-dir="right" aria-label="向右移动">▶</button></div>
+          </div>
+        </div>
+        <aside class="rogue-side-panel">
+          <div class="rogue-mission-card"><span class="rogue-eyebrow">MISSION</span><h3>守住能量核心</h3><p>怪物会追击玩家或围攻中心装置。玩家武器自动射击，移动躲避攻击，在蓝色基座消耗 35 战场金币建造防御塔。</p></div>
+          <div id="rogueRuneBox" class="rogue-rune-box hidden">
+            <div class="rogue-rune-heading">✦ 知识符文 <span id="rogueRuneTimer">12 秒</span></div>
+            <p id="rogueRuneHint"></p><h3 id="rogueRunePrompt"></h3>
+            <div id="rogueRuneActions"></div>
+            <small>答对：震荡波 + 恢复护盾。可继续移动与战斗，不想答也可不拾取。</small>
+          </div>
+          <div class="rogue-side-tip"><strong>🎮 游戏优先，不强制做题</strong><p>场景中漂浮的紫色 ✦ 是可选知识符文。拾取后可快速拼写或选择；不拾取不会妨碍通关。</p></div>
+        </aside>
+      </div>
+      <div id="rogueSkillDialog" class="rogue-skill-modal hidden" role="dialog" aria-modal="true" aria-labelledby="rogueSkillTitle">
+        <div class="rogue-skill-card"><span class="rogue-eyebrow">LEVEL UP</span><h2 id="rogueSkillTitle">✨ 选择进化技能</h2><p>经验已满。选择一个技能，继续战斗！</p><div id="rogueSkillChoices" class="rogue-skill-choices"></div></div>
+      </div>
+    </section>
+
+    <section id="rogueResult" class="rogue-result hidden">
+      <div class="rogue-result-icon" id="rogueResultIcon">🏆</div>
+      <h2 id="rogueResultTitle">战斗结算</h2>
+      <p id="rogueResultInfo"></p>
+      <strong id="rogueResultRewards">正在同步…</strong>
+      <div class="rogue-result-actions hidden" id="rogueResultActions">
+        <button id="roguePlayAgain" type="button">⚔️ 再来一局</button>
+        <button id="rogueToLobby" type="button">🏠 返回基地</button>
+        <button id="rogueRetrySave" class="hidden" type="button">重新保存结算</button>
+      </div>
+    </section>
+    <div id="rogueStatus" class="rogue-status" role="status" aria-live="polite">进入战区，开始你的第一场防守。</div>
+  </div>
+  <details class="rogue-legacy"><summary>查看旧版知识冒险与经典小游戏（保留原有进度）</summary>
   <div id="adventureShell" class="adventure-shell">
     <header class="adventure-heading">
       <div class="adventure-heading-copy">
@@ -388,6 +470,7 @@
     <div id="gameBoard" class="game-board"></div>
     <p id="gameNotice" class="game-notice" role="status" aria-live="polite"></p>
   </article>
+  </details>
   </details>
 </section>
 
@@ -552,6 +635,7 @@
 <script type="module" src="/app.js?v=snooze-20261026"></script>
 <script type="module" src="/games.js?v=challenge-20261026"></script>
 <script type="module" src="/adventure.js?v=story-1"></script>
+<script type="module" src="/rogue.js?v=hybrid-1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
