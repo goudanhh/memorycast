@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {createServer} from "node:http";
 import {readFile,mkdir} from "node:fs/promises";
 import {resolve,join,extname} from "node:path";
-import {chromium} from "playwright";
+import {chromium,webkit} from "playwright";
 const root=resolve(import.meta.dirname,"../web");
 const uid="00000000-0000-4000-8000-000000000001";
 const transcript="Please bring two extra towels to room eight oh five before nine tonight. Leave the package at the front desk because the guest is asleep. Call the manager if the room is locked.";
@@ -94,7 +94,9 @@ await new Promise(done=>server.listen(0,"127.0.0.1",done));
 const base="http://127.0.0.1:"+server.address().port+"/";
 let browser;
 try{
- browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
+ const engine=process.env.BLITZ_BROWSER==="webkit"?webkit:chromium;
+ const screenshotSuffix=engine===webkit?"-webkit":"";
+ browser=await engine.launch({headless:true,args:engine===chromium?["--no-sandbox"]:[]});
  const page=await browser.newPage({viewport:{width:1360,height:880}});
  const errs=[];page.on("pageerror",e=>errs.push(e.message));
  await page.goto(base,{waitUntil:"load"});
@@ -136,7 +138,7 @@ try{
  assert.equal([...plays.values()][0],1);
  assert.equal(errs.length,0,"Desktop browser errors: "+errs.join("\n"));
  await mkdir(resolve(import.meta.dirname,"../artifacts"),{recursive:true});
- await page.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-desktop.png"),fullPage:true});
+ await page.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-desktop"+screenshotSuffix+".png"),fullPage:true});
  console.log("Desktop Blitz smoke PASS: one-click start, blind listening, 2 scored questions, transcript gate, first-listen report.");
  await page.locator("#blitzBack").click();
  await page.locator('[data-blitz-duration="20"]').click();
@@ -202,7 +204,7 @@ try{
  await mobile.locator("#blitzResults").waitFor({state:"visible"});
  await mobile.locator("#blitzTranscriptReplay").tap();
  await mobile.waitForFunction(()=>document.getElementById("blitzTranscriptReplay").textContent.includes("暂停复听"));
- await mobile.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-mobile.png"),fullPage:true});
+ await mobile.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-mobile"+screenshotSuffix+".png"),fullPage:true});
  assert.equal(mobileErrors.length,0,"Mobile browser errors: "+mobileErrors.join("\n"));
  console.log("Mobile Blitz smoke PASS: 90 second preset, 3 questions, responsive playback controls.");
  await mobile.close();
