@@ -18,7 +18,7 @@ const full=[
 let counter=0,submitted=[],plays=new Map(),lastMode=45;
 const id=()=>"00000000-0000-4000-8000-"+String(++counter).padStart(12,"0");
 function wav(){
- const rate=8000,num=rate/3,bytes=num*2,b=Buffer.alloc(44+bytes);
+ const rate=8000,num=Math.floor(rate/3),bytes=num*2,b=Buffer.alloc(44+bytes);
  b.write("RIFF",0);b.writeUInt32LE(36+bytes,4);b.write("WAVEfmt ",8);
  b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);
  b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);
