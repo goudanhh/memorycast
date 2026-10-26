@@ -141,6 +141,7 @@ Return only schema-valid JSON.`,
   }
 }
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
+await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS hidden_until TIMESTAMPTZ`);
 await query(`
   UPDATE cards
   SET tags = ARRAY[
@@ -229,6 +230,7 @@ async function runDailyReminders() {
 
     const dueResult = await query(`SELECT COUNT(*)::int AS n FROM cards c
  WHERE c.user_id=$1 AND c.due<=NOW()
+   AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
    AND (c.source_note_id IS NULL OR EXISTS (
      SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
    ))`, [s.user_id]);
@@ -714,6 +716,7 @@ function normalizeCardRow(r){
     id:r.id,front:r.front,back:r.back,example:r.example,category:r.category,
     tags:Array.isArray(r.tags)&&r.tags.length?r.tags:[dateTag(r.created_at),r.category].filter(Boolean),
     speakOrder:r.speak_order,fsrs:r.fsrs,due:r.due,reviewCount:r.review_count,
+    hiddenUntil:r.hidden_until||null,
     createdAt:r.created_at,updatedAt:r.updated_at,sourceNoteId:r.source_note_id||null,stateName:getStateName(r.fsrs)
   };
 }
@@ -778,10 +781,25 @@ app.delete("/cards/:id", requireAuth, asyncRoute(async(req,res)=>{
   const result=await query(`DELETE FROM cards WHERE id=$2 AND user_id=$1`,[userId(req),req.params.id]);
   res.json({ok:result.rowCount>0});
 }));
+// Temporary hold: keep FSRS due time and review history intact.
+app.post("/cards/:id/snooze", requireAuth, asyncRoute(async(req,res)=>{
+  const days=Number(req.body?.days ?? 7);
+  if(!Number.isInteger(days)||![0,3,7,14,30].includes(days))
+    return res.status(400).json({error:"days must be 0, 3, 7, 14 or 30"});
+  const {rows}=await query(`
+    UPDATE cards SET hidden_until=CASE WHEN $3::int=0 THEN NULL
+      ELSE NOW()+($3::int*INTERVAL '1 day') END,updated_at=NOW()
+    WHERE user_id=$1 AND id=$2 RETURNING *
+  `,[userId(req),req.params.id,days]);
+  if(!rows.length)return res.status(404).json({error:"Card not found"});
+  res.json({card:normalizeCardRow(rows[0])});
+}));
+
 app.get("/due", requireAuth, asyncRoute(async(req,res)=>{
   const {rows}=await query(`
     SELECT * FROM cards c
     WHERE c.user_id=$1 AND c.due<=NOW()
+   AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
       AND (c.source_note_id IS NULL OR EXISTS (
         SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
       ))
@@ -820,6 +838,7 @@ app.get("/walkman", requireAuth, asyncRoute(async(req,res)=>{
       FROM cards c
       LEFT JOIN latest_review lr ON lr.card_id=c.id
       WHERE c.user_id=$1
+        AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
         AND (c.source_note_id IS NULL OR EXISTS (
           SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
         ))
@@ -1711,6 +1730,7 @@ app.post("/quiz/generate", requireAuth, asyncRoute(async(req,res)=>{
     FROM cards c
     LEFT JOIN review_stats rs ON rs.card_id=c.id
     WHERE c.user_id=$1
+      AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
       AND (c.source_note_id IS NULL OR EXISTS (
         SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
       ))
@@ -2220,6 +2240,7 @@ app.get("/feynman/topic", requireAuth, asyncRoute(async(req,res)=>{
     FROM cards c
     LEFT JOIN review_stats rs ON rs.card_id=c.id
     WHERE c.user_id=$1
+      AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
       AND (c.source_note_id IS NULL OR EXISTS (
         SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
       ))
@@ -2721,7 +2742,7 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
     query(`
       SELECT COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE c.review_count>0)::int AS studied,
-             COUNT(*) FILTER (WHERE c.due<=NOW())::int AS due
+             COUNT(*) FILTER (WHERE c.due<=NOW() AND (c.hidden_until IS NULL OR c.hidden_until<=NOW()))::int AS due
       FROM cards c
       WHERE `+studyFilter,[uid]),
     query("SELECT COUNT(*)::int AS total FROM reviews WHERE user_id=$1",[uid]),
