@@ -49,7 +49,6 @@ AI 测试、Web 随身听和 watchOS 随身听都可以点击 **「⏳ 7天不�
 ```bash
 node scripts/check-memory.mjs
 node scripts/check-learning-stats.mjs
-node scripts/check-remove-feynman.mjs
 ```
 
 网页和手机浏览器均可使用。原生 Apple Watch 应用的其他学习模块保持不变。
