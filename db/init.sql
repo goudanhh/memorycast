@@ -41,19 +41,6 @@ CREATE INDEX IF NOT EXISTS idx_cards_user_due ON cards(user_id, due);
 CREATE INDEX IF NOT EXISTS idx_cards_user_category ON cards(user_id, category);
 CREATE INDEX IF NOT EXISTS idx_cards_user_hidden_until ON cards(user_id, hidden_until);
 
-CREATE TABLE IF NOT EXISTS game_attempts (
-  id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
-  mode TEXT NOT NULL CHECK (mode IN ('match','listen','spell','recall')),
-  correct BOOLEAN NOT NULL,
-  elapsed_ms INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_game_attempts_user_time ON game_attempts(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_game_attempts_card_time ON game_attempts(card_id, created_at DESC);
-
-
 CREATE TABLE IF NOT EXISTS reviews (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -163,26 +150,31 @@ ALTER TABLE cards
 
 
 
--- Story campaign progress. Preserve previous cards and game attempts.
-CREATE TABLE IF NOT EXISTS adventure_progress (
+
+-- One focused retrieval training module.
+-- Existing legacy game tables on deployed databases are left untouched.
+CREATE TABLE IF NOT EXISTS memory_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 8),
-  stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 3),
-  best_seconds INTEGER NOT NULL CHECK (best_seconds BETWEEN 1 AND 3600),
-  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY(user_id,level)
+  card_ids UUID[] NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
 );
-
-
--- Persistent hybrid arcade equipment and unlocked worlds; no FSRS changes.
-CREATE TABLE IF NOT EXISTS arcade_profiles (
-  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  coins INTEGER NOT NULL DEFAULT 0 CHECK(coins>=0),
-  total_xp INTEGER NOT NULL DEFAULT 0 CHECK(total_xp>=0),
-  runs INTEGER NOT NULL DEFAULT 0,
-  best_wave INTEGER NOT NULL DEFAULT 0,
-  highest_sector INTEGER NOT NULL DEFAULT 1 CHECK(highest_sector BETWEEN 1 AND 3),
-  wins INTEGER NOT NULL DEFAULT 0,
-  upgrades JSONB NOT NULL DEFAULT '{"power":0,"armor":0,"magnet":0}'::jsonb,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS memory_attempts (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id UUID NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
+  card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL CHECK(phase IN ('retrieve','interleave','delayed')),
+  direction TEXT NOT NULL CHECK(direction IN ('front-to-back','back-to-front')),
+  response TEXT NOT NULL DEFAULT '',
+  grade SMALLINT NOT NULL CHECK(grade BETWEEN 0 AND 2),
+  hinted BOOLEAN NOT NULL DEFAULT FALSE,
+  elapsed_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id,card_id,phase)
 );
+CREATE INDEX IF NOT EXISTS idx_memory_attempts_user_time
+  ON memory_attempts(user_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_attempts_card_time
+  ON memory_attempts(card_id,created_at DESC);

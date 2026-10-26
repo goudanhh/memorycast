@@ -19,12 +19,8 @@ jobs:
           node-version: '22'
       - name: Check JavaScript syntax and dashboard contracts
         run: node scripts/check-learning-stats.mjs
-      - name: Check memory game logic and routes
-        run: node scripts/check-games.mjs
+      - name: Verify real retrieval practice rules and API contracts
+        run: node scripts/check-memory.mjs
       - name: Verify retired Feynman feature is removed
         run: node scripts/check-remove-feynman.mjs
-      - name: Test knowledge adventure levels and progression
-        run: node scripts/check-adventure.mjs
-      - name: Validate hybrid real-time arcade and persistence
-        run: node scripts/check-rogue.mjs
 

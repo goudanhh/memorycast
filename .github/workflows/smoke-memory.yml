@@ -1,12 +1,12 @@
-name: Smoke test hybrid MemoryCast gameplay
+name: Playtest active recall training
 
 on:
   pull_request:
     paths:
-      - 'web/rogue*'
+      - 'web/memory-*'
       - 'web/index.html'
-      - 'scripts/smoke-rogue.mjs'
-      - '.github/workflows/smoke-rogue.yml'
+      - 'scripts/smoke-memory.mjs'
+      - '.github/workflows/smoke-memory.yml'
   workflow_dispatch:
 
 jobs:
@@ -18,16 +18,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install Chromium automation
+      - name: Install Chromium
         run: |
           npm install --no-save --no-package-lock playwright@1.56.1
           npx playwright install --with-deps chromium
-      - name: Play in a real headless browser
-        run: node scripts/smoke-rogue.mjs
-      - name: Upload actual gameplay screenshot
+      - name: Complete memory training on desktop and mobile
+        run: node scripts/smoke-memory.mjs
+      - name: Save test screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hybrid-rogue-gameplay-screenshot
-          path: artifacts/rogue-*-gameplay.png
+          name: memory-training-browser-screenshots
+          path: artifacts/memory-*.png
           if-no-files-found: ignore

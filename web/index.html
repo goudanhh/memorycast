@@ -8,9 +8,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
-<link rel="stylesheet" href="/games.css?v=challenge-20261026">
-<link rel="stylesheet" href="/adventure.css?v=story-1">
-<link rel="stylesheet" href="/rogue.css?v=hybrid-1">
+<link rel="stylesheet" href="/memory-gym.css?v=recall-1">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -36,7 +34,7 @@
     <button data-page="notesPage" class="active">🗒️ 笔记库</button>
     <button data-page="todayPage">🎧 今日复习</button>
     <button data-page="quizPage">📝 AI 测试</button>
-    <button data-page="gamesPage">⚔️ 游戏世界</button>
+    <button data-page="gamesPage">🧠 记忆训练</button>
     <button data-page="listeningPage">🎧 AI 听力考试</button>
     <button data-page="importPage">✨ AI 整理笔记</button>
     <button data-page="libraryPage">📚 知识库</button>
@@ -79,10 +77,10 @@
     <article class="panel"><div class="eyebrow">AI</div><h2>✨ 整理笔记</h2><p class="muted">粘贴长笔记，自动拆成知识卡。</p><button class="btn dark" data-go="importPage">整理笔记</button></article>
     <article class="panel"><div class="eyebrow">QUIZ</div><h2>📝 AI 测试</h2><p class="muted">选择、填空、简答、听力。</p><button class="btn dark" data-go="quizPage">开始测试</button></article>
   </div>
-  <article class="game-home-teaser">
-    <div><strong>⚔️ 记忆守卫者：实时冒险</strong>
-      <p>操纵角色打怪、躲避 Boss 弹幕、建造防御塔与升级技能。知识符文可以提供额外战斗增益，不必一直答题。</p></div>
-    <button class="btn dark" type="button" data-go="gamesPage">进入游戏世界 →</button>
+  <article class="memory-home-teaser">
+    <div><strong>🧠 记忆训练场 · 真正记住知识</strong>
+      <p>将知识卡变成三轮主动回忆训练：先写出答案，再交错复测，专门攻克容易遗忘的内容。</p></div>
+    <button class="btn dark" type="button" data-go="gamesPage">开始记忆训练 →</button>
   </article>
 </section>
 
@@ -250,228 +248,104 @@
 </section>
 
 <section id="gamesPage" class="page">
-  <div class="rogue-shell" id="rogueShell">
-    <header class="rogue-hero">
-      <div>
-        <div class="rogue-eyebrow">MEMORYCAST · HYBRID SURVIVOR</div>
-        <h1>⚔️ 记忆守卫者</h1>
-        <p>实时打怪 + 躲避弹幕 + 建塔防守 + 技能进化。每次开局都能成长，知识符文提供可选的战斗增益。</p>
-        <div class="rogue-hero-tags"><span>实时生存</span><span>塔防策略</span><span>Roguelite 养成</span><span>知识魔法</span></div>
-      </div>
-      <div class="rogue-hero-icon" aria-hidden="true">🛡️</div>
-    </header>
-    <div id="rogueLobby" class="rogue-lobby">
-      <div class="rogue-profile-strip">
-        <div><small>冒险金币</small><strong id="rogueWallet">—</strong></div>
-        <div><small>累计经验</small><strong id="rogueXpTotal">—</strong></div>
-        <div><small>胜利次数</small><strong id="rogueWins">—</strong></div>
-        <div><small>出征次数</small><strong id="rogueRuns">—</strong></div>
-      </div>
-      <div class="rogue-section-head"><div><span class="rogue-eyebrow">CHOOSE YOUR ZONE</span><h2>选择战区</h2></div><span id="rogueKnowledge" class="rogue-knowledge-pill">正在读取知识卡…</span></div>
-      <div class="rogue-sectors" id="rogueSectors"><p>正在读取存档…</p></div>
-      <div class="rogue-section-head"><div><span class="rogue-eyebrow">PERMANENT UPGRADES</span><h2>基地强化</h2></div><small>装备永久保留 · 每次出战生效</small></div>
-      <div id="rogueShop" class="rogue-shop"></div>
-      <p class="rogue-footnote">每个战区 6 波怪物，最后一波有 Boss。战斗中金币用于建塔，结算获得的金币用于永久升级。游戏成长和知识复习记录独立保存。</p>
-    </div>
-
-    <section id="rogueBattle" class="rogue-battle hidden" aria-label="实时战斗">
-      <div class="rogue-battle-header">
-        <div><span class="rogue-eyebrow">LIVE DEFENSE</span><h2 id="rogueBattleTitle">实时守卫</h2><p id="rogueBattleSubtitle"></p></div>
-        <button id="rogueQuit" type="button" class="rogue-back">结束本局</button>
-      </div>
-      <div class="rogue-hud">
-        <div><small>玩家生命</small><strong id="rogueHealth">—</strong><div class="rogue-meter"><span id="rogueHealthBar" class="health"></span></div></div>
-        <div><small>核心护盾</small><strong id="rogueCore">—</strong><div class="rogue-meter"><span id="rogueCoreBar" class="core"></span></div></div>
-        <div><small>当前波次</small><strong id="rogueWave">0 / 6</strong><small id="roguePhase">准备</small></div>
-        <div><small>战场金币</small><strong id="rogueGold">50</strong><small>击败怪物获取</small></div>
-        <div><small>击杀 / Lv.</small><strong><span id="rogueKills">0</span> / <span id="rogueLevel">1</span></strong><div class="rogue-meter"><span id="rogueXpBar" class="xp"></span></div></div>
-      </div>
-      <div class="rogue-play-layout">
-        <div class="rogue-play-main">
-          <div class="rogue-canvas-border">
-            <canvas id="rogueCanvas" width="960" height="600" aria-label="战场：用 WASD、方向键或触屏控制角色移动，Space 冲刺，自动攻击怪物">你的浏览器不支持 Canvas。</canvas>
-          </div>
-          <div class="rogue-action-strip">
-            <button id="rogueDash" type="button">💨 闪避 <small id="rogueDashText">就绪</small></button>
-            <button id="rogueBuild" type="button" disabled>🏰 靠近蓝色基座</button>
-            <div class="rogue-control-guide">电脑 WASD / 方向键移动 · Space 冲刺 · E 建塔 · 触屏可拖动画面移动</div>
-          </div>
-          <div class="rogue-mobile-pad" aria-label="手机方向控制">
-            <button type="button" data-rogue-dir="up" aria-label="向上移动">▲</button>
-            <div><button type="button" data-rogue-dir="left" aria-label="向左移动">◀</button><button type="button" data-rogue-dir="down" aria-label="向下移动">▼</button><button type="button" data-rogue-dir="right" aria-label="向右移动">▶</button></div>
-          </div>
-        </div>
-        <aside class="rogue-side-panel">
-          <div class="rogue-mission-card"><span class="rogue-eyebrow">MISSION</span><h3>守住能量核心</h3><p>怪物会追击玩家或围攻中心装置。玩家武器自动射击，移动躲避攻击，在蓝色基座消耗 35 战场金币建造防御塔。</p></div>
-          <div id="rogueRuneBox" class="rogue-rune-box hidden">
-            <div class="rogue-rune-heading">✦ 知识符文 <span id="rogueRuneTimer">12 秒</span></div>
-            <p id="rogueRuneHint"></p><h3 id="rogueRunePrompt"></h3>
-            <div id="rogueRuneActions"></div>
-            <small>答对：震荡波 + 恢复护盾。可继续移动与战斗，不想答也可不拾取。</small>
-          </div>
-          <div class="rogue-side-tip"><strong>🎮 游戏优先，不强制做题</strong><p>场景中漂浮的紫色 ✦ 是可选知识符文。拾取后可快速拼写或选择；不拾取不会妨碍通关。</p></div>
-        </aside>
-      </div>
-      <div id="rogueSkillDialog" class="rogue-skill-modal hidden" role="dialog" aria-modal="true" aria-labelledby="rogueSkillTitle">
-        <div class="rogue-skill-card"><span class="rogue-eyebrow">LEVEL UP</span><h2 id="rogueSkillTitle">✨ 选择进化技能</h2><p>经验已满。选择一个技能，继续战斗！</p><div id="rogueSkillChoices" class="rogue-skill-choices"></div></div>
-      </div>
-    </section>
-
-    <section id="rogueResult" class="rogue-result hidden">
-      <div class="rogue-result-icon" id="rogueResultIcon">🏆</div>
-      <h2 id="rogueResultTitle">战斗结算</h2>
-      <p id="rogueResultInfo"></p>
-      <strong id="rogueResultRewards">正在同步…</strong>
-      <div class="rogue-result-actions hidden" id="rogueResultActions">
-        <button id="roguePlayAgain" type="button">⚔️ 再来一局</button>
-        <button id="rogueToLobby" type="button">🏠 返回基地</button>
-        <button id="rogueRetrySave" class="hidden" type="button">重新保存结算</button>
-      </div>
-    </section>
-    <div id="rogueStatus" class="rogue-status" role="status" aria-live="polite">进入战区，开始你的第一场防守。</div>
-  </div>
-  <details class="rogue-legacy"><summary>查看旧版知识冒险与经典小游戏（保留原有进度）</summary>
-  <div id="adventureShell" class="adventure-shell">
-    <header class="adventure-heading">
-      <div class="adventure-heading-copy">
-        <span class="adventure-kicker">MEMORYCAST · STORY ADVENTURE</span>
-        <h1>🌌 记忆冒险：失落的知识之光</h1>
-        <p>移动角色探索世界，躲避巡逻影子，找齐知识水晶，打败守卫，解锁下一张地图。你的知识卡片决定能否通关。</p>
-      </div>
-      <div class="adventure-hero-crystal" aria-hidden="true">💎</div>
-    </header>
-    <div id="adventureCampaign" class="adventure-campaign">
-      <div class="adventure-campaign-head">
-        <div><span class="adventure-kicker">CHAPTER SELECT</span><h2>选择冒险关卡</h2></div>
-        <button id="adventureReload" class="adventure-secondary" type="button">↻ 刷新进度</button>
-      </div>
-      <div class="adventure-progress-meta">
-        <span id="adventureUnlocked">载入中…</span>
-        <span id="adventureTotalStars">—</span>
-        <span id="adventureLibraryCount">正在读取知识库…</span>
-      </div>
-      <div id="adventureChapters" class="adventure-chapters" aria-label="关卡地图"></div>
-      <div class="adventure-campaign-tip">🔒 按顺序解锁 · 每关收集三枚水晶 · 答错会损失生命 · 通关最多三星</div>
-    </div>
-    <section id="adventureWorldPanel" class="adventure-world-panel hidden" data-world="0">
-      <div class="adventure-world-header">
-        <div><span class="adventure-kicker">NOW EXPLORING</span><h2 id="adventureName">探险地图</h2><p id="adventureStory"></p></div>
-        <button id="adventureBack" class="adventure-secondary" type="button">← 返回关卡地图</button>
-      </div>
-      <div id="adventureWorldContent">
-        <div class="adventure-hud">
-          <div>生命 <b id="adventureHearts">❤️❤️❤️</b></div>
-          <div>水晶 <b id="adventureCrystals">0 / 3</b></div>
-          <div>Boss 护盾 <b id="adventureBossProgress">0 / 1</b></div>
-          <div>探索时间 <b id="adventureElapsed">0s</b></div>
-        </div>
-        <div id="adventureMotto" class="adventure-motto"></div>
-        <div class="adventure-map-shell">
-          <div id="adventureMap" class="adventure-map" aria-label="冒险地图，使用键盘或屏幕方向键移动角色"></div>
-        </div>
-        <div class="adventure-guide">
-          <span>🧑‍🚀 角色</span><span>💎 知识水晶</span><span>👾 巡逻敌人</span><span>🌀 关底出口</span><span>🪨 障碍</span>
-        </div>
-        <div class="adventure-movement">
-          <div class="adventure-movement-help">电脑：方向键 / WASD　手机：点击方向按钮移动</div>
-          <div class="adventure-dpad" aria-label="移动控制">
-            <button type="button" data-adventure-move="up" aria-label="向上">▲</button>
-            <div>
-              <button type="button" data-adventure-move="left" aria-label="向左">◀</button>
-              <button type="button" data-adventure-move="down" aria-label="向下">▼</button>
-              <button type="button" data-adventure-move="right" aria-label="向右">▶</button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div id="adventureEndScreen" class="adventure-end hidden"></div>
-      <div id="adventureQuest" class="adventure-quest hidden" role="dialog" aria-modal="true" aria-labelledby="adventureQuestTitle">
-        <div class="adventure-quest-card">
-          <span class="adventure-kicker">KNOWLEDGE CHALLENGE</span>
-          <h3 id="adventureQuestTitle">知识机关</h3>
-          <p id="adventureQuestSubtitle"></p>
-          <div class="adventure-question-text" id="adventureQuestionPrompt"></div>
-          <div id="adventureAnswers"></div>
-        </div>
-      </div>
-    </section>
-    <div id="adventureNotice" class="adventure-notice" role="status" aria-live="polite">进入冒险地图，寻找知识水晶。</div>
-  </div>
-  <details class="adventure-classic">
-    <summary>⚡ 经典限时练习 <span>展开旧版小游戏</span></summary>
-  <header class="game-hero">
-    <div class="game-orbit">✦</div>
-    <div class="eyebrow">MEMORYCAST · ARCADE 2.0</div>
-    <h1>⚡ 记忆挑战场</h1>
-    <p>有倒计时、有连击，也有真正的主动回忆。优先挑战薄弱与到期知识点，不靠反复猜选项通关。</p>
-    <div class="game-hero-meta"><span>⚡ 极限反应</span><span>🛡️ 错题攻坚</span><span>🧠 深度回忆</span></div>
+<div id="memoryGym" class="memory-gym">
+  <header class="memory-hero">
+    <div class="memory-eyebrow">MEMORYCAST / ACTIVE RETRIEVAL</div>
+    <h1>🧠 记忆训练场</h1>
+    <p>不是比手速，也不是反复认选项，而是真正检验“离开答案后还能不能自己想起来”。使用你已有的知识卡，三轮交错提取，重点强化薄弱项。</p>
+    <div class="memory-hero-tags"><span>先回忆，再看答案</span><span>交错练习</span><span>延迟复测</span><span>错题优先</span></div>
   </header>
-  <div class="game-summary" aria-label="游戏学习统计">
-    <article><span>累计答题</span><strong id="gameStatTotal">—</strong></article>
-    <article><span>历史正确率</span><strong id="gameStatAccuracy">—</strong></article>
-    <article><span>7天练习量</span><strong id="gameStatWeek">—</strong></article>
-    <article><span>覆盖知识点</span><strong id="gameStatCards">—</strong></article>
-  </div>
-  <div class="game-section-title">
-    <h2>选择挑战模式</h2>
-    <span id="gameAvailable" class="muted">正在载入你的知识卡…</span>
-  </div>
-  <div id="gameLobbyStatus" role="status"></div>
-  <div id="gameModes" class="game-mode-grid">
-    <button type="button" class="game-mode-card" data-game-mode="match">
-      <span class="game-mode-top"><span class="game-emoji">⚡</span><span class="game-mode-difficulty">60 秒 · 3 颗心</span></span>
-      <strong>闪电生存战</strong>
-      <span>在倒计时里连续作答，答错掉心。每隔几题切换为真正的拼写回忆，不能全靠猜。</span>
-      <span class="game-mode-enter">进入战场 ↗</span>
-    </button>
-    <button type="button" class="game-mode-card" data-game-mode="recall">
-      <span class="game-mode-top"><span class="game-emoji">🛡️</span><span class="game-mode-difficulty">薄弱点 · 无硬时限</span></span>
-      <strong>错题 Boss 战</strong>
-      <span>先写出你的理解，再核对答案。每掌握一个知识点就击破一层护盾，错题会在后面再次出现。</span>
-      <span class="game-mode-enter">开始攻坚 ↗</span>
-    </button>
-    <button type="button" class="game-mode-card" data-game-mode="listen">
-      <span class="game-mode-top"><span class="game-emoji">🎧</span><span class="game-mode-difficulty">18 秒/题 · 3 颗心</span></span>
-      <strong>音速追击</strong>
-      <span>只听声音，不看原词。按 1–4 快速选择释义，连续正确可以提升积分倍率。</span>
-      <span class="game-mode-enter">开启追击 ↗</span>
-    </button>
-    <button type="button" class="game-mode-card" data-game-mode="spell">
-      <span class="game-mode-top"><span class="game-emoji">⌨️</span><span class="game-mode-difficulty">17 秒/题 · 3 颗心</span></span>
-      <strong>极限拼写</strong>
-      <span>看到释义立刻拼出英文。支持首字母提示，但使用提示会减少得分。<b id="gameSpellCount">—</b></span>
-      <span class="game-mode-enter">开启冲刺 ↗</span>
-    </button>
-  </div>
-  <article id="gameStage" class="panel game-stage hidden">
-    <div class="game-stage-head">
-      <div><div class="eyebrow" id="gameChallengeType">CHALLENGE IN PROGRESS</div>
-        <h2 id="gameStageTitle">挑战模式</h2>
+  <section id="memoryWelcome" class="memory-panel">
+    <div class="memory-summary-strip">
+      <div><small>已完成训练</small><strong id="memorySessions">—</strong></div>
+      <div><small>最近 7 天</small><strong id="memorySessionsWeek">—</strong></div>
+      <div><small>终局完全正确率</small><strong id="memoryAccuracy">—</strong></div>
+      <div><small>累计回忆次数</small><strong id="memoryTrials">—</strong></div>
+    </div>
+    <div class="memory-section-head"><div><span class="memory-eyebrow">START A SESSION</span><h2>每次只练一小组，真正记住</h2></div></div>
+    <div class="memory-stage-guide">
+      <div><span>01</span><b>观察与编码</b><small>先认真理解 4–8 个知识点</small></div>
+      <div><span>02</span><b>主动回忆</b><small>遮住答案，自己写出内容</small></div>
+      <div><span>03</span><b>交错提取</b><small>打乱题序，穿插反向回忆</small></div>
+      <div><span>04</span><b>延迟复测</b><small>再提取一次，找出薄弱项</small></div>
+    </div>
+    <div class="memory-start-box">
+      <label for="memoryCount">本次训练知识点数量</label>
+      <select id="memoryCount" aria-label="训练知识点数量"><option value="4">4 个 · 快速训练</option><option value="6" selected>6 个 · 推荐</option><option value="8">8 个 · 深度训练</option></select>
+      <button id="memoryStart" type="button" class="memory-main-btn">开始记忆训练 →</button>
+    </div>
+    <div class="memory-weak-section">
+      <div class="memory-section-head"><div><span class="memory-eyebrow">AREAS TO IMPROVE</span><h3>之前容易忘记的知识点</h3></div>
+        <button id="memoryStartWeak" type="button" class="memory-secondary" disabled>针对薄弱项训练</button></div>
+      <div id="memoryWeakList" class="memory-weak-list"><span>正在读取历史记录…</span></div>
+    </div>
+    <p class="memory-footnote">这是一组短时回忆练习。真正的长期记忆仍需隔天、隔周按 FSRS 计划复习；这里的训练成绩不会自动延后你原来的复习日期。</p>
+  </section>
+  <section id="memoryPreview" class="memory-panel hidden">
+    <div class="memory-section-head"><div><span class="memory-eyebrow">ENCODE / 学习准备</span><h2>先建立清晰的记忆线索</h2></div><span id="memoryPreviewCount" class="memory-pill">6 个知识点</span></div>
+    <p class="memory-guidance">理解含义，试着自己复述一次。准备好后关闭答案，直接进入正式回忆。这里不计分，不催促。</p>
+    <div id="memoryPreviewCards" class="memory-preview-cards"></div>
+    <div class="memory-actions">
+      <button id="memoryPreviewBack" class="memory-secondary" type="button">返回</button>
+      <button id="memoryBeginRecall" class="memory-main-btn" type="button">我准备好了 · 遮住答案 →</button>
+    </div>
+  </section>
+  <section id="memoryTrainer" class="memory-panel hidden">
+    <div class="memory-practice-head">
+      <div><span class="memory-eyebrow">RETRIEVAL SESSION</span><h2 id="memoryPhase">第一轮 · 主动回忆</h2><p id="memoryPhaseNote">不要看答案，先自己想。</p></div>
+      <button id="memoryExit" type="button" class="memory-secondary">结束训练</button>
+    </div>
+    <div class="memory-progress-row"><span id="memoryPosition">1 / 6</span><span id="memoryTotalCount">0 / 18</span></div>
+    <div class="memory-meter"><div id="memoryMeterBar" style="width:0"></div></div>
+    <div id="memoryInterlude" class="memory-interlude hidden">
+      <div id="memoryInterludeIcon" class="memory-interlude-icon">🔀</div>
+      <h3 id="memoryInterludeTitle">交错提取</h3>
+      <p id="memoryInterludeText">换一种顺序继续回忆。</p>
+      <button id="memoryContinuePhase" class="memory-main-btn" type="button">继续下一轮 →</button>
+    </div>
+    <div id="memoryTrainerMain">
+      <div class="memory-question"><span id="memoryDirection">根据知识点回答</span><h2 id="memoryPrompt">知识点</h2></div>
+      <div id="memoryInputArea">
+        <label for="memoryResponse">把你真正能回忆起来的内容写下来</label>
+        <textarea id="memoryResponse" rows="4" maxlength="500" placeholder="在这里输入你的回忆…"></textarea>
+        <div id="memoryHintText" class="memory-hint-text" aria-live="polite"></div>
+        <div class="memory-actions">
+          <button id="memoryForgot" class="memory-secondary" type="button">完全想不起来</button>
+          <button id="memoryHint" class="memory-secondary" type="button">💡 给我提示</button>
+          <button id="memoryReveal" class="memory-main-btn" type="button">核对答案 →</button>
+        </div>
       </div>
-      <div class="game-stage-controls"><button id="gameSoundToggle" type="button" class="game-exit" aria-pressed="false">🔇 音效关</button><button id="gameExit" type="button" class="game-exit">退出挑战</button></div>
-    </div>
-    <div class="game-hud">
-      <span>进度 <b id="gameStep">0 / 0</b></span>
-      <span>得分 <b id="gameScore">0</b></span>
-      <span>连击 <b id="gameCombo">0</b></span>
-      <span><span id="gameClockLabel">本局用时</span> <b id="gameClock">0:00</b></span>
-      <span id="gameLivesWrap">生命 <b id="gameLives">❤❤❤</b></span>
-      <span id="gameRoundTimerWrap">本题倒计时 <b id="gameRoundTimer">—</b></span>
-    </div>
-    <div class="game-progress" aria-label="完成进度"><div id="gameBar" style="width:0"></div></div>
-    <div class="game-round-progress"><div id="gameRoundBar" style="width:0"></div></div>
-    <div id="gameBossPanel" class="game-boss-panel hidden">
-      <div class="game-boss-avatar">🛡️</div>
-      <div class="game-boss-health">
-        <div class="game-boss-info"><strong>薄弱知识护盾</strong><span id="gameBossText">等待开始</span></div>
-        <div class="game-boss-track"><div id="gameBossBar" style="width:100%"></div></div>
+      <div id="memoryRevealArea" class="memory-reveal hidden">
+        <div class="memory-compare">
+          <div><small>你的回忆</small><p id="memoryMyAnswer"></p></div>
+          <div><small>知识卡答案</small><p id="memoryCorrectAnswer"></p><small id="memoryExample"></small></div>
+        </div>
+        <p id="memoryMatchHint" class="memory-guidance"></p>
+        <div class="memory-grade-actions">
+          <button data-memory-grade="0" type="button"><strong>↺ 没想起</strong><small>错了 / 无法解释</small></button>
+          <button data-memory-grade="1" type="button"><strong>◐ 部分正确</strong><small>关键点有遗漏</small></button>
+          <button data-memory-grade="2" type="button"><strong>✓ 完全正确</strong><small>意思和要点准确</small></button>
+        </div>
       </div>
     </div>
-    <div id="gameBoard" class="game-board"></div>
-    <p id="gameNotice" class="game-notice" role="status" aria-live="polite"></p>
-  </article>
-  </details>
-  </details>
+  </section>
+  <section id="memoryFinish" class="memory-panel hidden">
+    <div class="memory-finish-heading"><span>🏁</span><h2>这一组回忆完成了</h2><p id="memoryFinishMessage">正在保存训练结果…</p></div>
+    <div class="memory-finish-metrics">
+      <div><strong id="memoryFinishScore">0</strong><span>回忆积分</span></div>
+      <div><strong id="memoryFinishRetained">0 / 0</strong><span>最终完全正确</span></div>
+      <div><strong id="memoryFinishTrials">0</strong><span>回忆尝试次数</span></div>
+    </div>
+    <div class="memory-section-head"><h3>三轮回忆表现</h3></div>
+    <div id="memoryPhaseResults" class="memory-phase-results"></div>
+    <div class="memory-weak-section"><h3>还没真正记住的内容</h3><div id="memoryFinishWeak" class="memory-weak-list"></div></div>
+    <div id="memoryFinishActions" class="memory-actions hidden">
+      <button id="memoryFinishRetry" class="memory-secondary hidden" type="button">重新保存结果</button>
+      <button id="memoryAnother" class="memory-main-btn" type="button">开始下一组训练 →</button>
+    </div>
+  </section>
+  <p id="memoryStatus" class="memory-status" role="status" aria-live="polite"></p>
+</div>
 </section>
 
 <section id="libraryPage" class="page">
@@ -633,9 +507,7 @@
 </div>
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
-<script type="module" src="/games.js?v=challenge-20261026"></script>
-<script type="module" src="/adventure.js?v=story-1"></script>
-<script type="module" src="/rogue.js?v=hybrid-1"></script>
+<script type="module" src="/memory-gym.js?v=recall-1"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
