@@ -57,7 +57,10 @@ export function buildAdventureLevel(number){
   const crystals=crystalSets.map((arr,i)=>{
     const p=arr[(level+i)%arr.length];return {id:"crystal-"+i,x:p[0],y:p[1]};
   });
-  const lanes=enemyLanes.slice(0,level>=6?3:level>=3?2:1);
+  // Guardians patrol walkable routes but never occupy the knowledge relics.
+  const crystalPlaces=new Set(crystals.map(p=>key(p.x,p.y)));
+  const lanes=enemyLanes.slice(0,level>=6?3:level>=3?2:1)
+    .map(lane=>lane.filter(p=>!crystalPlaces.has(key(...p))));
   const protectedTiles=new Set([
     key(start.x,start.y),key(portal.x,portal.y),
     ...crystals.map(p=>key(p.x,p.y)),
