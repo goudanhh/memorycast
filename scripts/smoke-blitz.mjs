@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {createServer} from "node:http";
 import {readFile,mkdir} from "node:fs/promises";
 import {resolve,join,extname} from "node:path";
-import {chromium} from "playwright";
+import {chromium,webkit} from "playwright";
 const root=resolve(import.meta.dirname,"../web");
 const uid="00000000-0000-4000-8000-000000000001";
 const transcript="Please bring two extra towels to room eight oh five before nine tonight. Leave the package at the front desk because the guest is asleep. Call the manager if the room is locked.";
@@ -18,7 +18,7 @@ const full=[
 let counter=0,submitted=[],plays=new Map(),lastMode=45;
 const id=()=>"00000000-0000-4000-8000-"+String(++counter).padStart(12,"0");
 function wav(){
- const rate=8000,num=Math.floor(rate/3),bytes=num*2,b=Buffer.alloc(44+bytes);
+ const rate=8000,num=rate*4,bytes=num*2,b=Buffer.alloc(44+bytes);
  b.write("RIFF",0);b.writeUInt32LE(36+bytes,4);b.write("WAVEfmt ",8);
  b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);
  b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*2,28);b.writeUInt16LE(2,32);
@@ -94,7 +94,9 @@ await new Promise(done=>server.listen(0,"127.0.0.1",done));
 const base="http://127.0.0.1:"+server.address().port+"/";
 let browser;
 try{
- browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
+ const engine=process.env.BLITZ_BROWSER==="webkit"?webkit:chromium;
+ const screenshotSuffix=engine===webkit?"-webkit":"";
+ browser=await engine.launch({headless:true,args:engine===chromium?["--no-sandbox"]:[]});
  const page=await browser.newPage({viewport:{width:1360,height:880}});
  const errs=[];page.on("pageerror",e=>errs.push(e.message));
  await page.goto(base,{waitUntil:"load"});
@@ -123,9 +125,20 @@ try{
  assert.equal((await page.locator("#blitzScore").innerText()).trim(),"2 / 2");
  assert.ok((await page.locator("#blitzTranscript").innerText()).includes(transcript));
  assert.ok((await page.locator("#blitzScoringType").innerText()).includes("首听"));
+ // Regression: the Results button must replay the actual audio, not just
+ // invoke speechSynthesis without feedback (previously silent on iPhone).
+ await page.locator("#blitzTranscriptReplay").click();
+ await page.waitForFunction(()=>document.getElementById("blitzTranscriptReplay").textContent.includes("暂停复听"));
+ assert.ok((await page.locator("#blitzReplayStatus").innerText()).includes("原音频"));
+ assert.equal([...plays.values()][0],1,"Results replay must not inflate first-listen play count");
+ await page.locator("#blitzTranscriptReplay").click();
+ await page.waitForFunction(()=>document.getElementById("blitzTranscriptReplay").textContent.includes("继续复听"));
+ await page.locator("#blitzTranscriptReplay").click();
+ await page.waitForFunction(()=>document.getElementById("blitzTranscriptReplay").textContent.includes("暂停复听"));
+ assert.equal([...plays.values()][0],1);
  assert.equal(errs.length,0,"Desktop browser errors: "+errs.join("\n"));
  await mkdir(resolve(import.meta.dirname,"../artifacts"),{recursive:true});
- await page.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-desktop.png"),fullPage:true});
+ await page.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-desktop"+screenshotSuffix+".png"),fullPage:true});
  console.log("Desktop Blitz smoke PASS: one-click start, blind listening, 2 scored questions, transcript gate, first-listen report.");
  await page.locator("#blitzBack").click();
  await page.locator('[data-blitz-duration="20"]').click();
@@ -148,7 +161,23 @@ try{
  await page.locator("#blitzResults").waitFor({state:"visible"});
  assert.ok((await page.locator("#blitzScoringType").innerText()).includes("重听"),
    "Repeat playback must be tracked separately from first-listen accuracy");
- console.log("Replay scoring smoke PASS: 20-second one-question mode, 2 plays, correctly labeled assisted listening.");
+ // Simulate an unavailable Azure audio endpoint and verify the explicit
+ // one-tap Safari-compatible speech fallback plus actionable status.
+ await page.route("**/api/blitz/audio/**",route=>route.abort("failed"));
+ await page.evaluate(()=>{
+   window.__blitzSpoken="";
+   Object.defineProperty(window,"speechSynthesis",{configurable:true,value:{
+     speaking:false,pending:false,getVoices(){return []},cancel(){},pause(){},resume(){},
+     speak(u){window.__blitzSpoken=u.text;u.onstart?.()}
+   }});
+ });
+ await page.locator("#blitzTranscriptReplay").click();
+ await page.waitForFunction(()=>document.getElementById("blitzReplayStatus").textContent.includes("再次点击"));
+ await page.locator("#blitzTranscriptReplay").click();
+ await page.waitForFunction(()=>document.getElementById("blitzReplayStatus").textContent.includes("英语语音"));
+ assert.equal(await page.evaluate(()=>window.__blitzSpoken),transcript);
+ assert.equal([...plays.values()][1],2,"Fallback replay must not alter graded play count");
+ console.log("Replay scoring smoke PASS: 20-second mode, 2 graded plays, Azure outage fallback to mobile speech.");
  await page.close();
  const mobile=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
  const mobileErrors=[];mobile.on("pageerror",e=>mobileErrors.push(e.message));
@@ -159,7 +188,23 @@ try{
  await mobile.locator("#blitzWorkout").waitFor({state:"visible"});
  assert.equal(await mobile.locator(".blitz-question").count(),3);
  assert.ok(await mobile.locator("#blitzPlay").isVisible());
- await mobile.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-mobile.png"),fullPage:true});
+ // The mobile Results replay button must work after grading, not merely be visible.
+ try{
+   await mobile.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
+     null,{timeout:3000});
+ }catch{
+   await mobile.locator("#blitzPlay").tap();
+   await mobile.waitForFunction(()=>document.getElementById("blitzPlayCount")?.textContent==="1 次",
+     null,{timeout:15000});
+ }
+ await mobile.locator('#blitzAnswers input[name="blitz-q1"][value="805"]').check();
+ await mobile.locator('#blitzAnswers input[name="blitz-q2"][value="The guest is asleep."]').check();
+ await mobile.locator('[data-fill="q3"]').fill("2");
+ await mobile.locator("#blitzSubmit").tap();
+ await mobile.locator("#blitzResults").waitFor({state:"visible"});
+ await mobile.locator("#blitzTranscriptReplay").tap();
+ await mobile.waitForFunction(()=>document.getElementById("blitzTranscriptReplay").textContent.includes("暂停复听"));
+ await mobile.screenshot({path:resolve(import.meta.dirname,"../artifacts/blitz-mobile"+screenshotSuffix+".png"),fullPage:true});
  assert.equal(mobileErrors.length,0,"Mobile browser errors: "+mobileErrors.join("\n"));
  console.log("Mobile Blitz smoke PASS: 90 second preset, 3 questions, responsive playback controls.");
  await mobile.close();

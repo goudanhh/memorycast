@@ -299,6 +299,8 @@
       <div id="blitzTranscript" class="blitz-transcript"></div>
       <div class="blitz-cue"><span>本组播放 <b id="blitzReplayTotal">1 次</b></span>
         <button type="button" class="blitz-secondary" id="blitzTranscriptReplay">🔊 复听原文</button></div>
+      <audio id="blitzResultAudio" preload="none"></audio>
+      <p id="blitzReplayStatus" class="blitz-replay-status" role="status" aria-live="polite">点击复听原文，重新播放本组英语。</p>
       <p class="blitz-footnote" id="blitzDoneNote"></p>
       <div class="blitz-results-actions">
         <button type="button" class="blitz-secondary" id="blitzBack">查看能力报告</button>
@@ -508,7 +510,7 @@
 </div>
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
-<script type="module" src="/blitz.js?v=1"></script>
+<script type="module" src="/blitz.js?v=2"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">

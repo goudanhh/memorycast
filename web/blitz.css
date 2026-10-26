@@ -110,3 +110,7 @@
 .blitz-home-shortcut{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin:17px 0;padding:21px 23px;border:1px solid #b8d4e8;border-radius:19px;background:linear-gradient(110deg,#e7fbf6,#eff2ff)}
 .blitz-home-shortcut strong{font-size:18px;color:#194263}
 .blitz-home-shortcut p{font-size:13px;color:#56748b;line-height:1.7;margin:7px 0 0}
+
+.blitz-replay-status{font-size:12px;color:#52758c;line-height:1.6;margin:5px 0 16px;min-height:20px}
+.blitz-replay-status.error{color:#a35439}
+#blitzTranscriptReplay:disabled{opacity:.65;cursor:progress}
