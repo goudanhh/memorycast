@@ -143,6 +143,19 @@ Return only schema-valid JSON.`,
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
 await query(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS hidden_until TIMESTAMPTZ`);
 await query(`
+  CREATE TABLE IF NOT EXISTS game_attempts (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL CHECK (mode IN ('match','listen','spell','recall')),
+    correct BOOLEAN NOT NULL,
+    elapsed_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_user_time ON game_attempts(user_id,created_at DESC)`);
+await query(`CREATE INDEX IF NOT EXISTS idx_game_attempts_card_time ON game_attempts(card_id,created_at DESC)`);
+await query(`
   UPDATE cards
   SET tags = ARRAY[
     TO_CHAR(created_at AT TIME ZONE 'UTC','YYYY-MM-DD'),
@@ -806,6 +819,90 @@ app.get("/due", requireAuth, asyncRoute(async(req,res)=>{
     ORDER BY c.due ASC LIMIT 500
   `,[userId(req)]);
   res.json({cards:rows.map(normalizeCardRow)});
+}));
+
+// Game practice is tracked separately from FSRS to avoid distorting due dates
+// when learners repeat a game many times within the same day.
+app.get("/games/cards", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const {rows}=await query(`
+    WITH practice AS (
+      SELECT card_id,
+        COUNT(*) FILTER (WHERE NOT correct AND created_at>=NOW()-INTERVAL '30 days')::int AS recent_mistakes,
+        COUNT(*) FILTER (WHERE correct AND created_at>=NOW()-INTERVAL '7 days')::int AS recent_correct
+      FROM game_attempts WHERE user_id=$1 GROUP BY card_id
+    ),
+    last_review AS (
+      SELECT DISTINCT ON (card_id) card_id,rating,verdict
+      FROM reviews WHERE user_id=$1 ORDER BY card_id,reviewed_at DESC
+    )
+    SELECT c.id,c.front,c.back,c.example,c.due,
+      (
+        CASE WHEN c.due<=NOW() THEN 85 ELSE 5 END
+        + CASE WHEN lr.rating='Again' OR lr.verdict='wrong' THEN 65 ELSE 0 END
+        + CASE WHEN lr.rating='Hard' OR lr.verdict='partial' THEN 32 ELSE 0 END
+        + LEAST(90,COALESCE(p.recent_mistakes,0)*18)
+        - LEAST(40,COALESCE(p.recent_correct,0)*5)
+        + LEAST(20,COALESCE((c.fsrs->>'difficulty')::numeric,0)*2)
+      ) AS priority
+    FROM cards c
+    LEFT JOIN practice p ON p.card_id=c.id
+    LEFT JOIN last_review lr ON lr.card_id=c.id
+    WHERE c.user_id=$1
+      AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
+      AND (c.source_note_id IS NULL OR EXISTS (
+        SELECT 1 FROM notes n
+        WHERE n.id=c.source_note_id AND n.user_id=c.user_id AND n.study_enabled=TRUE
+      ))
+      AND LENGTH(TRIM(c.front)) BETWEEN 1 AND 90
+      AND LENGTH(TRIM(c.back)) BETWEEN 1 AND 160
+    ORDER BY priority DESC, RANDOM()
+    LIMIT 100
+  `,[uid]);
+  res.json({cards:rows.map(c=>({
+    id:c.id,front:c.front,back:c.back,example:c.example,due:c.due,
+    priority:Number(c.priority||0)
+  }))});
+}));
+
+app.post("/games/attempt", requireAuth, asyncRoute(async(req,res)=>{
+  const {cardId,mode,correct,elapsedMs=0}=req.body||{};
+  const ms=Number(elapsedMs);
+  if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(cardId||"")) ||
+     !["match","listen","spell","recall"].includes(mode) ||
+     typeof correct!=="boolean" || !Number.isFinite(ms) ||
+     !Number.isInteger(ms) || ms<0 || ms>600000)
+    return res.status(400).json({error:"Invalid game attempt"});
+  const {rows}=await query(`
+    INSERT INTO game_attempts(user_id,card_id,mode,correct,elapsed_ms)
+    SELECT $1,c.id,$3,$4,$5 FROM cards c
+    WHERE c.user_id=$1 AND c.id=$2 AND (c.hidden_until IS NULL OR c.hidden_until<=NOW())
+      AND (c.source_note_id IS NULL OR EXISTS (
+        SELECT 1 FROM notes n WHERE n.id=c.source_note_id AND n.study_enabled=TRUE
+      ))
+    RETURNING id
+  `,[userId(req),cardId,mode,correct,ms]);
+  if(!rows.length)return res.status(404).json({error:"Card not found or paused"});
+  res.status(201).json({ok:true});
+}));
+
+app.get("/games/stats", requireAuth, asyncRoute(async(req,res)=>{
+  const uid=userId(req);
+  const [overall,modes]=await Promise.all([
+    query(`
+      SELECT COUNT(*)::int AS attempts,
+        COUNT(*) FILTER (WHERE correct)::int AS correct,
+        COUNT(*) FILTER (WHERE NOT correct)::int AS mistakes,
+        COUNT(*) FILTER (WHERE created_at>=NOW()-INTERVAL '7 days')::int AS last7,
+        COUNT(DISTINCT card_id)::int AS practiced_cards
+      FROM game_attempts WHERE user_id=$1
+    `,[uid]),
+    query(`
+      SELECT mode,COUNT(*)::int AS attempts,COUNT(*) FILTER (WHERE correct)::int AS correct
+      FROM game_attempts WHERE user_id=$1 GROUP BY mode ORDER BY mode
+    `,[uid])
+  ]);
+  res.json({overall:overall.rows[0],modes:modes.rows});
 }));
 
 app.get("/walkman", requireAuth, asyncRoute(async(req,res)=>{

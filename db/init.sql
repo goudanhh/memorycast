@@ -41,6 +41,19 @@ CREATE INDEX IF NOT EXISTS idx_cards_user_due ON cards(user_id, due);
 CREATE INDEX IF NOT EXISTS idx_cards_user_category ON cards(user_id, category);
 CREATE INDEX IF NOT EXISTS idx_cards_user_hidden_until ON cards(user_id, hidden_until);
 
+CREATE TABLE IF NOT EXISTS game_attempts (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  card_id UUID NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL CHECK (mode IN ('match','listen','spell','recall')),
+  correct BOOLEAN NOT NULL,
+  elapsed_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_attempts_user_time ON game_attempts(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_game_attempts_card_time ON game_attempts(card_id, created_at DESC);
+
+
 CREATE TABLE IF NOT EXISTS reviews (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
