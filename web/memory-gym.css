@@ -107,3 +107,5 @@
  .memory-actions .memory-secondary{flex:1 1 110px}
 }
 @media(prefers-reduced-motion:reduce){.memory-gym *{transition:none!important;animation:none!important}}
+
+.memory-home-teaser{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;padding:22px 24px;background:linear-gradient(110deg,#e8f6f3,#edf2ff);border:1px solid #b9dcd9;border-radius:20px;margin:16px 0}.memory-home-teaser strong{font-size:18px;color:#193c50}.memory-home-teaser p{font-size:13px;color:#4e6f7c;margin:7px 0 0;line-height:1.65}
