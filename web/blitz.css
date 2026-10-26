@@ -106,3 +106,7 @@
 @media(max-width:970px){.blitz-main{grid-template-columns:1fr}.blitz-hero-symbol{font-size:60px}}
 @media(max-width:650px){.blitz-panel{padding:17px}.blitz-hero{padding:25px 19px}.blitz-hero-symbol{display:none}.blitz-duration strong{font-size:21px}.blitz-duration{padding:15px 4px}.blitz-duration.active{padding:14px 3px}.blitz-options{grid-template-columns:1fr}.blitz-skill-item{grid-template-columns:1fr;gap:5px}.blitz-listen-box{padding:22px 13px}.blitz-submit-row{flex-wrap:wrap}.blitz-submit-row .blitz-primary{width:100%}.blitz-chart-day small{font-size:8px}}
 @media(prefers-reduced-motion:reduce){.blitz-shell *{transition:none!important;animation:none!important}}
+
+.blitz-home-shortcut{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin:17px 0;padding:21px 23px;border:1px solid #b8d4e8;border-radius:19px;background:linear-gradient(110deg,#e7fbf6,#eff2ff)}
+.blitz-home-shortcut strong{font-size:18px;color:#194263}
+.blitz-home-shortcut p{font-size:13px;color:#56748b;line-height:1.7;margin:7px 0 0}
