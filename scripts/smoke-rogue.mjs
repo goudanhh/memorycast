@@ -35,7 +35,7 @@ const server=createServer(async(req,res)=>{
   }
   if(path==="/app.js"){
     res.setHeader("Content-Type",MIMES[".js"]);
-    return res.end("document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(b.dataset.page)?.classList.add('active')}));");
+    return res.end("document.getElementById('loginScreen').classList.add('hidden');document.getElementById('app').classList.remove('hidden');document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(b.dataset.page)?.classList.add('active')}));");
   }
   const file=path==="/"?"/index.html":path;
   if(![".js",".css",".html",".json",".webmanifest",".png",".ico",".svg"].includes(extname(file))&&
