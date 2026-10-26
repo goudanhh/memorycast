@@ -75,6 +75,34 @@ final class WalkmanViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         Task { await advance() }
     }
 
+    func snoozeCurrent() {
+        guard let card = currentCard else { return }
+        let previousIndex = cardIndex
+        generation += 1
+        stopPlayer()
+        isLoading = true
+        status = "正在暂停此卡片…"
+        Task {
+            do {
+                try await api.snoozeCard(id: card.id, days: 7)
+                cards.removeAll { $0.id == card.id }
+                isLoading = false
+                if cards.isEmpty {
+                    cardIndex = 0
+                    lines = []
+                    status = "卡片已暂停7天，暂无其他内容"
+                } else {
+                    cardIndex = min(previousIndex, cards.count - 1)
+                    await playCurrent()
+                }
+            } catch {
+                isLoading = false
+                status = "暂停失败：\(error.localizedDescription)"
+                await playCurrent()
+            }
+        }
+    }
+
     func previous() {
         guard !cards.isEmpty else { return }
         generation += 1
