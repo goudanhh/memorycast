@@ -1,0 +1,46 @@
+name: Test Listening Blitz API with PostgreSQL
+
+on:
+  pull_request:
+    paths:
+      - 'api/src/blitz*'
+      - 'api/src/server.js'
+      - 'db/init.sql'
+      - 'scripts/test-blitz-api.mjs'
+      - '.github/workflows/test-blitz-api.yml'
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: memorycast
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: memorycast
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U memorycast -d memorycast"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgresql://memorycast:test_pass@127.0.0.1:5432/memorycast
+      PGPASSWORD: test_pass
+      TTS_PROVIDER: browser
+      AI_PROVIDER: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install API packages
+        run: npm install --prefix api --omit=dev --ignore-scripts
+      - name: Initialize real PostgreSQL schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init.sql
+      - name: Check real API session creation, grading and data isolation
+        run: node scripts/test-blitz-api.mjs
