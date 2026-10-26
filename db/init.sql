@@ -93,7 +93,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_organize_provider TEXT NOT NULL DEFAULT 'gemini',
   ai_quiz_provider TEXT NOT NULL DEFAULT 'gemini',
   ai_grade_provider TEXT NOT NULL DEFAULT 'gemini',
-  ai_feynman_provider TEXT NOT NULL DEFAULT 'gemini',
   stt_provider TEXT NOT NULL DEFAULT 'cloudflare',
   ocr_provider TEXT NOT NULL DEFAULT 'gemini',,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -162,28 +161,4 @@ ALTER TABLE cards
   FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE;
 
 
-CREATE TABLE IF NOT EXISTS feynman_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  topic TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active',
-  clarity_score INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_turn_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
-CREATE INDEX IF NOT EXISTS idx_feynman_sessions_user_updated
-  ON feynman_sessions(user_id, last_turn_at DESC);
-
-CREATE TABLE IF NOT EXISTS feynman_turns (
-  id BIGSERIAL PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES feynman_sessions(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user','ai')),
-  content TEXT NOT NULL,
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_feynman_turns_session_time
-  ON feynman_turns(session_id, created_at ASC, id ASC);
