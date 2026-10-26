@@ -15,7 +15,7 @@ for (const file of files){
   assert.doesNotMatch(content,/feynman|费曼/i,"Retired feature remains: "+file);
 }
 
-for (const file of ["web/app.js","web/games.js","web/game-engine.js","api/src/server.js"]){
+for (const file of ["web/app.js","web/memory-gym.js","web/memory-engine.js","api/src/server.js"]){
   execFileSync(process.execPath,["--check",resolve(root,file)],{stdio:"inherit"});
 }
 
