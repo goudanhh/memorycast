@@ -13,6 +13,7 @@ import { query } from "./db.js";
 import { newFsrsCard, scheduleNext, getStateName } from "./fsrs.js";
 import { hasAI, generateStructured, generateVisualStructured, aiInfo, extractTextFromImage } from "./ai.js";
 import { synthesizeTts, synthesizeMixedTts, synthesizeTimedTts, ttsInfo } from "./tts.js";
+import { installBlitz } from "./blitz.js";
 
 const execFileAsync=promisify(execFile);
 
@@ -2247,6 +2248,9 @@ app.get("/stats", requireAuth, asyncRoute(async(req,res)=>{
     heatmap:allDays.slice(-84)
   });
 }));
+
+installBlitz({app,query,requireAuth,asyncRoute,userId,
+  featureProvider,generateStructured,hasAI,ttsInfo,synthesizeTts});
 
 app.use((err,req,res,next)=>{
   console.error(err);
