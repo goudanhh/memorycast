@@ -36,6 +36,7 @@
 #gamesPage .game-stage-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
 #gamesPage .game-stage-head .eyebrow{color:#86e7ee;letter-spacing:2.1px;font-size:10px}
 #gamesPage .game-stage-head h2{font-size:25px;margin:8px 0}
+#gamesPage .game-stage-controls{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
 #gamesPage .game-exit{border:1px solid #7280a85d;border-radius:12px;padding:9px 14px;background:#ffffff10;color:#c9d7f2;cursor:pointer}
 #gamesPage .game-exit:hover{background:#ffffff23}
 #gamesPage .game-hud{display:flex;flex-wrap:wrap;gap:9px;margin:19px 0 16px}
