@@ -144,23 +144,29 @@ async function play(){
   $("blitzPlay").disabled=true;
   $("blitzAudioState").textContent="正在播放英语…";
   try{
-    // The playback counter is kept by the server, not trusted from the form.
-    const marker=api("/blitz/play/"+current.sessionId,{method:"POST",body:"{}"});
+    // Count only an accepted audio playback, never a failed network attempt.
     if(audioError){
-      if(!ttsText){$("blitzAudioState").textContent="语音正在加载，请再点一次播放。";await fetchSpeechFallback();}
-      // In Safari, a second gesture is needed after asynchronous voice loading.
+      if(!ttsText){
+        await fetchSpeechFallback();
+        $("blitzAudioState").textContent="浏览器语音已准备好，请再次点击播放。";
+        return;
+      }
+      // Safari may require a fresh tap for speechSynthesis.
       browserSpeak(ttsText,rate);
+      $("blitzAudioState").textContent="正在使用浏览器英文语音播放…";
     }else{
       audio.src=current.audioUrl;
       audio.playbackRate=rate;
-      try{await audio.play()}
-      catch(err){
+      try{
+        await audio.play();
+      }catch(err){
         audioError=true;
         await fetchSpeechFallback();
-        $("blitzAudioState").textContent="服务器音频不可用，切换到浏览器语音。请再点一次播放。";
+        $("blitzAudioState").textContent="服务器音频不可用，已准备浏览器语音，请再次点击播放。";
+        return;
       }
     }
-    const count=await marker;
+    const count=await api("/blitz/play/"+current.sessionId,{method:"POST",body:"{}"});
     localPlays=count.plays;
     $("blitzPlayCount").textContent=localPlays+" 次";
     if(localPlays>1)inform("当前已重听 "+(localPlays-1)+" 次；结果会与首听成绩区分。");
