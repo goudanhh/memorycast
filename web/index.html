@@ -8,7 +8,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css?v=snooze-20261026">
 <link rel="stylesheet" href="/stats.css?v=insights-1">
-<link rel="stylesheet" href="/blitz.css?v=1">
+<link rel="stylesheet" href="/blitz.css?v=2">
 <style>
 .listening-insights{margin-top:22px;padding:22px;border:1px solid #dce5f1;border-radius:22px;background:linear-gradient(145deg,#f5f8ff,#eef3ff);color:#172441;box-shadow:0 12px 32px #304b8010}
 .li-head,.li-metrics,.li-skill{display:flex;align-items:center;justify-content:space-between;gap:12px}.li-head h2{margin:5px 0 14px}.li-head small{letter-spacing:2px;color:#687da9}.li-pill{padding:8px 12px;background:#e0e9ff;border-radius:99px;font-size:12px}.li-metrics{margin-bottom:12px}.li-metrics>div{flex:1;padding:16px;background:white;border-radius:16px;display:grid;gap:8px}.li-metrics small{color:#65718a}.li-metrics strong{font-size:clamp(20px,3vw,30px)}.li-skill{margin:12px 0;font-size:13px}.li-skill span{width:100px}.li-skill b{width:40px;text-align:right}.li-track{height:9px;background:#dce4f4;border-radius:12px;flex:1;overflow:hidden}.li-track i{display:block;height:100%;border-radius:12px;background:linear-gradient(90deg,#6a80e8,#61b9ca)}.li-history{height:100px;display:flex;align-items:flex-end;gap:7px;margin-top:12px}.li-history>div{flex:1;height:100%;display:flex;align-items:flex-end}.li-history i{display:block;width:100%;border-radius:7px 7px 2px 2px;background:linear-gradient(#7e91ee,#68c4d5)}@media(max-width:450px){.listening-insights{padding:14px}.li-skill span{width:75px}}
@@ -297,6 +297,19 @@
       <div id="blitzExplanation"></div>
       <h3>英文原文（提交后解锁）· 逐句精听</h3>
       <div id="blitzTranscript" class="blitz-transcript"></div>
+      <section id="blitzSentenceReview" class="blitz-sentence-review" hidden>
+        <div class="blitz-sentence-heading"><h3>逐句精听</h3><span id="blitzSentencePosition"></span></div>
+        <p class="blitz-sentence-help">默认自动连播；开启单句循环后反复播放当前句子。点击任意句子可跳转。</p>
+        <div id="blitzSentenceList" class="blitz-sentence-list"></div>
+        <div class="blitz-sentence-controls">
+          <button type="button" id="blitzSentencePrev" class="blitz-secondary">⏮ 上一句</button>
+          <button type="button" id="blitzSentencePlay" class="blitz-secondary">▶ 播放</button>
+          <button type="button" id="blitzSentenceNext" class="blitz-secondary">下一句 ⏭</button>
+          <button type="button" id="blitzSentenceLoop" class="blitz-secondary" aria-pressed="false">🔁 单句循环：关</button>
+          <label>语速 <select id="blitzSentenceRate" aria-label="逐句精听语速"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select></label>
+        </div>
+        <p id="blitzSentenceStatus" class="blitz-replay-status" role="status" aria-live="polite"></p>
+      </section>
       <div class="blitz-cue"><span>本组播放 <b id="blitzReplayTotal">1 次</b></span>
         <button type="button" class="blitz-secondary" id="blitzTranscriptReplay">🔊 复听原文</button></div>
       <audio id="blitzResultAudio" preload="none"></audio>
@@ -510,7 +523,7 @@
 </div>
 
 <script type="module" src="/app.js?v=snooze-20261026"></script>
-<script type="module" src="/blitz.js?v=2"></script>
+<script type="module" src="/blitz.js?v=3"></script>
 <div id="walkmanMode" class="walkman-mode hidden">
   <div id="walkmanLyrics" class="walkman-lyrics" aria-live="polite">
     <div id="walkmanSubtitle" class="walkman-lyrics-track">
