@@ -44,6 +44,7 @@ function stopReplay(){
   setReplayState("idle","点击按钮复听本组音频，不影响已保存的首听成绩。");
 }
 function stopAudio(){
+  stopSentenceReview();
   audio.pause();audio.currentTime=0;
   stopReplay();
 }
@@ -258,6 +259,7 @@ function speakTranscript(){
   }
 }
 function replayTranscript(){
+  stopSentenceReview();
   if(!result?.transcript||!current?.audioUrl){
     return setReplayState("error","当前听力音频不可用，请返回重新开始一组。");
   }
@@ -302,6 +304,94 @@ function replayTranscript(){
   }).finally(()=>{replayBusy=false});
 }
 
+// Post-submit sentence review: auto advance, optional single-sentence loop.
+let sentenceParts=[],sentenceIndex=0,sentenceLoop=false,sentenceRate=1,sentenceSpeech=null,sentenceGeneration=0,sentencePlaying=false,sentencePaused=false;
+function splitReviewSentences(text){
+  const pieces=String(text||"").replace(/\s+/g," ").trim().match(/[^.!?。！？]+(?:[.!?。！？]+|$)/g)||[];
+  return pieces.flatMap(piece=>{
+    piece=piece.trim();
+    if(piece.length<=160)return piece?[piece]:[];
+    return (piece.match(/.{1,120}(?:[,;，；]\s*|\s+|$)|.+$/g)||[piece]).map(p=>p.trim()).filter(Boolean);
+  });
+}
+function stopSentenceReview(){
+  sentenceGeneration++;sentencePlaying=false;sentencePaused=false;sentenceSpeech=null;
+  if("speechSynthesis" in window)try{speechSynthesis.cancel()}catch{}
+  renderSentenceReview();
+}
+function renderSentenceReview(){
+  const host=$("blitzSentenceList");if(!host)return;
+  host.replaceChildren();
+  sentenceParts.forEach((sentence,i)=>{
+    const button=document.createElement("button");button.type="button";
+    button.className="blitz-sentence-item"+(i===sentenceIndex?" active":"");
+    button.setAttribute("aria-current",String(i===sentenceIndex));
+    const number=document.createElement("strong");number.textContent=String(i+1).padStart(2,"0");
+    const text=document.createElement("span");text.textContent=sentence;
+    button.append(number,text);
+    button.onclick=()=>{sentenceIndex=i;playReviewSentence();};
+    host.append(button);
+  });
+  $("blitzSentencePosition").textContent=sentenceParts.length?(sentenceIndex+1)+" / "+sentenceParts.length+" 句":"";
+  $("blitzSentencePrev").disabled=sentenceIndex===0;
+  $("blitzSentenceNext").disabled=sentenceIndex>=sentenceParts.length-1;
+  $("blitzSentencePlay").textContent=sentencePlaying?(sentencePaused?"▶ 继续":"⏸ 暂停"):"▶ 播放";
+  $("blitzSentenceLoop").textContent=sentenceLoop?"🔁 单句循环：开":"🔁 单句循环：关";
+  $("blitzSentenceLoop").setAttribute("aria-pressed",String(sentenceLoop));
+}
+function loadSentenceReview(text){
+  stopSentenceReview();sentenceParts=splitReviewSentences(text);
+  sentenceIndex=0;sentenceLoop=false;sentenceRate=1;
+  $("blitzSentenceRate").value="1";
+  $("blitzSentenceReview").hidden=!sentenceParts.length;
+  $("blitzSentenceStatus").textContent="点击播放后自动逐句连播，可随时开启单句循环。";
+  renderSentenceReview();
+}
+function playReviewSentence(){
+  if(!sentenceParts.length)return;
+  if(!("speechSynthesis" in window)||typeof SpeechSynthesisUtterance!=="function"){
+    $("blitzSentenceStatus").textContent="当前浏览器不支持逐句朗读。";return;
+  }
+  stopReplay();stopSentenceReview();
+  const generation=sentenceGeneration;
+  function speak(){
+    if(generation!==sentenceGeneration)return;
+    const utterance=new SpeechSynthesisUtterance(sentenceParts[sentenceIndex]);
+    utterance.lang="en-US";utterance.rate=sentenceRate;
+    const voices=speechSynthesis.getVoices().filter(v=>v.lang.toLowerCase().startsWith("en"));
+    utterance.voice=voices.find(v=>v.lang==="en-US")||voices[0]||null;
+    sentenceSpeech=utterance;sentencePlaying=true;sentencePaused=false;
+    renderSentenceReview();
+    $("blitzSentenceStatus").textContent=sentenceLoop?"正在循环第 "+(sentenceIndex+1)+" 句":"正在播放第 "+(sentenceIndex+1)+" 句";
+    utterance.onend=()=>{
+      if(generation!==sentenceGeneration||sentenceSpeech!==utterance)return;
+      if(sentenceLoop){speak();return;}
+      if(sentenceIndex<sentenceParts.length-1){sentenceIndex++;speak();return;}
+      sentencePlaying=false;sentenceSpeech=null;renderSentenceReview();
+      $("blitzSentenceStatus").textContent="逐句精听已播放完毕。";
+    };
+    utterance.onerror=event=>{
+      if(generation!==sentenceGeneration||sentenceSpeech!==utterance)return;
+      sentencePlaying=false;sentenceSpeech=null;renderSentenceReview();
+      $("blitzSentenceStatus").textContent="语音播放失败："+(event.error||"未知错误");
+    };
+    try{speechSynthesis.speak(utterance)}catch(error){
+      sentencePlaying=false;renderSentenceReview();
+      $("blitzSentenceStatus").textContent="播放失败："+error.message;
+    }
+  }
+  speak();
+}
+$("blitzSentencePlay").onclick=()=>{
+  if(sentencePlaying&&!sentencePaused){speechSynthesis.pause();sentencePaused=true;renderSentenceReview();return;}
+  if(sentencePlaying&&sentencePaused){speechSynthesis.resume();sentencePaused=false;renderSentenceReview();return;}
+  playReviewSentence();
+};
+$("blitzSentencePrev").onclick=()=>{if(sentenceIndex>0){sentenceIndex--;playReviewSentence();}};
+$("blitzSentenceNext").onclick=()=>{if(sentenceIndex<sentenceParts.length-1){sentenceIndex++;playReviewSentence();}};
+$("blitzSentenceLoop").onclick=()=>{sentenceLoop=!sentenceLoop;renderSentenceReview();};
+$("blitzSentenceRate").onchange=event=>{sentenceRate=Number(event.target.value)||1;if(sentencePlaying)playReviewSentence();};
+
 function readAnswers(){
   return Object.fromEntries(current.questions.map(q=>{
     const field=$("blitzAnswers").querySelector('[data-fill="'+q.id+'"]');
@@ -332,6 +422,7 @@ async function submit(){
       '<p><b>原文依据：</b>'+escapeHtml(q.evidence)+'</p></article>'
     ).join("");
     $("blitzTranscript").textContent=result.transcript;
+    loadSentenceReview(result.transcript);
     $("blitzReplayTotal").textContent=result.playCount+" 次";
     $("blitzDoneNote").textContent="首听结果、重听次数和错误类型均已保存。新素材会优先覆盖你的薄弱技能；这不是官方 TOEFL/IELTS 分数。";
     show("blitzResults");
